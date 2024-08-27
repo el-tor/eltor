@@ -603,6 +603,8 @@ test_cfmt_extend_cells(void *arg)
   uint8_t p2_cmd;
   uint16_t p2_len;
   char *mem_op_hex_tmp = NULL;
+  const char eltor_preimage[64+14] = "eltor_preimagexxRjdaM5VHUZ0qRp9rapUatL0yMXM44v7LT41R9YkcNtXnorMyqhDAiTqYkREskN";
+  const char eltor_payhash[64+13] = "eltor_payhashT0mMxxMNmDaJucQfmCvmtYAUYXIk0dReisy5PPgUa4DrjjVRgdV43q3hobxi2C3E";
 
   (void) arg;
 
@@ -624,7 +626,7 @@ test_cfmt_extend_cells(void *arg)
   tt_int_op(cc->handshake_type, OP_EQ, ONION_HANDSHAKE_TYPE_TAP);
   tt_int_op(cc->handshake_len, OP_EQ, TAP_ONIONSKIN_CHALLENGE_LEN);
   tt_mem_op(cc->onionskin,OP_EQ, b, TAP_ONIONSKIN_CHALLENGE_LEN+20);
-  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec));
+  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec, eltor_preimage, eltor_payhash));
   tt_int_op(p2_cmd, OP_EQ, RELAY_COMMAND_EXTEND);
   tt_int_op(p2_len, OP_EQ, 26+TAP_ONIONSKIN_CHALLENGE_LEN);
   tt_mem_op(p2,OP_EQ, p, RELAY_PAYLOAD_SIZE);
@@ -648,7 +650,7 @@ test_cfmt_extend_cells(void *arg)
   tt_int_op(cc->handshake_type, OP_EQ, ONION_HANDSHAKE_TYPE_NTOR);
   tt_int_op(cc->handshake_len, OP_EQ, NTOR_ONIONSKIN_LEN);
   tt_mem_op(cc->onionskin,OP_EQ, b, NTOR_ONIONSKIN_LEN+20);
-  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec));
+  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec, eltor_preimage, eltor_payhash));
   tt_int_op(p2_cmd, OP_EQ, RELAY_COMMAND_EXTEND);
   tt_int_op(p2_len, OP_EQ, 26+TAP_ONIONSKIN_CHALLENGE_LEN);
   tt_mem_op(p2,OP_EQ, p, RELAY_PAYLOAD_SIZE);
@@ -677,7 +679,7 @@ test_cfmt_extend_cells(void *arg)
   tt_int_op(cc->handshake_type, OP_EQ, ONION_HANDSHAKE_TYPE_NTOR);
   tt_int_op(cc->handshake_len, OP_EQ, NTOR_ONIONSKIN_LEN);
   tt_mem_op(cc->onionskin,OP_EQ, b, NTOR_ONIONSKIN_LEN+20);
-  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec));
+  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec, eltor_preimage, eltor_payhash));
   tt_int_op(p2_cmd, OP_EQ, RELAY_COMMAND_EXTEND2);
   tt_int_op(p2_len, OP_EQ, 35+NTOR_ONIONSKIN_LEN);
   tt_mem_op(p2,OP_EQ, p, RELAY_PAYLOAD_SIZE);
@@ -711,7 +713,7 @@ test_cfmt_extend_cells(void *arg)
   tt_int_op(cc->handshake_type, OP_EQ, 0x105);
   tt_int_op(cc->handshake_len, OP_EQ, 99);
   tt_mem_op(cc->onionskin,OP_EQ, b, 99+20);
-  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec));
+  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec, eltor_preimage, eltor_payhash));
   tt_int_op(p2_cmd, OP_EQ, RELAY_COMMAND_EXTEND2);
   /* We'll generate it minus the konami code */
   tt_int_op(p2_len, OP_EQ, 89+99-34);
@@ -735,7 +737,7 @@ test_cfmt_extend_cells(void *arg)
 
   /* As before, since we aren't extending by ed25519. */
   get_options_mutable()->ExtendByEd25519ID = 0;
-  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec));
+  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec, eltor_preimage, eltor_payhash));
   tt_int_op(p2_len, OP_EQ, 89+99-34);
   test_memeq_hex(p2,
                  "03"
@@ -746,7 +748,7 @@ test_cfmt_extend_cells(void *arg)
 
   /* Now try with the ed25519 ID. */
   get_options_mutable()->ExtendByEd25519ID = 1;
-  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec));
+  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec, eltor_preimage, eltor_payhash));
   tt_int_op(p2_len, OP_EQ, 89+99);
   test_memeq_hex(p2,
                  /* Four items */
@@ -789,7 +791,7 @@ test_cfmt_extend_cells(void *arg)
   tt_int_op(cc->cell_type, OP_EQ, CELL_CREATE2);
   tt_int_op(cc->handshake_type, OP_EQ, 0xffff);
   tt_int_op(cc->handshake_len, OP_EQ, 32);
-  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec));
+  tt_int_op(0, OP_EQ, extend_cell_format(&p2_cmd, &p2_len, p2, &ec, eltor_preimage, eltor_payhash));
   tt_int_op(p2_cmd, OP_EQ, RELAY_COMMAND_EXTEND2);
   tt_int_op(p2_len, OP_EQ, 47+32);
   test_memeq_hex(p2,

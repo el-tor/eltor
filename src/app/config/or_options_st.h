@@ -1104,6 +1104,33 @@ struct or_options_t {
    * in question to get its relevant configuration object.
    */
   struct config_suite_t *subconfigs_;
+
+  /**
+   * To be set by the El Tor relay (server)
+   */ 
+  char *ElTorBolt12Offer;
+  int *ElTorSatsRate;
+
+  /**
+   * To be set by the El Tor app (client)
+   */ 
+  char *ElTorPreimageHop1;
+  char *ElTorPreimageHop2;
+  char *ElTorPreimageHop3;
+  char *ElTorPreimageHop4;
+  char *ElTorPreimageHop5;
+  char *ElTorPreimageHop6;
+  char *ElTorPreimageHop7;
+  char *ElTorPreimageHop8;
+  char *ElTorPayHashHop1;
+  char *ElTorPayHashHop2;
+  char *ElTorPayHashHop3;
+  char *ElTorPayHashHop4;
+  char *ElTorPayHashHop5;
+  char *ElTorPayHashHop6;
+  char *ElTorPayHashHop7;
+  char *ElTorPayHashHop8;
+
 };
 
 #endif /* !defined(TOR_OR_OPTIONS_ST_H) */

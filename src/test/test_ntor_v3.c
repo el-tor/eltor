@@ -213,7 +213,9 @@ run_full_handshake(circuit_params_t *serv_params_in,
 
   onionskin_len = onion_skin_create(ONION_HANDSHAKE_TYPE_NTOR_V3, &info,
                     &handshake_state, onionskin,
-                    sizeof(onionskin));
+                    sizeof(onionskin),
+                    NULL, // TODO Pass preimage
+                    NULL); // TODO Pass payhash
   tt_int_op(onionskin_len, OP_NE, -1);
 
   server_keys.junk_keypair = &handshake_state.u.ntor3->client_keypair;

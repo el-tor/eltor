@@ -254,6 +254,65 @@ get_unique_circ_id_by_chan(channel_t *chan)
   return test_circ_id;
 }
 
+
+static void eltor_get_preimage_from_torrc(char *eltor_preimage, char *eltor_payhash, int hop_num) {
+  // read the torrc to get the updated preimage value
+  // Use the existing function to load the torrc from disk
+  char *torrc_contents = load_torrc_from_disk(NULL, 0);
+  if (!torrc_contents) {
+    log_warn(LD_CONFIG, "Failed to read torrc file");
+    return;
+  } 
+
+  // 1. Get preimage
+  char preimage_key[32];
+  snprintf(preimage_key, sizeof(preimage_key), "ElTorPreimageHop%d", hop_num);
+  char *preimage_value = strstr(torrc_contents, preimage_key);
+  if (preimage_value) {
+      // Move the pointer past the key to get the value
+      preimage_value += strlen(preimage_key);
+
+      // Skip any spaces after the key
+      while (*preimage_value == ' ') {
+          preimage_value++;
+      }
+
+      // Copy the value to the preimage buffer
+      strncpy(eltor_preimage, preimage_value, 64+14);
+      eltor_preimage[64+14] = '\0'; // Ensure null termination
+
+      log_info(LD_CIRC, "ElTorPreimageHop%d: %s", hop_num, eltor_preimage);
+  } else {
+      log_warn(LD_CONFIG, "Preimage key %s not found in torrc", preimage_key);
+  }
+
+  // 2. Get payhash
+  char payhash_key[32];
+  snprintf(payhash_key, sizeof(payhash_key), "ElTorPayHashHop%d", hop_num);
+  char *payhash_value = strstr(torrc_contents, payhash_key);
+  if (payhash_value) {
+      // Move the pointer past the key to get the value
+      payhash_value += strlen(payhash_key);
+
+      // Skip any spaces after the key
+      while (*payhash_value == ' ') {
+          payhash_value++;
+      }
+
+      // Copy the value to the preimage buffer
+      strncpy(eltor_payhash, payhash_value, 64+13);
+      eltor_payhash[64+13] = '\0'; // Ensure null termination
+
+      log_info(LD_CIRC, "ElTorPayHashHop%d: %s", hop_num, eltor_payhash);
+  } else {
+      log_warn(LD_CONFIG, "PayHash key %s not found in torrc", payhash_key);
+  }
+
+  // Free the allocated memory for torrc_contents
+  tor_free(torrc_contents);
+}
+
+
 /** If <b>verbose</b> is false, allocate and return a comma-separated list of
  * the currently built elements of <b>circ</b>. If <b>verbose</b> is true, also
  * list information about link status in a more verbose format using spaces.
@@ -1049,11 +1108,25 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
     cc.handshake_type = ONION_HANDSHAKE_TYPE_FAST;
   }
 
+  const char eltor_preimage_raw[64+1] = {0}; // null terminator
+  const char eltor_payhash_raw[64+1] = {0}; // null terminator
+  eltor_get_preimage_from_torrc(eltor_preimage_raw, eltor_payhash_raw, 1);
+  // 1. Prefix the Preimage string
+  const char prefix[] = "eltor_preimage";
+  char eltor_preimage[64 + 14 + 1] = {0}; // total size with null terminator
+  snprintf(eltor_preimage, sizeof(eltor_preimage), "%s%s", prefix, eltor_preimage_raw);
+  // 2. Prefix the PayHash string
+  const char prefixPayHash[] = "eltor_payhash";
+  char eltor_payhash[64 + 13 + 1] = {0}; // total size with null terminator
+  snprintf(eltor_payhash, sizeof(eltor_payhash), "%s%s", prefixPayHash, eltor_payhash_raw);
+
   len = onion_skin_create(cc.handshake_type,
                           circ->cpath->extend_info,
                           &circ->cpath->handshake_state,
                           cc.onionskin,
-                          sizeof(cc.onionskin));
+                          sizeof(cc.onionskin),
+                          NULL, // TODO pass Preimage
+                          NULL ); // TODO pass PayHash
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create (first hop) failed.");
     return - END_CIRC_REASON_INTERNAL;
@@ -1201,19 +1274,48 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
                           hop->extend_info,
                           &hop->handshake_state,
                           ec.create_cell.onionskin,
-                          sizeof(ec.create_cell.onionskin));
+                          sizeof(ec.create_cell.onionskin), 
+                          NULL, // TODO pass preimage
+                          NULL); // TODO pass payhash
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create failed.");
     return - END_CIRC_REASON_INTERNAL;
   }
   ec.create_cell.handshake_len = len;
 
-  log_info(LD_CIRC,"Sending extend relay cell.");
+  
+  // Find the hop number
+  int hop_num = 0;
+  for (crypt_path_t *cur = circ->cpath; cur != NULL; cur = cur->next) {
+    hop_num++;
+    if (cur == hop) {
+      break;
+    }
+    if (cur->next == circ->cpath) {
+      break; // We have looped through the entire circular list without finding the hop
+    }
+  }
+
+  const char eltor_preimage_raw[64+1] = {0}; // null terminator
+  const char eltor_payhash_raw[64+1] = {0}; // null terminator
+  eltor_get_preimage_from_torrc(eltor_preimage_raw, eltor_payhash_raw, 1);
+  // 1. Prefix the Preimage string
+  const char prefix[] = "eltor_preimage";
+  char eltor_preimage[64 + 14 + 1] = {0}; // total size with null terminator
+  snprintf(eltor_preimage, sizeof(eltor_preimage), "%s%s", prefix, eltor_preimage_raw);
+  // 2. Prefix the PayHash string
+  const char prefixPayHash[] = "eltor_payhash";
+  char eltor_payhash[64 + 13 + 1] = {0}; // total size with null terminator
+  snprintf(eltor_payhash, sizeof(eltor_payhash), "%s%s", prefixPayHash, eltor_payhash_raw);
+
+
+  
+  log_info(LD_CIRC,"Sending extend relay cell with eltor. preimage: %s payhash: %s", eltor_preimage, eltor_payhash);
   {
     uint8_t command = 0;
     uint16_t payload_len=0;
     uint8_t payload[RELAY_PAYLOAD_SIZE];
-    if (extend_cell_format(&command, &payload_len, payload, &ec)<0) {
+    if (extend_cell_format(&command, &payload_len, payload, &ec, eltor_preimage, eltor_payhash)<0) {
       log_warn(LD_CIRC,"Couldn't format extend cell");
       return -END_CIRC_REASON_INTERNAL;
     }
@@ -2597,9 +2699,12 @@ onion_extend_cpath(origin_circuit_t *circ)
     return -1;
   }
 
-  log_debug(LD_CIRC,"Chose router %s for hop #%d (exit is %s)",
+  log_debug(LD_CIRC,"Chose router %s for hop #%d (exit is %s) (bolt12 is %s) (sats rate is %d)",
             extend_info_describe(info),
-            cur_len+1, build_state_get_exit_nickname(state));
+            cur_len+1, build_state_get_exit_nickname(state),
+            get_options()->ElTorBolt12Offer,
+            get_options()->ElTorSatsRate
+          );
 
   cpath_append_hop(&circ->cpath, info);
   extend_info_free(info);

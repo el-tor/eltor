@@ -615,11 +615,15 @@ should_include_ed25519_id_extend_cells(const networkstatus_t *ns,
  * RELAY_PAYLOAD_SIZE bytes available.  Return 0 on success, -1 on failure. */
 int
 extend_cell_format(uint8_t *command_out, uint16_t *len_out,
-                   uint8_t *payload_out, const extend_cell_t *cell_in)
+                   uint8_t *payload_out, const extend_cell_t *cell_in, 
+                   const char *eltor_preimage, const char *eltor_payhash)
 {
   uint8_t *p;
   if (check_extend_cell(cell_in) < 0)
     return -1;
+
+  size_t eltor_preimage_len = strlen(eltor_preimage);
+  size_t eltor_payhash_len = strlen(eltor_payhash);
 
   p = payload_out;
 
@@ -714,6 +718,24 @@ extend_cell_format(uint8_t *command_out, uint16_t *len_out,
     }
     break;
   default:
+    return -1;
+  }
+
+  // Add eltor_preimage to the payload
+  if (*len_out + eltor_preimage_len <= RELAY_PAYLOAD_SIZE) {
+    memcpy(payload_out + *len_out, eltor_preimage, eltor_preimage_len);
+    *len_out += eltor_preimage_len;
+  } else {
+    log_warn(LD_BUG, "eltor_preimage is too large to fit in the payload");
+    return -1;
+  }
+
+  // Add eltor_payhash to the payload
+  if (*len_out + eltor_payhash_len <= RELAY_PAYLOAD_SIZE) {
+    memcpy(payload_out + *len_out, eltor_payhash, eltor_payhash_len);
+    *len_out += eltor_payhash_len;
+  } else {
+    log_warn(LD_BUG, "eltor_payhash is too large to fit in the payload");
     return -1;
   }
 

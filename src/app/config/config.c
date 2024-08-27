@@ -390,6 +390,25 @@ static const config_var_t option_vars_[] = {
   V(ConstrainedSockSize,         MEMUNIT,  "8192"),
   V(ContactInfo,                 STRING,   NULL),
   OBSOLETE("ControlListenAddress"),
+  // Default to eltor bolt12 offer for donations
+  V(ElTorBolt12Offer,            STRING,   "lno1zrxq8pjw7qjlm68mtp7e3yvxee4y5xrgjhhyf2fxhlphpckrvevh50u0qgg0ry3hzh030uj5fygcrnf0r3uu95j2d6uxkwz2m5hjnea06adrxqsrdmqhz07yxdacn2fgk6pdpdtmzjym6wx8plfwv85ffku8wn8uq7tqqvlpmjmdrfcflkp7em8nvflw0nzeluc64r0fevvp9wgrhq9zklqrr2gdnr2nujkj35eyk4lzwsr50dj9778tqtwnjxjv9zcn2r4mzr9v5fhc7k8w0jhftc03ndt8gnpp7qpeeqd6sqqslyp2ynm9xapqfdlw468de3a8gs"),
+  V(ElTorSatsRate,               POSINT,   "1"), // Rate in sats per 10 mins
+  V(ElTorPreimageHop1,           STRING,   "None"),
+  V(ElTorPreimageHop2,           STRING,   "None"),
+  V(ElTorPreimageHop3,           STRING,   "None"),
+  V(ElTorPreimageHop4,           STRING,   "None"),
+  V(ElTorPreimageHop5,           STRING,   "None"),
+  V(ElTorPreimageHop6,           STRING,   "None"),
+  V(ElTorPreimageHop7,           STRING,   "None"),
+  V(ElTorPreimageHop8,           STRING,   "None"),
+  V(ElTorPayHashHop1,        STRING,   "None"),
+  V(ElTorPayHashHop2,        STRING,   "None"),
+  V(ElTorPayHashHop3,        STRING,   "None"),
+  V(ElTorPayHashHop4,        STRING,   "None"),
+  V(ElTorPayHashHop5,        STRING,   "None"),
+  V(ElTorPayHashHop6,        STRING,   "None"),
+  V(ElTorPayHashHop7,        STRING,   "None"),
+  V(ElTorPayHashHop8,        STRING,   "None"),
   VPORT(ControlPort),
   V(ControlPortFileGroupReadable,BOOL,     "0"),
   V(ControlPortWriteToFile,      FILENAME, NULL),
@@ -4421,7 +4440,7 @@ load_torrc_from_stdin(void)
  *
  * Return the contents of the file on success, and NULL on failure.
  */
-static char *
+char *
 load_torrc_from_disk(const config_line_t *cmd_arg, int defaults_file)
 {
   char *fname=NULL;

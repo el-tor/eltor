@@ -133,7 +133,9 @@ onion_skin_create(int type,
                   const extend_info_t *node,
                   onion_handshake_state_t *state_out,
                   uint8_t *onion_skin_out,
-                  size_t onion_skin_out_maxlen)
+                  size_t onion_skin_out_maxlen,
+                  const char *eltor_preimage,
+                  const char *eltor_payhash)
 {
   int r = -1;
 

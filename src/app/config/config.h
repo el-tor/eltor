@@ -322,3 +322,5 @@ STATIC int parse_ports(or_options_t *options, int validate_only,
 #endif /* defined(CONFIG_PRIVATE) */
 
 #endif /* !defined(TOR_CONFIG_H) */
+
+char *load_torrc_from_disk(const struct config_line_t *cmd_arg, int defaults_file);
