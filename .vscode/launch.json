@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach to Tor Browser",
+      "type": "cppdbg",
+      "request": "attach",
+      "program": "${workspaceFolder}/src/app/tor", 
+      "processId": "${command:pickProcess}", // This will prompt you to select the process
+      "MIMode": "lldb",  // Use LLDB instead of GDB (windows)
+      "logging": {
+        "engineLogging": false
+      }
+    },
+    {
+      "name": "Attach to Tor Relay",
+      "type": "cppdbg",
+      "request": "attach",
+      "program": "${workspaceFolder}/src/app/tor", 
+      "processId": "${command:pickProcess}", // This will prompt you to select the process
+      "MIMode": "lldb",  // Use LLDB instead of GDB (windows)
+      "logging": {
+        "engineLogging": false
+      }
+    }
+  ]
+}
