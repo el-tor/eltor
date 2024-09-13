@@ -15,7 +15,7 @@
 # on mac
 # brew install automake libevent openssl zlib
 LDFLAGS="-L/opt/homebrew/Cellar/libevent/2.1.12_1/lib -L/opt/homebrew/Cellar/openssl@3/3.3.1/lib -L/opt/homebrew/Cellar/zlib/1.3.1/lib"
-./configure --disable-static --enable-shared \
+./configure --disable-static --enable-shared --disable-asciidoc \
     --with-libevent-dir=/opt/homebrew/opt/libevent \
     --with-openssl-dir=/opt/homebrew/opt/openssl@3 \
     --with-zlib-dir=/opt/homebrew/Cellar/zlib/1.3.1
