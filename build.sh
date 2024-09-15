@@ -1,7 +1,8 @@
 ### on linux
-# sudo apt-get install automake libevent-dev zlib1g zlib1g-dev
+# sudo apt-get install automake libevent-dev zlib1g zlib1g-dev build-essential libssl-dev
 # ./autogen.sh
 # ./configure --disable-asciidoc
+# make
 
 ### windows
 # 1. Download and install MSYS2: https://www.msys2.org/. and open msys2 terminal
@@ -14,10 +15,9 @@
 
 # on mac
 # brew install automake libevent openssl zlib
-LDFLAGS="-L/opt/homebrew/Cellar/libevent/2.1.12_1/lib -L/opt/homebrew/Cellar/openssl@3/3.3.1/lib -L/opt/homebrew/Cellar/zlib/1.3.1/lib"
-./configure --disable-static --enable-shared --disable-asciidoc \
-    --with-libevent-dir=/opt/homebrew/opt/libevent \
-    --with-openssl-dir=/opt/homebrew/opt/openssl@3 \
-    --with-zlib-dir=/opt/homebrew/Cellar/zlib/1.3.1
+./autogen.sh
+./configure --enable-static-libevent --enable-static-openssl --enable-static-zlib --disable-asciidoc --with-libevent-dir=/opt/homebrew/Cellar/libevent/2.1.12_1 --with-openssl-dir=/opt/homebrew/Cellar/openssl@3/3.3.1 --with-zlib-dir=/opt/homebrew/Cellar/zlib/1.3.1
 make V=1
+
+# copy tor binary to tor browser (on mac)
 cp $HOME/code/tor/src/app/tor "/Applications/Tor Browser.app/Contents/MacOS/Tor/tor"
