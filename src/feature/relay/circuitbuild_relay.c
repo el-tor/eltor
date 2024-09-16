@@ -504,7 +504,8 @@ circuit_extend(struct cell_t *cell, struct circuit_t *circ)
       payhash[64] = '\0'; // Null-terminate the string
       log_info(LD_APP, "ElTorRelay: %s, PayHash: %s", get_options()->Nickname, payhash);
 
-      // 3.  TODO if preimage then verify against the paymentHash in your lightning nodes database
+      // 3. TODO if preimage then verify against the paymentHash in your lightning nodes database
+      // also verify expiration 
       if (verify_preimage(preimage, payhash)) {
         log_info(LD_APP, "ElTor 200");
         has_paid = 1;
