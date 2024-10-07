@@ -481,36 +481,44 @@ circuit_extend(struct cell_t *cell, struct circuit_t *circ)
     return -1;
   }
 
-  // 1. Check for preimage
-  const char *prefix = "eltor_preimage";
-  const char *prefixPayHash = "eltor_payhash";
-  size_t hlen = sizeof(cell->payload);
-  size_t nlen = strlen(prefix);
-  size_t plen = strlen(prefixPayHash);
-  const void *found = tor_memmem(cell->payload, hlen, prefix, nlen);
-  const void *foundPayHash = tor_memmem(cell->payload, hlen, prefixPayHash, plen);
-  if (found) {
-    size_t index =  (const uint8_t *)found - cell->payload;
-    size_t indexPayHash =  (const uint8_t *)foundPayHash - cell->payload;
-    if (index + nlen + 64 <= hlen) {
-      char preimage[64+1]; // null-terminated string
-      memcpy(preimage, cell->payload + index + nlen, 64);
-      preimage[64] = '\0'; // Null-terminate the string
-      log_info(LD_APP, "ElTorRelay: %s, Preimage: %s", get_options()->Nickname, preimage);
+  // 0. does Relay require payment. No if there is no bolt12 offer in the contact field
+  const char *bolt12 = get_options()->ContactInfo;
+  if (!bolt12) {
+    bolt12 = "(none)";
+    log_info(LD_APP, "No BOLT 12 provided in ContactInfo. No payment required.");
+    has_paid = 1;
+  } else {
+    // 1. Check for preimage
+    const char *prefix = "eltor_preimage";
+    const char *prefixPayHash = "eltor_payhash";
+    size_t hlen = sizeof(cell->payload);
+    size_t nlen = strlen(prefix);
+    size_t plen = strlen(prefixPayHash);
+    const void *found = tor_memmem(cell->payload, hlen, prefix, nlen);
+    const void *foundPayHash = tor_memmem(cell->payload, hlen, prefixPayHash, plen);
+    if (found) {
+      size_t index =  (const uint8_t *)found - cell->payload;
+      size_t indexPayHash =  (const uint8_t *)foundPayHash - cell->payload;
+      if (index + nlen + 64 <= hlen) {
+        char preimage[64+1]; // null-terminated string
+        memcpy(preimage, cell->payload + index + nlen, 64);
+        preimage[64] = '\0'; // Null-terminate the string
+        log_info(LD_APP, "ElTorRelay: %s, Preimage: %s", get_options()->Nickname, preimage);
 
-      // 2. Check for payhash
-      char payhash[64+1]; // null-terminated string
-      memcpy(payhash, cell->payload + indexPayHash + plen, 64);
-      payhash[64] = '\0'; // Null-terminate the string
-      log_info(LD_APP, "ElTorRelay: %s, PayHash: %s", get_options()->Nickname, payhash);
+        // 2. Check for payhash
+        char payhash[64+1]; // null-terminated string
+        memcpy(payhash, cell->payload + indexPayHash + plen, 64);
+        payhash[64] = '\0'; // Null-terminate the string
+        log_info(LD_APP, "ElTorRelay: %s, PayHash: %s", get_options()->Nickname, payhash);
 
-      // 3. TODO if preimage then verify against the paymentHash in your lightning nodes database
-      // also verify expiration 
-      if (verify_preimage(preimage, payhash)) {
-        log_info(LD_APP, "ElTor 200");
-        has_paid = 1;
-      } else {
-        log_info(LD_APP, "ElTor L402");
+        // 3. TODO if preimage then verify against the paymentHash in your lightning nodes database
+        // also verify expiration 
+        if (verify_preimage(preimage, payhash)) {
+          log_info(LD_APP, "ElTor 200");
+          has_paid = 1;
+        } else {
+          log_info(LD_APP, "ElTor L402");
+        }
       }
     }
   }
