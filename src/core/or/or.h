@@ -991,3 +991,6 @@ typedef struct dir_server_t dir_server_t;
 typedef struct tor_version_t tor_version_t;
 
 #endif /* !defined(TOR_OR_H) */
+
+
+#define ALLOW_ANY_RELAY 1

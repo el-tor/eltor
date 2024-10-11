@@ -577,8 +577,14 @@ dirauth_set_routerstatus_from_routerinfo(routerstatus_t *rs,
 
   /* Set these flags so that set_routerstatus_from_routerinfo can copy them.
    */
-  node->is_stable = !dirserv_thinks_router_is_unreliable(now, ri, 1, 0);
-  node->is_fast = !dirserv_thinks_router_is_unreliable(now, ri, 0, 1);
+  if(get_options()->AllowAnyRelay) {
+    log_info(LD_DIRSERV, "Eltor AllowAnyRelay true");
+    node->is_stable = 1;
+    node->is_fast = 1; 
+  } else {
+    node->is_stable = !dirserv_thinks_router_is_unreliable(now, ri, 1, 0);
+    node->is_fast = !dirserv_thinks_router_is_unreliable(now, ri, 0, 1);
+  }
   node->is_hs_dir = dirserv_thinks_router_is_hs_dir(ri, node, now);
 
   set_routerstatus_from_routerinfo(rs, node, ri);

@@ -1108,6 +1108,7 @@ struct or_options_t {
   /**
    * To be set by the El Tor relay (server)
    */ 
+  int AllowAnyRelay;
   char *ElTorBolt12Offer;
   int *ElTorSatsRate;
 

@@ -390,6 +390,8 @@ static const config_var_t option_vars_[] = {
   V(ConstrainedSockSize,         MEMUNIT,  "8192"),
   V(ContactInfo,                 STRING,   NULL),
   OBSOLETE("ControlListenAddress"),
+  // Custom ElTor options to tell the directory authorities to allow all relays
+  V(AllowAnyRelay,               BOOL,     "0"),
   // Default to eltor bolt12 offer for donations
   V(ElTorBolt12Offer,            STRING,   "lno1zrxq8pjw7qjlm68mtp7e3yvxee4y5xrgjhhyf2fxhlphpckrvevh50u0qgg0ry3hzh030uj5fygcrnf0r3uu95j2d6uxkwz2m5hjnea06adrxqsrdmqhz07yxdacn2fgk6pdpdtmzjym6wx8plfwv85ffku8wn8uq7tqqvlpmjmdrfcflkp7em8nvflw0nzeluc64r0fevvp9wgrhq9zklqrr2gdnr2nujkj35eyk4lzwsr50dj9778tqtwnjxjv9zcn2r4mzr9v5fhc7k8w0jhftc03ndt8gnpp7qpeeqd6sqqslyp2ynm9xapqfdlw468de3a8gs"),
   V(ElTorSatsRate,               POSINT,   "1"), // Rate in sats per 10 mins
