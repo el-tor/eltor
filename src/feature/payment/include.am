@@ -1,0 +1,7 @@
+# src/feature/payment/include.am
+
+# Add the source file to the build
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_util.c
+
+# Add the header file to the build
+noinst_HEADERS += src/feature/payment/payment_util.h

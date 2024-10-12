@@ -89,3 +89,5 @@ include src/test/include.am
 include src/tools/include.am
 include src/config/include.am
 include src/test/fuzz/include.am
+
+include src/feature/payment/include.am

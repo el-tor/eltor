@@ -45,6 +45,7 @@
 
 #include "core/crypto/onion_tap.h"
 #include <openssl/sha.h>
+#include "feature/payment/payment_util.h" 
 #define ELTOR_PREIMAGE_SIZE 64 + 14; // Size of the preimage + prefix eltor_preimage (64 + 14)
 #define ELTOR_PAYHASH_SIZE 64 + 13; // Size of the preimage + prefix eltor_payhash (64 + 13)
 
@@ -418,30 +419,6 @@ circuit_open_connection_for_extend(const struct extend_cell_t *ec,
   }
 }
 
-// Function to convert a hex string to a byte array
-static void hex_to_bytes(const char* hex, unsigned char* bytes, size_t bytes_len) {
-  for (size_t i = 0; i < bytes_len; ++i) {
-      sscanf(hex + 2 * i, "%2hhx", &bytes[i]);
-  }
-}
-
-// Function to verify if the preimage matches the given payment hash
-static int verify_preimage(const char* preimage_hex, const char* payhash_hex) {
-  unsigned char preimage[32];
-  unsigned char payhash[32];
-  unsigned char hash[SHA256_DIGEST_LENGTH];
-
-  // Convert hex strings to byte arrays
-  hex_to_bytes(preimage_hex, preimage, 32);
-  hex_to_bytes(payhash_hex, payhash, 32);
-
-  // Compute the SHA-256 hash of the preimage
-  SHA256(preimage, 32, hash);
-
-  // Compare the computed hash with the provided payment hash
-  return memcmp(hash, payhash, SHA256_DIGEST_LENGTH) == 0;
-}
-
 /** Take the 'extend' <b>cell</b>, pull out addr/port plus the onion
  * skin and identity digest for the next hop. If we're already connected,
  * pass the onion skin to the next hop using a create cell; otherwise
@@ -513,7 +490,7 @@ circuit_extend(struct cell_t *cell, struct circuit_t *circ)
 
         // 3. TODO if preimage then verify against the paymentHash in your lightning nodes database
         // also verify expiration 
-        if (verify_preimage(preimage, payhash)) {
+        if (payment_utils_verify_preimage(preimage, payhash)) {
           log_info(LD_APP, "ElTor 200");
           has_paid = 1;
         } else {
