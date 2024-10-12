@@ -218,3 +218,5 @@ scripts/maint/geoip/geoip6
 /src/win32/Makefile.in
 
 .vscode/make.sh
+.vscode/c_cpp_properties.json
+.vscode

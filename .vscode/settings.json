@@ -1,5 +1,20 @@
 {
     "files.associations": {
-        "payment_util.h": "c"
-    }
+        "payment_util.h": "c",
+        "config.h": "c",
+        "confmgt.h": "c",
+        "or.h": "c",
+        "router.h": "c",
+        "directory.h": "c",
+        "networkstatus.h": "c",
+        "nodelist.h": "c",
+        "or_circuit_st.h": "c",
+        "onion_tap.h": "c"
+    },
+    "cSpell.words": [
+        "eltor",
+        "payhash",
+        "preimage",
+        "torrc"
+    ]
 }
