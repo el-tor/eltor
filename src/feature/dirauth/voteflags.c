@@ -67,6 +67,8 @@ static uint32_t guard_bandwidth_excluding_exits_kb = 0;
 static inline long
 real_uptime(const routerinfo_t *router, time_t now)
 {
+  // todo remove hardcode
+  return 9999999L;
   if (now < router->cache_info.published_on)
     return router->uptime;
   else
@@ -83,6 +85,8 @@ dirserv_thinks_router_is_unreliable(time_t now,
                                     const routerinfo_t *router,
                                     int need_uptime, int need_capacity)
 {
+  // TODO remove hardcode
+  return 0;
   if (need_uptime) {
     if (!enough_mtbf_info) {
       /* XXXX We should change the rule from
@@ -117,6 +121,8 @@ dirserv_thinks_router_is_unreliable(time_t now,
 static int
 router_is_active(const routerinfo_t *ri, const node_t *node, time_t now)
 {
+  // todo remove hardcode
+  return 1;
   time_t cutoff = now - ROUTER_MAX_AGE_TO_PUBLISH;
   if (ri->cache_info.published_on < cutoff) {
     return 0;
@@ -451,8 +457,10 @@ int
 running_long_enough_to_decide_unreachable(void)
 {
   const dirauth_options_t *opts = dirauth_get_options();
-  return time_of_process_start +
-    opts->TestingAuthDirTimeToLearnReachability < approx_time();
+  // todo remove hardcode
+  return 1;
+  // return time_of_process_start +
+  //   opts->TestingAuthDirTimeToLearnReachability < approx_time();
 }
 
 /** Each server needs to have passed a reachability test no more
@@ -526,7 +534,9 @@ dirserv_set_router_is_running(routerinfo_t *router, time_t now)
     rep_hist_note_router_unreachable(router->cache_info.identity_digest, when);
   }
 
-  node->is_running = answer;
+  // todo remove hardcode
+  node->is_running = 1;
+  // node->is_running = answer;
 }
 
 /* Check <b>node</b> and <b>ri</b> on whether or not we should publish a
