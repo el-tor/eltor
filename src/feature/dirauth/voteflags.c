@@ -86,7 +86,7 @@ dirserv_thinks_router_is_unreliable(time_t now,
                                     int need_uptime, int need_capacity)
 {
   // TODO remove hardcode
-  return 0;
+  return 0; // Always consider the router reliable
   if (need_uptime) {
     if (!enough_mtbf_info) {
       /* XXXX We should change the rule from
