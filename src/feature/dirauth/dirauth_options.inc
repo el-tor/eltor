@@ -86,17 +86,13 @@ CONF_VAR(AuthDirVoteGuard, ROUTERSET, 0, NULL)
  * stable, regardless of the rest of the network. This way we resist attacks
  * where an attacker doubles the size of the network using allegedly
  * high-uptime nodes, displacing all the current guards. 
- * TODO: change back to 30 days
- * CONF_VAR(AuthDirVoteStableGuaranteeMinUptime, INTERVAL, 0, "30 days")
  */
-CONF_VAR(AuthDirVoteStableGuaranteeMinUptime, INTERVAL, 0, "0 seconds")
+CONF_VAR(AuthDirVoteStableGuaranteeMinUptime, INTERVAL, 0, "30 days")
 
 /** If a relay's MTBF is at least this value, then it is always stable. See
  * above. (Corresponds to about 7 days for current decay rates.) 
- * TODO: hardcoded
- * CONF_VAR(AuthDirVoteStableGuaranteeMTBF, INTERVAL, 0, "5 days")
  */
-CONF_VAR(AuthDirVoteStableGuaranteeMTBF, INTERVAL, 0, "0 seconds")
+CONF_VAR(AuthDirVoteStableGuaranteeMTBF, INTERVAL, 0, "5 days")
 
 /** A relay with at least this much weighted time known can be considered
  * familiar enough to be a guard. (Corresponds to about 20 days for current
