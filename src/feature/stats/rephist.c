@@ -818,6 +818,9 @@ rep_hist_downrate_old_runs(time_t now)
 static double
 get_stability(or_history_t *hist, time_t when)
 {
+  if(get_options()->AllowAnyRelay) {
+    return 1000000.0;
+  }
   long total = hist->weighted_run_length;
   double total_weights = hist->total_run_weights;
 

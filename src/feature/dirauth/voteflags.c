@@ -67,6 +67,9 @@ static uint32_t guard_bandwidth_excluding_exits_kb = 0;
 static inline long
 real_uptime(const routerinfo_t *router, time_t now)
 {
+  if(get_options()->AllowAnyRelay) {
+    return 30*24*60*60;
+  }
   if (now < router->cache_info.published_on)
     return router->uptime;
   else
@@ -83,6 +86,9 @@ dirserv_thinks_router_is_unreliable(time_t now,
                                     const routerinfo_t *router,
                                     int need_uptime, int need_capacity)
 {
+  if(get_options()->AllowAnyRelay) {
+    return 0; 
+  }
   if (need_uptime) {
     if (!enough_mtbf_info) {
       /* XXXX We should change the rule from
@@ -526,7 +532,11 @@ dirserv_set_router_is_running(routerinfo_t *router, time_t now)
     rep_hist_note_router_unreachable(router->cache_info.identity_digest, when);
   }
 
-  node->is_running = answer;
+  if(get_options()->AllowAnyRelay) {
+    node->is_running = 1; 
+  } else {
+    node->is_running = answer;
+  }
 }
 
 /* Check <b>node</b> and <b>ri</b> on whether or not we should publish a
