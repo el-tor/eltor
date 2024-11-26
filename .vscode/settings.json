@@ -9,7 +9,8 @@
         "networkstatus.h": "c",
         "nodelist.h": "c",
         "or_circuit_st.h": "c",
-        "onion_tap.h": "c"
+        "onion_tap.h": "c",
+        "hs_service.h": "c"
     },
     "cSpell.words": [
         "eltor",

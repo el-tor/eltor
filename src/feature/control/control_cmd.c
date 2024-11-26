@@ -32,6 +32,7 @@
 #include "feature/control/control_events.h"
 #include "feature/control/control_getinfo.h"
 #include "feature/control/control_proto.h"
+#include "feature/control/control_sendpaymentproof.h"
 #include "feature/hs/hs_control.h"
 #include "feature/hs/hs_service.h"
 #include "feature/nodelist/nodelist.h"
@@ -2153,6 +2154,7 @@ static const control_cmd_def_t CONTROL_COMMANDS[] =
   ONE_LINE(onion_client_auth_add, CMD_FL_WIPE),
   ONE_LINE(onion_client_auth_remove, 0),
   ONE_LINE(onion_client_auth_view, 0),
+  ONE_LINE(sendpaymentproof, 0),
 };
 
 /**
