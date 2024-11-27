@@ -10,7 +10,9 @@
         "nodelist.h": "c",
         "or_circuit_st.h": "c",
         "onion_tap.h": "c",
-        "hs_service.h": "c"
+        "hs_service.h": "c",
+        "entrynodes.h": "c",
+        "control_cmd.h": "c"
     },
     "cSpell.words": [
         "eltor",

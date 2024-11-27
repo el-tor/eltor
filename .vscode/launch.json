@@ -10,7 +10,14 @@
       "MIMode": "lldb",  // Use LLDB instead of GDB (windows)
       "logging": {
         "engineLogging": false
-      }
+      },
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for LLDB",
+          "text": "settings set target.max-children-count 256",
+          "ignoreFailures": true
+        }
+      ]
     },
     {
       "name": "Attach to Tor Relay",
@@ -21,7 +28,14 @@
       "MIMode": "lldb",  // Use LLDB instead of GDB (windows)
       "logging": {
         "engineLogging": false
-      }
+      },
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for LLDB",
+          "text": "settings set target.max-children-count 256",
+          "ignoreFailures": true
+        }
+      ]
     }
   ]
 }
