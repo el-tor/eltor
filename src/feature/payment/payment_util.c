@@ -7,6 +7,7 @@
 #include "lib/confmgt/confmgt.h"
 #include "lib/log/log.h"
 #include "feature/payment/payment_util.h"
+#include "core/or/origin_circuit_st.h"
 
 // Function to convert a hex string to a byte array
 void
@@ -96,6 +97,49 @@ payment_util_get_preimage_from_torrc(char *eltor_preimage, char *eltor_payhash,
   const char prefixPayHash[] = "eltor_payhash";
   snprintf(eltor_payhash, PAYMENT_PAYHASH_SIZE, "%s%s", prefixPayHash,
            eltor_payhash_raw);
+}
+
+void
+payment_util_get_preimage_from_circ(char *eltor_preimage, char *eltor_payhash, char *preimage, char *payhash)
+{
+  // Ensure the input buffers and circuit are valid
+  // tor_assert(eltor_preimage);
+  // tor_assert(eltor_payhash);
+  // tor_assert(preimage);
+  // tor_assert(payhash);
+
+  if (!preimage) {
+    log_warn(LD_CONFIG, "Failed to read preimage");
+    return;
+  }
+  if (!payhash) {
+    log_warn(LD_CONFIG, "Failed to read payhash");
+    return;
+  }
+
+
+  // Define buffer sizes
+  const size_t raw_size = 64;
+  const size_t prefix_size = 14; // Length of "eltor_preimage"
+  const size_t total_size = raw_size + prefix_size + 1; // +1 for null terminator
+
+  // 1. Parse Preimage
+  char eltor_preimage_raw[raw_size + 1] = {0}; // null terminator
+  strncpy(eltor_preimage_raw, preimage, raw_size);
+  eltor_preimage_raw[raw_size] = '\0'; // Ensure null termination
+
+  // 2. Parse Payhash
+  char eltor_payhash_raw[raw_size + 1] = {0}; // null terminator
+  strncpy(eltor_payhash_raw, payhash, raw_size);
+  eltor_payhash_raw[raw_size] = '\0'; // Ensure null termination
+
+  // 3. Prefix the Preimage string
+  const char prefix[] = "eltor_preimage";
+  snprintf(eltor_preimage, total_size, "%s%s", prefix, eltor_preimage_raw);
+
+  // 4. Prefix the PayHash string
+  const char prefixPayHash[] = "eltor_payhash";
+  snprintf(eltor_payhash, total_size, "%s%s", prefixPayHash, eltor_payhash_raw);
 }
 
 // Function to check if payment has been made

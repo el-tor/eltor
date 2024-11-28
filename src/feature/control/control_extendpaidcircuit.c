@@ -79,15 +79,30 @@ const control_cmd_syntax_t extendpaidcircuit_syntax = {
 int handle_control_extendpaidcircuit(control_connection_t *conn,
                                  const control_cmd_args_t *args)
 {
-  
+  smartlist_t *nodes = smartlist_new();
+  origin_circuit_t *circ = NULL;
+  uint8_t intended_purpose = CIRCUIT_PURPOSE_C_GENERAL;
   const char *circ_id = smartlist_get(args->args, 0);
+  bool zero_circ = !strcmp("0", circ_id);
+
   const char *body = args->cmddata;
-  size_t body_len = args->cmddata_len;
 
   // Parse multiline input
   smartlist_t *lines = smartlist_new();
   smartlist_split_string(lines, body, "\n",
                          SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
+
+  if (zero_circ) {
+    circ = origin_circuit_init(intended_purpose, 0);
+    circ->first_hop_from_controller = 1;
+  } 
+  
+  // else if (!(circ = get_circ(circ_id))) {
+  //   control_printf_endreply(conn, 552, "Unknown circuit \"%s\"", circ_id);
+  //   goto done;
+  // }
+
+  circ->any_hop_from_controller = 1;
 
   // Process each line
   SMARTLIST_FOREACH_BEGIN(lines, char *, line) {
@@ -108,160 +123,98 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
     // Log to the debugger
     connection_printf_to_buf(conn, "Debug: fingerprint = %s, payhash = %s, preimage = %s", fingerprint, payhash, preimage);
 
+    // Add payhash and preimage to the circuit
+    circ->payhash = tor_strdup(payhash);
+    circ->preimage = tor_strdup(preimage);
+    // circ->payhash = payhash;
+    // circ->preimage = preimage;
 
-    // Validate inputs
-    if (strlen(payhash) != 64 || strlen(preimage) != 64) {
+    // TODO Validate inputs
+    // if (strlen(payhash) != 64 || strlen(preimage) != 64) {
     //   connection_printf_to_buf(conn, "513 PayHash and Preimage must be 64 characters.\r\n");
-    //   smartlist_free(tokens);
-      continue;
-    }
-
-    // Verify preimage matches payhash
-    // if (!crypto_digest256_eq(preimage, payhash)) {
-    //   connection_printf_to_buf(conn, "514 Preimage does not match PayHash.\r\n");
     //   smartlist_free(tokens);
     //   continue;
     // }
 
-    // Process the valid line (e.g., extend the circuit)
-    // ...
+    // TODO Verify preimage matches payhash
+
+    const node_t *node = node_get_by_nickname(fingerprint, 0);
+    if (!node) {
+      control_printf_endreply(conn, 552, "No such router \"%s\"", fingerprint);
+      smartlist_free(tokens);
+      goto done;
+    }
+    if (!node_has_preferred_descriptor(node, zero_circ)) {
+      control_printf_endreply(conn, 552, "No descriptor for \"%s\"", fingerprint);
+      smartlist_free(tokens);
+      goto done;
+    }
+    smartlist_add(nodes, (void*)node);
 
     smartlist_free(tokens);
   } SMARTLIST_FOREACH_END(line);
 
+  if (!smartlist_len(nodes)) {
+    control_write_endreply(conn, 512, "No valid nodes provided");
+    goto done;
+  }
+
+  bool first_node = zero_circ;
+  SMARTLIST_FOREACH(nodes, const node_t *, node,
+  {
+    extend_info_t *info = extend_info_from_node(node, first_node, true);
+    if (!info) {
+      tor_assert_nonfatal(first_node);
+      log_warn(LD_CONTROL,
+               "controller tried to connect to a node that lacks a suitable "
+               "descriptor, or which doesn't have any "
+               "addresses that are allowed by the firewall configuration; "
+               "circuit marked for closing.");
+      circuit_mark_for_close(TO_CIRCUIT(circ), -END_CIRC_REASON_CONNECTFAILED);
+      control_write_endreply(conn, 551, "Couldn't start circuit");
+      goto done;
+    }
+    circuit_append_new_exit(circ, info);
+    if (circ->build_state->desired_path_len > 1) {
+      circ->build_state->onehop_tunnel = 0;
+    }
+    extend_info_free(info);
+    first_node = 0;
+  });
+
+  if (zero_circ) {
+    int err_reason = 0;
+    if ((err_reason = circuit_handle_first_hop(circ)) < 0) {
+      circuit_mark_for_close(TO_CIRCUIT(circ), -err_reason);
+      control_write_endreply(conn, 551, "Couldn't start circuit");
+      goto done;
+    }
+  } else {
+    if (circ->base_.state == CIRCUIT_STATE_OPEN ||
+        circ->base_.state == CIRCUIT_STATE_GUARD_WAIT) {
+      int err_reason = 0;
+      circuit_set_state(TO_CIRCUIT(circ), CIRCUIT_STATE_BUILDING);
+      if ((err_reason = circuit_send_next_onion_skin(circ)) < 0) {
+        log_info(LD_CONTROL,
+                 "send_next_onion_skin failed; circuit marked for closing.");
+        circuit_mark_for_close(TO_CIRCUIT(circ), -err_reason);
+        control_write_endreply(conn, 551, "Couldn't send onion skin");
+        goto done;
+      }
+    }
+  }
+
+  control_printf_endreply(conn, 250, "EXTENDED %lu",
+                          (unsigned long)circ->global_identifier);
+  if (zero_circ) /* send a 'launched' event, for completeness */
+    circuit_event_status(circ, CIRC_EVENT_LAUNCHED, 0);
+
+done:
+  // TODO ? Free allocated memory
+  // tor_free(circ->payhash);
+  // tor_free(circ->preimage);
   SMARTLIST_FOREACH(lines, char *, cp, tor_free(cp));
   smartlist_free(lines);
-  
-  connection_printf_to_buf(conn, "250 OK Payment proof verified and sent to relays.\r\n");
-
-  // TODO: logic to pass the payment proof to the relays wrapped in onions
-
-  // const config_line_t *purpose_line = config_line_find_case(kwargs, "PURPOSE");
-  // bool zero_circ = !strcmp("0", circ_id);
-
-  // if (purpose_line) {
-  //   intended_purpose = circuit_purpose_from_string(purpose_line->value);
-  //   if (intended_purpose == CIRCUIT_PURPOSE_UNKNOWN) {
-  //     control_printf_endreply(conn, 552, "Unknown purpose \"%s\"",
-  //                             purpose_line->value);
-  //     goto done;
-  //   }
-  // }
-
-  // if (zero_circ) {
-  //   if (!path_str) {
-  //     circ = circuit_launch(intended_purpose, CIRCLAUNCH_NEED_CAPACITY);
-  //     if (!circ) {
-  //       control_write_endreply(conn, 551, "Couldn't start circuit");
-  //     } else {
-  //       control_printf_endreply(conn, 250, "EXTENDED %lu",
-  //                               (unsigned long)circ->global_identifier);
-  //     }
-  //     goto done;
-  //   }
-  // }
-
-  // if (!zero_circ && !(circ = get_circ(circ_id))) {
-  //   control_printf_endreply(conn, 552, "Unknown circuit \"%s\"", circ_id);
-  //   goto done;
-  // }
-
-  // if (!path_str) {
-  //   control_write_endreply(conn, 512, "syntax error: path required.");
-  //   goto done;
-  // }
-
-  // smartlist_split_string(router_nicknames, path_str, ",", 0, 0);
-
-  // nodes = smartlist_new();
-  // bool first_node = zero_circ;
-  // SMARTLIST_FOREACH_BEGIN (router_nicknames, const char *, n) {
-  //   char *fingerprint = tor_strtok_r(n, "::", &n);
-  //   char *paymenthash = tor_strtok_r(NULL, "::", &n);
-  //   char *preimage = tor_strtok_r(NULL, "::", &n);
-
-  //   if (!fingerprint || !paymenthash || !preimage) {
-  //     control_write_endreply(
-  //         conn, 512,
-  //         "Invalid format for fingerprint, paymenthash, or preimage");
-  //     goto done;
-  //   }
-
-  //   const node_t *node = node_get_by_nickname(fingerprint, 0);
-  //   if (!node) {
-  //     control_printf_endreply(conn, 552, "No such router \"%s\"", fingerprint);
-  //     goto done;
-  //   }
-  //   if (!node_has_preferred_descriptor(node, first_node)) {
-  //     control_printf_endreply(conn, 552, "No descriptor for \"%s\"",
-  //                             fingerprint);
-  //     goto done;
-  //   }
-  //   smartlist_add(nodes, (void *)node);
-  //   first_node = false;
-  // }
-  // SMARTLIST_FOREACH_END(n);
-
-  // if (!smartlist_len(nodes)) {
-  //   control_write_endreply(conn, 512, "No router names provided");
-  //   goto done;
-  // }
-
-  // if (zero_circ) {
-  //   circ = origin_circuit_init(intended_purpose, 0);
-  //   circ->first_hop_from_controller = 1;
-  // }
-
-  // circ->any_hop_from_controller = 1;
-
-  // first_node = zero_circ;
-  // SMARTLIST_FOREACH(nodes, const node_t *, node, {
-  //   extend_info_t *info = extend_info_from_node(node, first_node, true);
-  //   if (!info) {
-  //     tor_assert_nonfatal(first_node);
-  //     log_warn(LD_CONTROL,
-  //              "controller tried to connect to a node that lacks a suitable "
-  //              "descriptor, or which doesn't have any "
-  //              "addresses that are allowed by the firewall configuration; "
-  //              "circuit marked for closing.");
-  //     circuit_mark_for_close(TO_CIRCUIT(circ), -END_CIRC_REASON_CONNECTFAILED);
-  //     control_write_endreply(conn, 551, "Couldn't start circuit");
-  //     goto done;
-  //   }
-  //   circuit_append_new_exit(circ, info);
-  //   if (circ->build_state->desired_path_len > 1) {
-  //     circ->build_state->onehop_tunnel = 0;
-  //   }
-  //   extend_info_free(info);
-  //   first_node = 0;
-  // });
-
-  // if (zero_circ) {
-  //   int err_reason = 0;
-  //   if ((err_reason = circuit_handle_first_hop(circ)) < 0) {
-  //     circuit_mark_for_close(TO_CIRCUIT(circ), -err_reason);
-  //     control_write_endreply(conn, 551, "Couldn't start circuit");
-  //     goto done;
-  //   }
-  // } else {
-  //   if (circ->base_.state == CIRCUIT_STATE_OPEN ||
-  //       circ->base_.state == CIRCUIT_STATE_GUARD_WAIT) {
-  //     int err_reason = 0;
-  //     circuit_set_state(TO_CIRCUIT(circ), CIRCUIT_STATE_BUILDING);
-  //     if ((err_reason = circuit_send_next_onion_skin(circ)) < 0) {
-  //       log_info(LD_CONTROL,
-  //                "send_next_onion_skin failed; circuit marked for closing.");
-  //       circuit_mark_for_close(TO_CIRCUIT(circ), -err_reason);
-  //       control_write_endreply(conn, 551, "Couldn't send onion skin");
-  //       goto done;
-  //     }
-  //   }
-  // }
-
-  // control_printf_endreply(conn, 250, "EXTENDED %lu",
-  //                         (unsigned long)circ->global_identifier);
-
-  // if (zero_circ)
-  //   circuit_event_status(circ, CIRC_EVENT_LAUNCHED, 0);
+  smartlist_free(nodes);
   return 0;
 }

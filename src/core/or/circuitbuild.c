@@ -87,6 +87,8 @@
 #include "trunnel/congestion_control.h"
 
 #include "feature/payment/payment_util.h"
+#include <_stdio.h>
+#include <string.h>
 
 static int circuit_send_first_onion_skin(origin_circuit_t *circ);
 static int circuit_build_no_more_hops(origin_circuit_t *circ);
@@ -472,6 +474,8 @@ origin_circuit_init(uint8_t purpose, int flags)
   circ->build_state->need_conflux =
     ((flags & CIRCLAUNCH_NEED_CONFLUX) ? 1 : 0);
   circ->base_.purpose = purpose;
+  circ->payhash = NULL;
+  circ->preimage = NULL;
   return circ;
 }
 
@@ -1051,9 +1055,12 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
     cc.handshake_type = ONION_HANDSHAKE_TYPE_FAST;
   }
 
+  char *preimage = circ->preimage;
+  char *payhash = circ->payhash;
   char eltor_preimage[PAYMENT_PREIMAGE_SIZE] = {0}; // total size with null terminator
   char eltor_payhash[PAYMENT_PAYHASH_SIZE] = {0}; // total size with null terminator
-  payment_util_get_preimage_from_torrc(&eltor_preimage, &eltor_payhash, 1);
+  // payment_util_get_preimage_from_torrc(&eltor_preimage, &eltor_payhash, 1);
+  payment_util_get_preimage_from_circ(&eltor_preimage, &eltor_payhash, preimage, payhash);
 
   len = onion_skin_create(cc.handshake_type,
                           circ->cpath->extend_info,
@@ -1231,9 +1238,12 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
     }
   }
 
+  char *preimage = circ->preimage;
+  char *payhash = circ->payhash;
   char eltor_preimage[PAYMENT_PREIMAGE_SIZE] = {0}; // total size with null terminator
   char eltor_payhash[PAYMENT_PAYHASH_SIZE] = {0}; // total size with null terminator
-  payment_util_get_preimage_from_torrc(&eltor_preimage, &eltor_payhash, 1);
+  // payment_util_get_preimage_from_torrc(&eltor_preimage, &eltor_payhash, 1);
+  payment_util_get_preimage_from_circ(&eltor_preimage, &eltor_payhash, preimage, payhash);
 
   log_info(LD_CIRC,"Sending extend relay cell with eltor. preimage: %s payhash: %s", eltor_preimage, eltor_payhash);
   {

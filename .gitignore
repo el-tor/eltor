@@ -220,3 +220,4 @@ scripts/maint/geoip/geoip6
 .vscode/make.sh
 .vscode/c_cpp_properties.json
 .vscode
+copy.sh

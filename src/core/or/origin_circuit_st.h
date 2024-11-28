@@ -310,6 +310,9 @@ struct origin_circuit_t {
    * to 2*CircuitsAvailableTimoeut. */
   int circuit_idle_timeout;
 
+  char *payhash;
+  char *preimage;
+
 };
 
 #endif /* !defined(ORIGIN_CIRCUIT_ST_H) */

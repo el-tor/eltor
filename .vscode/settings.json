@@ -12,7 +12,9 @@
         "onion_tap.h": "c",
         "hs_service.h": "c",
         "entrynodes.h": "c",
-        "control_cmd.h": "c"
+        "control_cmd.h": "c",
+        "*.inc": "c",
+        "stdio.h": "c"
     },
     "cSpell.words": [
         "eltor",

@@ -1223,6 +1223,15 @@ circuit_free_(circuit_t *circ)
       memwipe(ocirc->socks_password, 0x06, ocirc->socks_password_len);
       tor_free(ocirc->socks_password);
     }
+    
+    // Free payhash and preimage if allocated
+    if (ocirc->payhash) {
+      tor_free(ocirc->payhash);
+    }
+    if (ocirc->preimage) {
+      tor_free(ocirc->preimage);
+    }
+
     addr_policy_list_free(ocirc->prepend_policy);
   } else {
     or_circuit_t *ocirc = TO_OR_CIRCUIT(circ);
