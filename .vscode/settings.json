@@ -14,7 +14,12 @@
         "entrynodes.h": "c",
         "control_cmd.h": "c",
         "*.inc": "c",
-        "stdio.h": "c"
+        "stdio.h": "c",
+        "origin_circuit_st.h": "c",
+        "circuitlist.h": "c",
+        "routermode.h": "c",
+        "selftest.h": "c",
+        "extend_info_st.h": "c"
     },
     "cSpell.words": [
         "eltor",

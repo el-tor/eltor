@@ -1059,8 +1059,21 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
   char *payhash = circ->payhash;
   char eltor_preimage[PAYMENT_PREIMAGE_SIZE] = {0}; // total size with null terminator
   char eltor_payhash[PAYMENT_PAYHASH_SIZE] = {0}; // total size with null terminator
-  // payment_util_get_preimage_from_torrc(&eltor_preimage, &eltor_payhash, 1);
-  payment_util_get_preimage_from_circ(&eltor_preimage, &eltor_payhash, preimage, payhash);
+
+  uint8_t purpose = circ->base_.purpose;
+  if (
+    circuit_purpose_is_hidden_service(purpose)
+  ) {
+    // Skip payments for hidden services for now, just use dummy values
+    // TODO: Build RPC commands for the following tasks:
+    // 	1. Create directory circuit
+    // 	2. Fetch hidden service descriptor
+    // 	3. Build rendezvous circuit
+    //  4. Connect to hidden service
+    payment_util_get_preimage_from_torrc(&eltor_preimage, &eltor_payhash, 1);
+  } else {
+    payment_util_get_preimage_from_circ(&eltor_preimage, &eltor_payhash, preimage, payhash);
+  }
 
   len = onion_skin_create(cc.handshake_type,
                           circ->cpath->extend_info,
@@ -1242,8 +1255,20 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   char *payhash = circ->payhash;
   char eltor_preimage[PAYMENT_PREIMAGE_SIZE] = {0}; // total size with null terminator
   char eltor_payhash[PAYMENT_PAYHASH_SIZE] = {0}; // total size with null terminator
-  // payment_util_get_preimage_from_torrc(&eltor_preimage, &eltor_payhash, 1);
-  payment_util_get_preimage_from_circ(&eltor_preimage, &eltor_payhash, preimage, payhash);
+  uint8_t purpose = circ->base_.purpose;
+  if (
+    circuit_purpose_is_hidden_service(purpose)
+  ) {
+    // Skip payments for hidden services for now, just use dummy values
+    // TODO: Build RPC commands for the following tasks:
+    // 	1. Create directory circuit
+    // 	2. Fetch hidden service descriptor
+    // 	3. Build rendezvous circuit
+    //  4. Connect to hidden service
+    payment_util_get_preimage_from_torrc(&eltor_preimage, &eltor_payhash, 1);
+  } else {
+    payment_util_get_preimage_from_circ(&eltor_preimage, &eltor_payhash, preimage, payhash);
+  }
 
   log_info(LD_CIRC,"Sending extend relay cell with eltor. preimage: %s payhash: %s", eltor_preimage, eltor_payhash);
   {
