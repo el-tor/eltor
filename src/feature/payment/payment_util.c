@@ -124,12 +124,14 @@ payment_util_get_preimage_from_circ(char *eltor_preimage, char *eltor_payhash, c
   const size_t total_size = raw_size + prefix_size + 1; // +1 for null terminator
 
   // 1. Parse Preimage
-  char eltor_preimage_raw[raw_size + 1] = {0}; // null terminator
+  char eltor_preimage_raw[raw_size + 1];
+  memset(eltor_preimage_raw, 0, sizeof(eltor_preimage_raw)); // null terminator
   strncpy(eltor_preimage_raw, preimage, raw_size);
   eltor_preimage_raw[raw_size] = '\0'; // Ensure null termination
 
   // 2. Parse Payhash
-  char eltor_payhash_raw[raw_size + 1] = {0}; // null terminator
+  char eltor_payhash_raw[raw_size + 1];
+  memset(eltor_payhash_raw, 0, sizeof(eltor_payhash_raw)); // null terminator
   strncpy(eltor_payhash_raw, payhash, raw_size);
   eltor_payhash_raw[raw_size] = '\0'; // Ensure null termination
 

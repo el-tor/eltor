@@ -87,7 +87,7 @@
 #include "trunnel/congestion_control.h"
 
 #include "feature/payment/payment_util.h"
-#include <_stdio.h>
+#include <stdio.h>
 #include <string.h>
 
 static int circuit_send_first_onion_skin(origin_circuit_t *circ);
