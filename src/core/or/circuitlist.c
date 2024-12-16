@@ -1224,12 +1224,9 @@ circuit_free_(circuit_t *circ)
       tor_free(ocirc->socks_password);
     }
     
-    // Free payhash and preimage if allocated
+    // Free payhash if allocated
     if (ocirc->payhash) {
       tor_free(ocirc->payhash);
-    }
-    if (ocirc->preimage) {
-      tor_free(ocirc->preimage);
     }
 
     addr_policy_list_free(ocirc->prepend_policy);

@@ -475,7 +475,6 @@ origin_circuit_init(uint8_t purpose, int flags)
     ((flags & CIRCLAUNCH_NEED_CONFLUX) ? 1 : 0);
   circ->base_.purpose = purpose;
   circ->payhash = NULL;
-  circ->preimage = NULL;
   return circ;
 }
 
@@ -1055,9 +1054,7 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
     cc.handshake_type = ONION_HANDSHAKE_TYPE_FAST;
   }
 
-  char *preimage = circ->preimage;
   char *payhash = circ->payhash;
-  char eltor_preimage[PAYMENT_PREIMAGE_SIZE] = {0}; // total size with null terminator
   char eltor_payhash[PAYMENT_PAYHASH_SIZE] = {0}; // total size with null terminator
 
   uint8_t purpose = circ->base_.purpose;
@@ -1070,9 +1067,9 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
     // 	2. Fetch hidden service descriptor
     // 	3. Build rendezvous circuit
     //  4. Connect to hidden service
-    payment_util_get_preimage_from_torrc(&eltor_preimage, &eltor_payhash, 1);
+    payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
   } else {
-    payment_util_get_preimage_from_circ(&eltor_preimage, &eltor_payhash, preimage, payhash);
+    payment_util_get_preimage_from_circ(&eltor_payhash, payhash);
   }
 
   len = onion_skin_create(cc.handshake_type,
@@ -1080,7 +1077,6 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
                           &circ->cpath->handshake_state,
                           cc.onionskin,
                           sizeof(cc.onionskin),
-                          NULL, // TODO pass Preimage
                           NULL ); // TODO pass PayHash
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create (first hop) failed.");
@@ -1230,7 +1226,6 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
                           &hop->handshake_state,
                           ec.create_cell.onionskin,
                           sizeof(ec.create_cell.onionskin), 
-                          NULL, // TODO pass preimage
                           NULL); // TODO pass payhash
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create failed.");
@@ -1251,9 +1246,7 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
     }
   }
 
-  char *preimage = circ->preimage;
   char *payhash = circ->payhash;
-  char eltor_preimage[PAYMENT_PREIMAGE_SIZE] = {0}; // total size with null terminator
   char eltor_payhash[PAYMENT_PAYHASH_SIZE] = {0}; // total size with null terminator
   uint8_t purpose = circ->base_.purpose;
   if (
@@ -1265,17 +1258,17 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
     // 	2. Fetch hidden service descriptor
     // 	3. Build rendezvous circuit
     //  4. Connect to hidden service
-    payment_util_get_preimage_from_torrc(&eltor_preimage, &eltor_payhash, 1);
+    payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
   } else {
-    payment_util_get_preimage_from_circ(&eltor_preimage, &eltor_payhash, preimage, payhash);
+    payment_util_get_preimage_from_circ(&eltor_payhash, payhash);
   }
 
-  log_info(LD_CIRC,"Sending extend relay cell with eltor. preimage: %s payhash: %s", eltor_preimage, eltor_payhash);
+  log_info(LD_CIRC,"Sending extend relay cell with eltor. payhash: %s", eltor_payhash);
   {
     uint8_t command = 0;
     uint16_t payload_len=0;
     uint8_t payload[RELAY_PAYLOAD_SIZE];
-    if (extend_cell_format(&command, &payload_len, payload, &ec, eltor_preimage, eltor_payhash)<0) {
+    if (extend_cell_format(&command, &payload_len, payload, &ec, eltor_payhash)<0) {
       log_warn(LD_CIRC,"Couldn't format extend cell");
       return -END_CIRC_REASON_INTERNAL;
     }

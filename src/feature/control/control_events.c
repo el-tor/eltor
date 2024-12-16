@@ -110,6 +110,7 @@ const struct control_event_t control_event_table[] = {
   { EVENT_HS_DESC, "HS_DESC" },
   { EVENT_HS_DESC_CONTENT, "HS_DESC_CONTENT" },
   { EVENT_NETWORK_LIVENESS, "NETWORK_LIVENESS" },
+  { EVENT_PAYMENT_ID_HASH_RECEIVED, "PAYMENT_ID_HASH_RECEIVED" },
   { 0, NULL },
 };
 
@@ -2286,6 +2287,21 @@ control_events_free_all(void)
   }
   global_event_mask = 0;
   disable_log_messages = 0;
+}
+
+/** Called when a payment id hash is received in an onion cell */
+int control_event_payment_id_hash_received(char *payment_id_hash)
+{
+
+  if (EVENT_IS_INTERESTING(EVENT_PAYMENT_ID_HASH_RECEIVED)) {
+    log_info(LD_APP, "LOG EVENT_PAYMENT_ID_HASH_RECEIVED %s", payment_id_hash);
+    send_control_event(EVENT_PAYMENT_ID_HASH_RECEIVED,
+                     "650 EVENT_PAYMENT_ID_HASH_RECEIVED %s\r\n", payment_id_hash);
+  } else {
+    log_info(LD_APP, "LOG EVENT_PAYMENT_ID_HASH_RECEIVED NOT INTERESTING");
+  }
+
+  return 0;
 }
 
 #ifdef TOR_UNIT_TESTS

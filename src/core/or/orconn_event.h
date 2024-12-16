@@ -101,3 +101,5 @@ void orconn_status_publish(orconn_status_msg_t *);
 #endif
 
 #endif /* !defined(TOR_ORCONN_EVENT_H) */
+
+#define EVENT_PAYMENT_ID_HASH_RECEIVED 42

@@ -8,6 +8,7 @@
 #include "lib/log/log.h"
 #include "feature/payment/payment_util.h"
 #include "core/or/origin_circuit_st.h"
+#include "feature/control/control_events.h"
 
 // Function to convert a hex string to a byte array
 void
@@ -41,8 +42,7 @@ payment_util_verify_preimage(const char *preimage_hex,
 
 // Function to get preimage and payhash from torrc and prefix them
 void
-payment_util_get_preimage_from_torrc(char *eltor_preimage, char *eltor_payhash,
-                                     int hop_num)
+payment_util_get_preimage_from_torrc(char *eltor_payhash, int hop_num)
 {
   char eltor_preimage_raw[64 + 1] = {0}; // null terminator
   char eltor_payhash_raw[64 + 1] = {0}; // null terminator
@@ -90,8 +90,8 @@ payment_util_get_preimage_from_torrc(char *eltor_preimage, char *eltor_payhash,
   tor_free(torrc_contents);
 
   // Prefix the Preimage string
-  const char prefix[] = "eltor_preimage";
-  snprintf(eltor_preimage, 64 + 14 + 1, "%s%s", prefix, eltor_preimage_raw);
+  // const char prefix[] = "eltor_preimage";
+  // snprintf(eltor_preimage, 64 + 14 + 1, "%s%s", prefix, eltor_preimage_raw);
 
   // Prefix the PayHash string
   const char prefixPayHash[] = "eltor_payhash";
@@ -100,7 +100,7 @@ payment_util_get_preimage_from_torrc(char *eltor_preimage, char *eltor_payhash,
 }
 
 void
-payment_util_get_preimage_from_circ(char *eltor_preimage, char *eltor_payhash, char *preimage, char *payhash)
+payment_util_get_preimage_from_circ(char *eltor_payhash, char *payhash)
 {
   // Ensure the input buffers and circuit are valid
   // tor_assert(eltor_preimage);
@@ -108,10 +108,10 @@ payment_util_get_preimage_from_circ(char *eltor_preimage, char *eltor_payhash, c
   // tor_assert(preimage);
   // tor_assert(payhash);
 
-  if (!preimage) {
-    log_warn(LD_CONFIG, "Failed to read preimage");
-    return;
-  }
+  // if (!preimage) {
+  //   log_warn(LD_CONFIG, "Failed to read preimage");
+  //   return;
+  // }
   if (!payhash) {
     log_warn(LD_CONFIG, "Failed to read payhash");
     return;
@@ -124,10 +124,10 @@ payment_util_get_preimage_from_circ(char *eltor_preimage, char *eltor_payhash, c
   const size_t total_size = raw_size + prefix_size + 1; // +1 for null terminator
 
   // 1. Parse Preimage
-  char eltor_preimage_raw[raw_size + 1];
-  memset(eltor_preimage_raw, 0, sizeof(eltor_preimage_raw)); // null terminator
-  strncpy(eltor_preimage_raw, preimage, raw_size);
-  eltor_preimage_raw[raw_size] = '\0'; // Ensure null termination
+  // char eltor_preimage_raw[raw_size + 1];
+  // memset(eltor_preimage_raw, 0, sizeof(eltor_preimage_raw)); // null terminator
+  // strncpy(eltor_preimage_raw, preimage, raw_size);
+  // eltor_preimage_raw[raw_size] = '\0'; // Ensure null termination
 
   // 2. Parse Payhash
   char eltor_payhash_raw[raw_size + 1];
@@ -136,8 +136,8 @@ payment_util_get_preimage_from_circ(char *eltor_preimage, char *eltor_payhash, c
   eltor_payhash_raw[raw_size] = '\0'; // Ensure null termination
 
   // 3. Prefix the Preimage string
-  const char prefix[] = "eltor_preimage";
-  snprintf(eltor_preimage, total_size, "%s%s", prefix, eltor_preimage_raw);
+  // const char prefix[] = "eltor_preimage";
+  // snprintf(eltor_preimage, total_size, "%s%s", prefix, eltor_preimage_raw);
 
   // 4. Prefix the PayHash string
   const char prefixPayHash[] = "eltor_payhash";
@@ -192,5 +192,26 @@ payment_util_has_paid(const char *contact_info, const uint8_t *payload,
     }
   }
 
+  return 0;
+}
+
+// Function to check if a payment id hash was passed
+int
+payment_util_has_payment_id_hash(const char *contact_info, const uint8_t *payload, size_t payload_len)
+{
+  // Check for payment id hash
+  const char *prefixPayHash = "eltor_payhash";
+  size_t plen = strlen(prefixPayHash);
+  const void *foundPayHash = tor_memmem(payload, payload_len, prefixPayHash, plen);
+  if (foundPayHash) {
+      char payhash[64 + 1]; // null-terminated string
+      size_t indexPayHash = (const uint8_t *)foundPayHash - payload;
+      memcpy(payhash, payload + indexPayHash + plen, 64);
+      payhash[64] = '\0'; // Null-terminate the string
+      log_info(LD_APP, "EVT ElTorRelay: %s, PayHash: %s", get_options()->Nickname,
+               payhash);
+      control_event_payment_id_hash_received(payhash);
+      return 1;
+  }
   return 0;
 }

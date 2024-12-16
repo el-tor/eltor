@@ -311,8 +311,6 @@ struct origin_circuit_t {
   int circuit_idle_timeout;
 
   char *payhash;
-  char *preimage;
-
 };
 
 #endif /* !defined(ORIGIN_CIRCUIT_ST_H) */

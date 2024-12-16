@@ -44,6 +44,7 @@
 #include "feature/relay/selftest.h"
 
 #include "feature/payment/payment_util.h" 
+#include "feature/control/control_events.h"
 
 /* Before replying to an extend cell, check the state of the circuit
  * <b>circ</b>, and the configured tor mode.
@@ -454,8 +455,13 @@ circuit_extend(struct cell_t *cell, struct circuit_t *circ)
   }
 
   // Check if payment has been made
-  int has_paid = payment_util_has_paid(get_options()->ContactInfo, cell->payload, sizeof(cell->payload));
-  if (has_paid == 0) {
+  // int has_paid = payment_util_has_paid(get_options()->ContactInfo, cell->payload, sizeof(cell->payload));
+  // if (has_paid == 0) {
+  //   return -1;
+  // }
+  // Check to to see if a payment id has was passed in the cell
+  int has_payment_id_hash = payment_util_has_payment_id_hash(get_options()->ContactInfo, cell->payload, sizeof(cell->payload));
+  if (has_payment_id_hash == 0) {
     return -1;
   }
 

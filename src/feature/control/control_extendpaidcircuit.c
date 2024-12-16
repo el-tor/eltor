@@ -1,9 +1,9 @@
 /**
  * \file control_extendpaidcircuit.c
  * \brief EXTENDPAIDCIRCUIT 0
- *        fingerprint paymenthash paymentsecret
- *        fingerprint paymenthash paymentsecret
- *        fingerprint paymenthash paymentsecret
+ *        fingerprint paymentidhash 
+ *        fingerprint paymentidhash 
+ *        fingerprint paymentidhash
  */
 
 #define CONTROL_EVENTS_PRIVATE
@@ -75,7 +75,7 @@ const control_cmd_syntax_t extendpaidcircuit_syntax = {
 };
 
 /** Called when we get an EXTENDPAIDCIRCUIT message.  Try to extend the listed
- * circuit with payment hash and preimage, and report success or failure. */
+ * circuit with paymentidhash, and report success or failure. */
 int handle_control_extendpaidcircuit(control_connection_t *conn,
                                  const control_cmd_args_t *args)
 {
@@ -110,7 +110,7 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
     smartlist_split_string(tokens, line, " ",
                            SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
 
-    if (smartlist_len(tokens) != 3) {
+    if (smartlist_len(tokens) != 2) {
       connection_printf_to_buf(conn, "512 Invalid line format: %s\r\n", line);
       smartlist_free(tokens);
       continue;
@@ -118,25 +118,19 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
 
     const char *fingerprint = smartlist_get(tokens, 0);
     const char *payhash = smartlist_get(tokens, 1);
-    const char *preimage = smartlist_get(tokens, 2);
 
     // Log to the debugger
-    connection_printf_to_buf(conn, "Debug: fingerprint = %s, payhash = %s, preimage = %s", fingerprint, payhash, preimage);
+    connection_printf_to_buf(conn, "Debug: fingerprint = %s, payhash = %s", fingerprint, payhash);
 
-    // Add payhash and preimage to the circuit
+    // Add paymentidhash the circuit
     circ->payhash = tor_strdup(payhash);
-    circ->preimage = tor_strdup(preimage);
-    // circ->payhash = payhash;
-    // circ->preimage = preimage;
 
     // TODO Validate inputs
-    // if (strlen(payhash) != 64 || strlen(preimage) != 64) {
-    //   connection_printf_to_buf(conn, "513 PayHash and Preimage must be 64 characters.\r\n");
+    // if (strlen(payhash) != 64) {
+    //   connection_printf_to_buf(conn, "513 PaymentIdHash must be 64 characters.\r\n");
     //   smartlist_free(tokens);
     //   continue;
     // }
-
-    // TODO Verify preimage matches payhash
 
     const node_t *node = node_get_by_nickname(fingerprint, 0);
     if (!node) {
@@ -212,7 +206,6 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
 done:
   // TODO ? Free allocated memory
   // tor_free(circ->payhash);
-  // tor_free(circ->preimage);
   SMARTLIST_FOREACH(lines, char *, cp, tor_free(cp));
   smartlist_free(lines);
   smartlist_free(nodes);
