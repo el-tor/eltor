@@ -1,3 +1,31 @@
+El Tor
+======
+
+# Repository Has Moved
+
+
+**Notice:** This repository has been moved. Main code repo moving over to https://github.com/el-tor/eltor. 
+
+Other related repos moved here:
+
+El Tor spec:
+- [(00) El Tor Spec](https://github.com/el-tor/eltor/blob/master/spec/00_spec.md)
+- [(01) El Tor](https://github.com/el-tor/eltor/blob/master/spec/01_paid_circuits.md)
+
+Other projects located at:
+
+- eltor (tor + wallet) https://github.com/el-tor/eltor 
+- libtor (tor lib in rust) https://github.com/el-tor/libtor  
+- libtor-sys (tor => c wrapper => rust ) https://github.com/el-tor/libtor-sys
+- lni (lightning node interface and wallet for eltor) https://github.com/lightning-node-interface/lni 
+
+
+---
+
+
+Tor
+===
+
 Tor protects your privacy on the internet by hiding the connection between
 your Internet address and the services you use. We believe Tor is reasonably
 secure, but please ensure you read the instructions and configure it properly.
