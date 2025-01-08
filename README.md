@@ -4,13 +4,15 @@ El Tor
 # Repository Has Moved
 
 
-**Notice:** This repository has been moved. Main code repo moving over to https://github.com/el-tor/eltor. 
+**Notice:** This repository has been moved. Main code repo moving over to https://github.com/el-tor/eltor
 
 Other related repos moved here:
 
 El Tor spec:
-- [(00) El Tor Spec](https://github.com/el-tor/eltor/blob/master/spec/00_spec.md)
-- [(01) El Tor](https://github.com/el-tor/eltor/blob/master/spec/01_paid_circuits.md)
+
+[(00) El Tor Spec](https://github.com/el-tor/eltor/blob/master/spec/00_spec.md)
+
+[(01) El Tor](https://github.com/el-tor/eltor/blob/master/spec/01_paid_circuits.md)
 
 Other projects located at:
 
