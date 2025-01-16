@@ -1,12 +1,7 @@
 El Tor
 ======
 
-# Repository Has Moved
-
-
-**Notice:** This has been moved here https://github.com/orgs/el-tor/repositories
-
-### Other repos repos moved here:
+High bandwidth Tor network fork. Incentivized by the Bitcoin Lightning Network. Relays earn sats via BOLT 12 and blinded paths.
 
 #### Projects
 - eltor - Fork of the Tor network. Adds paid circuit handling and EXTENDPAIDCIRCUIT RPC https://github.com/el-tor/eltor
