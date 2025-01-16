@@ -4,25 +4,25 @@ El Tor
 # Repository Has Moved
 
 
-**Notice:** This repository has been moved. Main code repo moving over to https://github.com/el-tor/eltor
+**Notice:** This has been moved here https://github.com/orgs/el-tor/repositories
 
-Other related repos moved here:
+### Other repos repos moved here:
 
-El Tor spec:
+#### Projects
+- eltor - Fork of the Tor network. Adds paid circuit handling and EXTENDPAIDCIRCUIT RPC https://github.com/el-tor/eltor
+- eltord - Main daemon that runs El Tor, connects to wallets, listens for payment events and calls rpc's https://github.com/el-tor/eltord
+- eltor-app - VPN-like client to connect to El Tor and remote wallets. UI for running relays and creating hidden services. https://github.com/el-tor/eltor-app
 
-[(00) El Tor Spec](https://github.com/el-tor/eltor/blob/master/spec/00_spec.md)
+#### Libraries
+- libeltor - Fork of libtor. Rust crate for bundling inside your project a fully-running eltord daemon with fallback to the normal Tor network https://github.com/el-tor/libeltor 
+- LNI - Lightning node interface library. Standard interface to remote connect to CLN, LND, Phoenixd and other implementations. Rust language bindings for android, ios, and javascript (nodejs, react-native). https://github.com/lightning-node-interface/lni 
+    
+#### Testnets
+- chutney - Tor testnet fork https://github.com/el-tor/chutney
 
-[(01) El Tor](https://github.com/el-tor/eltor/blob/master/spec/01_paid_circuits.md)
-
-Other projects located at:
-
-- eltor (tor + wallet) https://github.com/el-tor/eltor 
-- libtor (tor lib in rust) https://github.com/el-tor/libtor  
-- libtor-sys (tor => c wrapper => rust ) https://github.com/el-tor/libtor-sys
-- lni (lightning node interface and wallet for eltor) https://github.com/lightning-node-interface/lni 
-
-
----
+#### Spec:
+- [(00) El Tor Spec](https://github.com/el-tor/eltord/blob/master/spec/00_spec.md)
+- [(01) El Tor](https://github.com/el-tor/eltord/blob/master/spec/01_paid_circuits.md)
 
 
 Tor
