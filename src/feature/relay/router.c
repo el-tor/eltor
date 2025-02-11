@@ -3011,6 +3011,13 @@ router_dump_router_to_string(routerinfo_t *router,
     smartlist_add_asprintf(chunks, "contact %s\n", ci);
   }
 
+  if (options->PaymentBolt12Offer && strlen(options->PaymentBolt12Offer)) {
+    const char *payi = options->PaymentBolt12Offer;
+    if (strchr(payi, '\n') || strchr(payi, '\r'))
+      payi = escaped(payi);
+    smartlist_add_asprintf(chunks, "PaymentBolt12Offer %s\n", payi);
+  }
+
   if (options->BridgeRelay) {
     char *bd = NULL;
 

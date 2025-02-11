@@ -1131,6 +1131,7 @@ struct or_options_t {
   char *ElTorPayHashHop6;
   char *ElTorPayHashHop7;
   char *ElTorPayHashHop8;
+  char *PaymentBolt12Offer;
 
 };
 

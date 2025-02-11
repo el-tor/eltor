@@ -930,6 +930,7 @@ routerinfo_free_(routerinfo_t *router)
   tor_free(router->platform);
   tor_free(router->protocol_list);
   tor_free(router->contact_info);
+  tor_free(router->PaymentBolt12Offer);
   if (router->onion_pkey)
     tor_free(router->onion_pkey);
   tor_free(router->onion_curve25519_pkey);
@@ -2990,6 +2991,10 @@ router_differences_are_cosmetic(const routerinfo_t *r1, const routerinfo_t *r2)
       (!r1->contact_info && r2->contact_info) ||
       (r1->contact_info && r2->contact_info &&
        strcasecmp(r1->contact_info, r2->contact_info)) ||
+      (r1->PaymentBolt12Offer && !r2->PaymentBolt12Offer) || /* PaymentBolt12Offer is optional */
+      (!r1->PaymentBolt12Offer && r2->PaymentBolt12Offer) ||
+      (r1->PaymentBolt12Offer && r2->PaymentBolt12Offer &&
+      strcasecmp(r1->PaymentBolt12Offer, r2->PaymentBolt12Offer)) ||
       r1->is_hibernating != r2->is_hibernating ||
       ! addr_policies_eq(r1->exit_policy, r2->exit_policy) ||
       (r1->supports_tunnelled_dir_requests !=
@@ -3285,18 +3290,20 @@ const char *
 esc_router_info(const routerinfo_t *router)
 {
   static char *info=NULL;
-  char *esc_contact, *esc_platform;
+  char *esc_contact, *esc_platform, *esc_PaymentBolt12Offer;
   tor_free(info);
 
   if (!router)
     return NULL; /* we're exiting; just free the memory we use */
 
   esc_contact = esc_for_log(router->contact_info);
+  esc_PaymentBolt12Offer = esc_for_log(router->PaymentBolt12Offer);
   esc_platform = esc_for_log(router->platform);
 
-  tor_asprintf(&info, "Contact %s, Platform %s", esc_contact, esc_platform);
+  tor_asprintf(&info, "Contact %s, Platform %s,PaymentBolt12Offer %s", esc_contact, esc_platform, esc_PaymentBolt12Offer);
   tor_free(esc_contact);
   tor_free(esc_platform);
+  tor_free(esc_PaymentBolt12Offer);
 
   return info;
 }

@@ -411,6 +411,7 @@ static const config_var_t option_vars_[] = {
   V(ElTorPayHashHop6,        STRING,   "None"),
   V(ElTorPayHashHop7,        STRING,   "None"),
   V(ElTorPayHashHop8,        STRING,   "None"),
+  V(PaymentBolt12Offer,      STRING,   NULL),
   VPORT(ControlPort),
   V(ControlPortFileGroupReadable,BOOL,     "0"),
   V(ControlPortWriteToFile,      FILENAME, NULL),

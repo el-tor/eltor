@@ -113,6 +113,8 @@ struct routerinfo_t {
    * things; see notes on ROUTER_PURPOSE_* macros above.
    */
   uint8_t purpose;
+
+  char *PaymentBolt12Offer; /**< Payment Bolt12 offer for this router. */
 };
 
 #endif /* !defined(ROUTERINFO_ST_H) */
