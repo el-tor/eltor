@@ -122,6 +122,7 @@ struct routerinfo_t {
   int PaymentInterval;
   int PaymentInvervalRounds;
   int PaymentHandshakeFee;
+  int PaymentBandwithQuota;
 
 };
 

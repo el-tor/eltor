@@ -1140,6 +1140,7 @@ struct or_options_t {
   int PaymentInterval;
   int PaymentInvervalRounds;
   int PaymentHandshakeFee;
+  int PaymentBandwidthQuota;
   int PaymentCircuitMaxFee;
   struct config_line_t *PaymentLightningNodeConfigurations;
 

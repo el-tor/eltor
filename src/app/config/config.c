@@ -412,6 +412,7 @@ static const config_var_t option_vars_[] = {
   V(ElTorPayHashHop7,        STRING,   "None"),
   V(ElTorPayHashHop8,        STRING,   "None"),
   
+  // Relay Settings
   V(PaymentBolt12Offer,                 STRING,   NULL),
   V(PaymentBip353,                      STRING,   NULL),
   V(PaymentBolt11Lnurl,                 STRING,   NULL),
@@ -420,6 +421,8 @@ static const config_var_t option_vars_[] = {
   V(PaymentInterval,                    POSINT,   NULL),
   V(PaymentInvervalRounds,              POSINT,   NULL),
   V(PaymentHandshakeFee,                INT,      NULL),
+  V(PaymentBandwidthQuota,              INT,      NULL),
+  // Client Settings
   V(PaymentCircuitMaxFee,               POSINT,   NULL),
   VAR("PaymentLightningNodeConfig",     LINELIST, PaymentLightningNodeConfigurations, NULL),
 

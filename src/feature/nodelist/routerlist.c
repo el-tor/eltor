@@ -3021,6 +3021,7 @@ router_differences_are_cosmetic(const routerinfo_t *r1, const routerinfo_t *r2)
       (r1->PaymentInterval != r2->PaymentInterval) ||
       (r1->PaymentInvervalRounds != r2->PaymentInvervalRounds) ||
       (r1->PaymentHandshakeFee != r2->PaymentHandshakeFee) ||
+      (r1->PaymentBandwithQuota != r2->PaymentBandwithQuota) ||
       
       
       r1->is_hibernating != r2->is_hibernating ||
@@ -3331,7 +3332,7 @@ esc_router_info(const routerinfo_t *router)
   esc_PaymentBolt11LightningAddress = esc_for_log(router->PaymentBolt11LightningAddress);
   esc_platform = esc_for_log(router->platform);
 
-  tor_asprintf(&info, "Contact %s, Platform %s, PaymentBolt12Offer %s, PaymentBip353 %s, PaymentBolt11Lnurl %s, PaymentBolt11LightningAddress %s, PaymentRateMsats %d, PaymentInterval %d, PaymentInvervalRounds %d, PaymentHandshakeFee %d", esc_contact, esc_platform, esc_PaymentBolt12Offer, esc_PaymentBip353, esc_PaymentBolt11Lnurl, esc_PaymentBolt11LightningAddress, router->PaymentRateMsats, router->PaymentInterval, router->PaymentInvervalRounds, router->PaymentHandshakeFee);
+  tor_asprintf(&info, "Contact %s, Platform %s, PaymentBolt12Offer %s, PaymentBip353 %s, PaymentBolt11Lnurl %s, PaymentBolt11LightningAddress %s, PaymentRateMsats %d, PaymentInterval %d, PaymentInvervalRounds %d, PaymentHandshakeFee %d, PaymentBandwithQuota %d", esc_contact, esc_platform, esc_PaymentBolt12Offer, esc_PaymentBip353, esc_PaymentBolt11Lnurl, esc_PaymentBolt11LightningAddress, router->PaymentRateMsats, router->PaymentInterval, router->PaymentInvervalRounds, router->PaymentHandshakeFee, router->PaymentBandwithQuota);
   tor_free(esc_contact);
   tor_free(esc_platform);
   tor_free(esc_PaymentBolt12Offer);
