@@ -3018,6 +3018,50 @@ router_dump_router_to_string(routerinfo_t *router,
     smartlist_add_asprintf(chunks, "PaymentBolt12Offer %s\n", payi);
   }
 
+  if (options->PaymentBip353 && strlen(options->PaymentBip353)) {
+    const char *pay353 = options->PaymentBip353;
+    if (strchr(pay353, '\n') || strchr(pay353, '\r'))
+      pay353 = escaped(pay353);
+    smartlist_add_asprintf(chunks, "PaymentBip353 %s\n", pay353);
+  }
+
+  if (options->PaymentBolt11Lnurl && strlen(options->PaymentBolt11Lnurl)) {
+    const char *paylnurl = options->PaymentBolt11Lnurl;
+    if (strchr(paylnurl, '\n') || strchr(paylnurl, '\r'))
+      paylnurl = escaped(paylnurl);
+    smartlist_add_asprintf(chunks, "PaymentBolt11Lnurl %s\n", paylnurl);
+  }
+
+  if (options->PaymentBolt11LightningAddress && strlen(options->PaymentBolt11LightningAddress)) {
+    const char *payla = options->PaymentBolt11LightningAddress;
+    if (strchr(payla, '\n') || strchr(payla, '\r'))
+      payla = escaped(payla);
+    smartlist_add_asprintf(chunks, "PaymentBolt11LightningAddress %s\n", payla);
+  }
+
+  if (options->PaymentRateMsats) {
+    smartlist_add_asprintf(chunks, "PaymentRateMsats %d\n", options->PaymentRateMsats);
+  }
+
+  if (options->PaymentInterval) {
+    smartlist_add_asprintf(chunks, "PaymentInterval %d\n", options->PaymentInterval);
+  }
+
+  if (options->PaymentInvervalRounds) {
+    smartlist_add_asprintf(chunks, "PaymentInvervalRounds %d\n", options->PaymentInvervalRounds);
+  }
+
+  if (options->PaymentHandshakeFee) {
+    smartlist_add_asprintf(chunks, "PaymentHandshakeFee %d\n", options->PaymentHandshakeFee);
+  }
+
+  if (options->PaymentBolt12Offer && strlen(options->PaymentBolt12Offer)) {
+    const char *payi = options->PaymentBolt12Offer;
+    if (strchr(payi, '\n') || strchr(payi, '\r'))
+      payi = escaped(payi);
+    smartlist_add_asprintf(chunks, "PaymentBolt12Offer %s\n", payi);
+  }
+
   if (options->BridgeRelay) {
     char *bd = NULL;
 

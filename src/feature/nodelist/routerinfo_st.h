@@ -115,6 +115,14 @@ struct routerinfo_t {
   uint8_t purpose;
 
   char *PaymentBolt12Offer; /**< Payment Bolt12 offer for this router. */
+  char *PaymentBip353;
+  char *PaymentBolt11Lnurl;
+  char *PaymentBolt11LightningAddress;
+  int PaymentRateMsats;
+  int PaymentInterval;
+  int PaymentInvervalRounds;
+  int PaymentHandshakeFee;
+
 };
 
 #endif /* !defined(ROUTERINFO_ST_H) */

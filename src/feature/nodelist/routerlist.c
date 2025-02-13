@@ -930,7 +930,12 @@ routerinfo_free_(routerinfo_t *router)
   tor_free(router->platform);
   tor_free(router->protocol_list);
   tor_free(router->contact_info);
+  
   tor_free(router->PaymentBolt12Offer);
+  tor_free(router->PaymentBip353);
+  tor_free(router->PaymentBolt11Lnurl);
+  tor_free(router->PaymentBolt11LightningAddress);
+
   if (router->onion_pkey)
     tor_free(router->onion_pkey);
   tor_free(router->onion_curve25519_pkey);
@@ -2991,10 +2996,33 @@ router_differences_are_cosmetic(const routerinfo_t *r1, const routerinfo_t *r2)
       (!r1->contact_info && r2->contact_info) ||
       (r1->contact_info && r2->contact_info &&
        strcasecmp(r1->contact_info, r2->contact_info)) ||
+      
       (r1->PaymentBolt12Offer && !r2->PaymentBolt12Offer) || /* PaymentBolt12Offer is optional */
       (!r1->PaymentBolt12Offer && r2->PaymentBolt12Offer) ||
       (r1->PaymentBolt12Offer && r2->PaymentBolt12Offer &&
       strcasecmp(r1->PaymentBolt12Offer, r2->PaymentBolt12Offer)) ||
+
+      (r1->PaymentBip353 && !r2->PaymentBip353) || /* PaymentBip353 is optional */
+      (!r1->PaymentBip353 && r2->PaymentBip353) ||
+      (r1->PaymentBip353 && r2->PaymentBip353 &&
+      strcasecmp(r1->PaymentBip353, r2->PaymentBip353)) ||
+
+      (r1->PaymentBolt11Lnurl && !r2->PaymentBolt11Lnurl) || /* PaymentBolt11Lnurl is optional */
+      (!r1->PaymentBolt11Lnurl && r2->PaymentBolt11Lnurl) ||
+      (r1->PaymentBolt11Lnurl && r2->PaymentBolt11Lnurl &&
+      strcasecmp(r1->PaymentBolt11Lnurl, r2->PaymentBolt11Lnurl)) ||
+
+      (r1->PaymentBolt11LightningAddress && !r2->PaymentBolt11LightningAddress) || /* PaymentBolt11LightningAddress is optional */
+      (!r1->PaymentBolt11LightningAddress && r2->PaymentBolt11LightningAddress) ||
+      (r1->PaymentBolt11LightningAddress && r2->PaymentBolt11LightningAddress &&
+      strcasecmp(r1->PaymentBolt11LightningAddress, r2->PaymentBolt11LightningAddress)) ||
+
+      (r1->PaymentRateMsats != r2->PaymentRateMsats) ||
+      (r1->PaymentInterval != r2->PaymentInterval) ||
+      (r1->PaymentInvervalRounds != r2->PaymentInvervalRounds) ||
+      (r1->PaymentHandshakeFee != r2->PaymentHandshakeFee) ||
+      
+      
       r1->is_hibernating != r2->is_hibernating ||
       ! addr_policies_eq(r1->exit_policy, r2->exit_policy) ||
       (r1->supports_tunnelled_dir_requests !=
@@ -3290,7 +3318,7 @@ const char *
 esc_router_info(const routerinfo_t *router)
 {
   static char *info=NULL;
-  char *esc_contact, *esc_platform, *esc_PaymentBolt12Offer;
+  char *esc_contact, *esc_platform, *esc_PaymentBolt12Offer, *esc_PaymentBip353, *esc_PaymentBolt11Lnurl, *esc_PaymentBolt11LightningAddress;
   tor_free(info);
 
   if (!router)
@@ -3298,12 +3326,18 @@ esc_router_info(const routerinfo_t *router)
 
   esc_contact = esc_for_log(router->contact_info);
   esc_PaymentBolt12Offer = esc_for_log(router->PaymentBolt12Offer);
+  esc_PaymentBip353 = esc_for_log(router->PaymentBip353);
+  esc_PaymentBolt11Lnurl = esc_for_log(router->PaymentBolt11Lnurl);
+  esc_PaymentBolt11LightningAddress = esc_for_log(router->PaymentBolt11LightningAddress);
   esc_platform = esc_for_log(router->platform);
 
-  tor_asprintf(&info, "Contact %s, Platform %s,PaymentBolt12Offer %s", esc_contact, esc_platform, esc_PaymentBolt12Offer);
+  tor_asprintf(&info, "Contact %s, Platform %s, PaymentBolt12Offer %s, PaymentBip353 %s, PaymentBolt11Lnurl %s, PaymentBolt11LightningAddress %s, PaymentRateMsats %d, PaymentInterval %d, PaymentInvervalRounds %d, PaymentHandshakeFee %d", esc_contact, esc_platform, esc_PaymentBolt12Offer, esc_PaymentBip353, esc_PaymentBolt11Lnurl, esc_PaymentBolt11LightningAddress, router->PaymentRateMsats, router->PaymentInterval, router->PaymentInvervalRounds, router->PaymentHandshakeFee);
   tor_free(esc_contact);
   tor_free(esc_platform);
   tor_free(esc_PaymentBolt12Offer);
+  tor_free(esc_PaymentBip353);
+  tor_free(esc_PaymentBolt11Lnurl);
+  tor_free(esc_PaymentBolt11LightningAddress);
 
   return info;
 }

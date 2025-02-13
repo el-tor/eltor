@@ -1115,7 +1115,7 @@ struct or_options_t {
   /**
    * To be set by the El Tor app (client)
    */ 
-  char *ElTorPreimageHop1;
+  char *ElTorPreimageHop1; // TODO REMOVE
   char *ElTorPreimageHop2;
   char *ElTorPreimageHop3;
   char *ElTorPreimageHop4;
@@ -1131,7 +1131,17 @@ struct or_options_t {
   char *ElTorPayHashHop6;
   char *ElTorPayHashHop7;
   char *ElTorPayHashHop8;
+  
   char *PaymentBolt12Offer;
+  char *PaymentBip353;
+  char *PaymentBolt11Lnurl;
+  char *PaymentBolt11LightningAddress;
+  int PaymentRateMsats;
+  int PaymentInterval;
+  int PaymentInvervalRounds;
+  int PaymentHandshakeFee;
+  int PaymentCircuitMaxFee;
+  struct config_line_t *PaymentLightningNodeConfigurations;
 
 };
 

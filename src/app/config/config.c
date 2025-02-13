@@ -393,7 +393,7 @@ static const config_var_t option_vars_[] = {
   // Custom ElTor options to tell the directory authorities to allow all relays
   V(AllowAnyRelay,               BOOL,     "0"),
   // Default to eltor bolt12 offer for donations
-  V(ElTorBolt12Offer,            STRING,   "lno1zrxq8pjw7qjlm68mtp7e3yvxee4y5xrgjhhyf2fxhlphpckrvevh50u0qgg0ry3hzh030uj5fygcrnf0r3uu95j2d6uxkwz2m5hjnea06adrxqsrdmqhz07yxdacn2fgk6pdpdtmzjym6wx8plfwv85ffku8wn8uq7tqqvlpmjmdrfcflkp7em8nvflw0nzeluc64r0fevvp9wgrhq9zklqrr2gdnr2nujkj35eyk4lzwsr50dj9778tqtwnjxjv9zcn2r4mzr9v5fhc7k8w0jhftc03ndt8gnpp7qpeeqd6sqqslyp2ynm9xapqfdlw468de3a8gs"),
+  V(ElTorBolt12Offer,            STRING,   "lno"), // TODO REMOVE
   V(ElTorSatsRate,               POSINT,   "1"), // Rate in sats per 10 mins
   V(ElTorPreimageHop1,           STRING,   "None"),
   V(ElTorPreimageHop2,           STRING,   "None"),
@@ -411,7 +411,18 @@ static const config_var_t option_vars_[] = {
   V(ElTorPayHashHop6,        STRING,   "None"),
   V(ElTorPayHashHop7,        STRING,   "None"),
   V(ElTorPayHashHop8,        STRING,   "None"),
-  V(PaymentBolt12Offer,      STRING,   NULL),
+  
+  V(PaymentBolt12Offer,                 STRING,   NULL),
+  V(PaymentBip353,                      STRING,   NULL),
+  V(PaymentBolt11Lnurl,                 STRING,   NULL),
+  V(PaymentBolt11LightningAddress,      STRING,   NULL),
+  V(PaymentRateMsats,                   INT,      NULL), 
+  V(PaymentInterval,                    POSINT,   NULL),
+  V(PaymentInvervalRounds,              POSINT,   NULL),
+  V(PaymentHandshakeFee,                INT,      NULL),
+  V(PaymentCircuitMaxFee,               POSINT,   NULL),
+  VAR("PaymentLightningNodeConfig",     LINELIST, PaymentLightningNodeConfigurations, NULL),
+
   VPORT(ControlPort),
   V(ControlPortFileGroupReadable,BOOL,     "0"),
   V(ControlPortWriteToFile,      FILENAME, NULL),
