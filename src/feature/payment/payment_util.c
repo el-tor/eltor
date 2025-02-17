@@ -113,14 +113,14 @@ payment_util_get_preimage_from_circ(char *eltor_payhash, char *payhash)
   //   return;
   // }
   if (!payhash) {
-    log_warn(LD_CONFIG, "Failed to read payhash");
+    // log_warn(LD_CONFIG, "Failed to read payhash");
     return;
   }
 
 
   // Define buffer sizes
-  const size_t raw_size = 64;
-  const size_t prefix_size = 14; // Length of "eltor_preimage"
+  const size_t raw_size = 768; // handshake_fee_payment_hash+handshake_fee_preimage+10_payment_ids_concatinated
+  const size_t prefix_size = 13; // Length of "eltor_payhash"
   const size_t total_size = raw_size + prefix_size + 1; // +1 for null terminator
 
   // 1. Parse Preimage
@@ -197,17 +197,17 @@ payment_util_has_paid(const char *contact_info, const uint8_t *payload,
 
 // Function to check if a payment id hash was passed
 int
-payment_util_has_payment_id_hash(const char *contact_info, const uint8_t *payload, size_t payload_len)
+payment_util_has_payment_id_hash(const uint8_t *payload, size_t payload_len)
 {
   // Check for payment id hash
   const char *prefixPayHash = "eltor_payhash";
   size_t plen = strlen(prefixPayHash);
   const void *foundPayHash = tor_memmem(payload, payload_len, prefixPayHash, plen);
   if (foundPayHash) {
-      char payhash[64 + 1]; // null-terminated string
+      char payhash[768 + 1]; // null-terminated string
       size_t indexPayHash = (const uint8_t *)foundPayHash - payload;
-      memcpy(payhash, payload + indexPayHash + plen, 64);
-      payhash[64] = '\0'; // Null-terminate the string
+      memcpy(payhash, payload + indexPayHash + plen, 768);
+      payhash[768] = '\0'; // Null-terminate the string
       log_info(LD_APP, "EVT ElTorRelay: %s, PayHash: %s", get_options()->Nickname,
                payhash);
       control_event_payment_id_hash_received(payhash);

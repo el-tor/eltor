@@ -588,7 +588,7 @@ dirauth_set_routerstatus_from_routerinfo(routerstatus_t *rs,
   /* Set these flags so that set_routerstatus_from_routerinfo can copy them.
    */
   if(get_options()->AllowAnyRelay) {
-    log_info(LD_DIRSERV, "Eltor AllowAnyRelay true");
+    // log_info(LD_DIRSERV, "Eltor AllowAnyRelay true");
     node->is_stable = 1;
     node->is_fast = 1; 
   } else {

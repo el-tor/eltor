@@ -460,7 +460,7 @@ circuit_extend(struct cell_t *cell, struct circuit_t *circ)
   //   return -1;
   // }
   // Check to to see if a payment id has was passed in the cell
-  int has_payment_id_hash = payment_util_has_payment_id_hash(get_options()->ContactInfo, cell->payload, sizeof(cell->payload));
+  int has_payment_id_hash = payment_util_has_payment_id_hash(cell->payload, sizeof(cell->payload));
   if (has_payment_id_hash == 0) {
     return -1;
   }
