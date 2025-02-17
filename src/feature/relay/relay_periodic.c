@@ -126,7 +126,7 @@ check_descriptor_callback(time_t now, const or_options_t *options)
 /** How often do we check whether part of our router info has changed in a
  * way that would require an upload? That includes checking whether our IP
  * address has changed. */
-#define CHECK_DESCRIPTOR_INTERVAL (60)
+#define CHECK_DESCRIPTOR_INTERVAL (10) // TODO maybe set back to 60 for prod?
 
   (void)options;
 
@@ -136,7 +136,7 @@ check_descriptor_callback(time_t now, const or_options_t *options)
     check_descriptor_bandwidth_changed(now);
     check_descriptor_ipaddress_changed(now);
     mark_my_descriptor_dirty_if_too_old(now);
-    consider_publishable_server(0);
+    consider_publishable_server(1); // TODO maybe set back to 0 for prod?
   }
 
   return CHECK_DESCRIPTOR_INTERVAL;

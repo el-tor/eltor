@@ -116,11 +116,11 @@ router_orport_seems_reachable(const or_options_t *options,
   const bool checking_ipv4 = (family == AF_INET || family == 0);
   const bool checking_ipv6 = (family == AF_INET6 || family == 0);
 
-  if (checking_ipv4) {
-    if (have_orport_for_family(AF_INET) && !can_reach_or_port_ipv4) {
-      return false;
-    }
-  }
+  // if (checking_ipv4) { // TODO reenable for prod?
+  //   if (have_orport_for_family(AF_INET) && !can_reach_or_port_ipv4) {
+  //     return false;
+  //   }
+  // }
   if (checking_ipv6 && !ipv6_assume_reachable) {
     if (have_orport_for_family(AF_INET6) && !can_reach_or_port_ipv6) {
       return false;
