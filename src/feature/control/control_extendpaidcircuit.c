@@ -87,6 +87,8 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
 
   const char *body = args->cmddata;
 
+  log_debug(LD_CONTROL, "EXTENDPAIDCIRCUIT: %s", body);
+
   // Parse multiline input
   smartlist_t *lines = smartlist_new();
   smartlist_split_string(lines, body, "\n",
