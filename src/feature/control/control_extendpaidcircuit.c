@@ -108,9 +108,14 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
 
   // Process each line
   SMARTLIST_FOREACH_BEGIN(lines, char *, line) {
+    log_debug(LD_CONTROL, "EXTENDPAIDCIRCUIT Line: %s", line);
+
     smartlist_t *tokens = smartlist_new();
     smartlist_split_string(tokens, line, " ",
                            SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
+
+    log_debug(LD_CONTROL, "EXTENDPAIDCIRCUIT Token Length: %d", smartlist_len(tokens));
+
 
     if (smartlist_len(tokens) != 2) {
       connection_printf_to_buf(conn, "512 Invalid line format: %s\r\n", line);
