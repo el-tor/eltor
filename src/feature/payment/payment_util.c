@@ -113,7 +113,7 @@ payment_util_get_preimage_from_circ(char *eltor_payhash, char *payhash)
   //   return;
   // }
   if (!payhash) {
-    // log_warn(LD_CONFIG, "Failed to read payhash");
+    log_warn(LD_CONFIG, "Failed to read payhash");
     return;
   }
 
@@ -134,6 +134,7 @@ payment_util_get_preimage_from_circ(char *eltor_payhash, char *payhash)
   memset(eltor_payhash_raw, 0, sizeof(eltor_payhash_raw)); // null terminator
   strncpy(eltor_payhash_raw, payhash, raw_size);
   eltor_payhash_raw[raw_size] = '\0'; // Ensure null termination
+  log_warn(LD_CONFIG, "eltor_payhash_raw : %s", eltor_payhash_raw);
 
   // 3. Prefix the Preimage string
   // const char prefix[] = "eltor_preimage";

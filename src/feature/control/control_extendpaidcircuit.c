@@ -121,8 +121,7 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
     const char *fingerprint = smartlist_get(tokens, 0);
     const char *payhash = smartlist_get(tokens, 1);
 
-    // Log to the debugger
-    connection_printf_to_buf(conn, "Debug: fingerprint = %s, payhash = %s", fingerprint, payhash);
+    log_debug(LD_CONTROL, "Line: fingerprint = %s, payhashes = %s", fingerprint, payhash);
 
     // Add paymentidhash the circuit
     circ->payhash = tor_strdup(payhash);
