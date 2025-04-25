@@ -1247,9 +1247,9 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
     // 	2. Fetch hidden service descriptor
     // 	3. Build rendezvous circuit
     //  4. Connect to hidden service
-    payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
+    payment_util_get_preimage_from_torrc(&eltor_payhash, hop_num);
   } else {
-    payment_util_get_payhash_from_circ(&eltor_payhash, payhash, 1);
+    payment_util_get_payhash_from_circ(&eltor_payhash, payhash, hop_num);
   }
 
   len = onion_skin_create(ec.create_cell.handshake_type,
@@ -1257,7 +1257,7 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
                           &hop->handshake_state,
                           ec.create_cell.onionskin,
                           sizeof(ec.create_cell.onionskin), 
-                          eltor_payhash); // TODO pass payhash
+                          eltor_payhash); // TODO finish passing payhash downstream
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create failed.");
     return - END_CIRC_REASON_INTERNAL;
