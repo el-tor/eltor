@@ -1069,7 +1069,7 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
     //  4. Connect to hidden service
   //  payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
   //} else {
-  //  payment_util_get_payhash_from_circ(&eltor_payhash, payhash, 1);
+    payment_util_get_payhash_from_circ(&eltor_payhash, payhash, 1);
   //}
 
   len = onion_skin_create(cc.handshake_type,
