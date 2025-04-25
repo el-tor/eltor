@@ -454,6 +454,10 @@ circuit_extend(struct cell_t *cell, struct circuit_t *circ)
     return -1;
   }
 
+  log_debug(LD_CIRC, "ELTOR Received extend cell payload (len=%d): %s",
+        (int)sizeof(cell->payload),
+        hex_str(cell->payload, sizeof(cell->payload)));
+
   // Check if payment has been made
   // int has_paid = payment_util_has_paid(get_options()->ContactInfo, cell->payload, sizeof(cell->payload));
   // if (has_paid == 0) {

@@ -211,13 +211,12 @@ payment_util_has_payment_id_hash(const uint8_t *payload, size_t payload_len)
   // Check for payment id hash
   const char *prefixPayHash = "eltor_payhash";
   size_t plen = strlen(prefixPayHash);
-  log_info(LD_APP, "EVT ElTorRelay: %s, RAW PAYHASH: %s", get_options()->Nickname, payload);
   const void *foundPayHash = tor_memmem(payload, payload_len, prefixPayHash, plen);
   if (foundPayHash) {
-      char payhash[2304 + 1]; // null-terminated string
+      char payhash[768 + 1]; // null-terminated string
       size_t indexPayHash = (const uint8_t *)foundPayHash - payload;
       memcpy(payhash, payload + indexPayHash + plen, 2304);
-      payhash[2304] = '\0'; // Null-terminate the string
+      payhash[768] = '\0'; // Null-terminate the string
       log_info(LD_APP, "EVT ElTorRelay: %s, PayHash: %s", get_options()->Nickname, payhash);
       control_event_payment_id_hash_received(payhash);
       return 1;
