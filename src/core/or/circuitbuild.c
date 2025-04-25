@@ -1249,19 +1249,21 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   char *payhash = circ->payhash;
   char eltor_payhash[PAYMENT_PAYHASH_SIZE] = {0}; // total size with null terminator
   uint8_t purpose = circ->base_.purpose;
-  if (
-    circuit_purpose_is_hidden_service(purpose)
-  ) {
+  log_info(LD_CIRC, "ELTOR circuit purpose: %u", purpose);
+
+  // if (
+  //   circuit_purpose_is_hidden_service(purpose)
+  // ) {
     // Skip payments for hidden services for now, just use dummy values
     // TODO: Build RPC commands for the following tasks:
     // 	1. Create directory circuit
     // 	2. Fetch hidden service descriptor
     // 	3. Build rendezvous circuit
     //  4. Connect to hidden service
-    payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
-  } else {
+  //  payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
+  //} else {
     payment_util_get_preimage_from_circ(&eltor_payhash, payhash);
-  }
+  //}
 
   log_info(LD_CIRC,"Sending extend relay cell with eltor. payhash: %s", eltor_payhash);
   {
