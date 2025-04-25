@@ -186,6 +186,42 @@ onion_skin_create(int type,
       return -1;
     uint8_t *onion_skin = NULL;
     size_t onion_skin_len = 0;
+
+    if (eltor_payhash && strlen(eltor_payhash) > 0) {
+      log_info(LD_GENERAL, "ELTOR adding payhash to NTOR_V3, length: %zu", 
+               strlen(eltor_payhash));
+               
+      // Create an extended message that includes the payment hash
+      uint8_t *extended_msg = NULL;
+      size_t extended_msg_len = 0;
+      
+      // Build the complete message with prefix
+      char *prefixed_hash = NULL;
+      const char prefixPayHash[] = "eltor_payhash";
+      tor_asprintf(&prefixed_hash, "%s%s", prefixPayHash, eltor_payhash);
+      
+      // Calculate new message size and allocate
+      extended_msg_len = msg_len + strlen(prefixed_hash) + 1; // +1 for marker
+      extended_msg = tor_malloc(extended_msg_len);
+      
+      // Copy original message
+      memcpy(extended_msg, msg, msg_len);
+      
+      // Add marker and payhash
+      extended_msg[msg_len] = 0x01; // Marker to indicate payment hash follows
+      memcpy(extended_msg + msg_len + 1, prefixed_hash, strlen(prefixed_hash));
+      
+      // Debug log
+      log_info(LD_GENERAL, "ELTOR extended message length: %zu, original: %zu", 
+               extended_msg_len, msg_len);
+      
+      // Free original message and replace with extended one
+      tor_free(msg);
+      msg = extended_msg;
+      msg_len = extended_msg_len;
+      tor_free(prefixed_hash);
+    }
+
     int status = onion_skin_ntor3_create(
                              &node->ed_identity,
                              &node->curve25519_onion_key,

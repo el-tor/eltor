@@ -1026,7 +1026,13 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
   create_cell_t cc;
   memset(&cc, 0, sizeof(cc));
 
-  log_debug(LD_CIRC,"First skin; sending create cell.");
+  log_debug(LD_CIRC, "First skin; sending create cell. PayHash: %s", circ->payhash ? "present" : "absent");
+
+  // Add debug log for PayHash if present
+  if (circ->payhash) {
+    log_info(LD_GENERAL, "ELTOR first hop with PayHash length: %zu", 
+             strlen(circ->payhash));
+  }
 
   if (circ->build_state->onehop_tunnel) {
     control_event_bootstrap(BOOTSTRAP_STATUS_ONEHOP_CREATE, 0);
@@ -1057,20 +1063,20 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
   char *payhash = circ->payhash;
   char eltor_payhash[PAYMENT_PAYHASH_SIZE] = {0}; // total size with null terminator
 
-  // uint8_t purpose = circ->base_.purpose;
-  // if (
-  //   circuit_purpose_is_hidden_service(purpose)
-  // ) {
+  uint8_t purpose = circ->base_.purpose;
+  if (
+    circuit_purpose_is_hidden_service(purpose)
+  ) {
     // Skip payments for hidden services for now, just use dummy values
     // TODO: Build RPC commands for the following tasks:
     // 	1. Create directory circuit
     // 	2. Fetch hidden service descriptor
     // 	3. Build rendezvous circuit
     //  4. Connect to hidden service
-  //  payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
-  //} else {
+   payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
+  } else {
     payment_util_get_payhash_from_circ(&eltor_payhash, payhash, 1);
-  //}
+  }
 
   len = onion_skin_create(cc.handshake_type,
                           circ->cpath->extend_info,
@@ -1189,7 +1195,13 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   tor_addr_make_unspec(&ec.orport_ipv4.addr);
   tor_addr_make_unspec(&ec.orport_ipv6.addr);
 
-  log_debug(LD_CIRC,"starting to send subsequent skin.");
+  log_debug(LD_CIRC, "Starting to send subsequent skin. PayHash: %s", circ->payhash ? "present" : "absent");
+
+  // Add debug log for PayHash if present
+  if (circ->payhash) {
+  log_info(LD_GENERAL, "ELTOR intermediate hop with PayHash length: %zu", 
+      strlen(circ->payhash));
+  }
 
   circuit_pick_extend_handshake(&ec.cell_type,
                                 &ec.create_cell.cell_type,
@@ -1235,22 +1247,22 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
 
   char *payhash = circ->payhash;
   char eltor_payhash[PAYMENT_PAYHASH_SIZE] = {0}; // total size with null terminator
-  // uint8_t purpose = circ->base_.purpose;
-  //log_info(LD_CIRC, "ELTOR circuit purpose: %u", purpose);
+  uint8_t purpose = circ->base_.purpose;
+  log_info(LD_CIRC, "ELTOR circuit purpose: %u", purpose);
 
-  //if (
-  //  circuit_purpose_is_hidden_service(purpose)
-  //) {
+  if (
+   circuit_purpose_is_hidden_service(purpose)
+  ) {
     // Skip payments for hidden services for now, just use dummy values
     // TODO: Build RPC commands for the following tasks:
     // 	1. Create directory circuit
     // 	2. Fetch hidden service descriptor
     // 	3. Build rendezvous circuit
     //  4. Connect to hidden service
-  //  payment_util_get_preimage_from_torrc(&eltor_payhash, hop_num);
-  //} else {
+   payment_util_get_preimage_from_torrc(&eltor_payhash, hop_num);
+  } else {
     payment_util_get_payhash_from_circ(&eltor_payhash, payhash, hop_num);
-  //}
+  }
 
   len = onion_skin_create(ec.create_cell.handshake_type,
                           hop->extend_info,
