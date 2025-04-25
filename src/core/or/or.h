@@ -458,7 +458,7 @@ typedef enum {
  *         Stream ID               [2 bytes]
  *         Partial SHA-1           [4 bytes]
  *         Length                  [2 bytes]
- *         Relay payload           [498 bytes]
+ *         Relay payload           [498 bytes + (payhashes plus some padding)]
  */
 
 /** Number of bytes in a cell, minus cell header. */
