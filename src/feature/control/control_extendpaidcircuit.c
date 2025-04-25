@@ -109,100 +109,104 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   bool zero_circ = !strcmp("0", circ_id);
 
   const char *body = args->cmddata;
-
   log_debug(LD_CONTROL, "EXTENDPAIDCIRCUIT: %s", body);
 
   // Parse multiline input
   smartlist_t *lines = smartlist_new();
-  smartlist_split_string(lines, body, "\n",
-                         SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
+  smartlist_split_string(lines, body, "\n", SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
 
+  if (smartlist_len(lines) == 0) {
+    control_write_endreply(conn, 512, "No router specifications provided");
+    goto done;
+  }
+
+  // Create circuit if circ_id is "0", otherwise get the circuit
   if (zero_circ) {
-    // Creating a new circuit
     circ = origin_circuit_init(intended_purpose, 0);
     if (!circ) {
       control_write_endreply(conn, 551, "Couldn't create circuit");
       goto done;
     }
     circ->first_hop_from_controller = 1;
+    log_debug(LD_CONTROL, "Created new circuit for EXTENDPAIDCIRCUIT");
   } else {
-    // Extending an existing circuit
-    circ = get_circ(circ_id);
-    if (!circ) {
+    uint32_t id;
+    id = (uint32_t) tor_parse_ulong(circ_id, 10, 0, UINT32_MAX, NULL, NULL);
+    if (!id) {
+      control_printf_endreply(conn, 552, "Invalid circuit ID \"%s\"", circ_id);
+      goto done;
+    }
+    
+    circ = circuit_get_by_global_id(id);
+    if (!circ || circ->base_.marked_for_close) {
       control_printf_endreply(conn, 552, "Unknown circuit \"%s\"", circ_id);
       goto done;
     }
+    log_debug(LD_CONTROL, "Found existing circuit %s for EXTENDPAIDCIRCUIT", circ_id);
   }
 
   circ->any_hop_from_controller = 1;
 
-  // Concatenate payhash into payhashes
-  // Each payhash is 768 chars, 3 rounds = 3*768 + null terminator = 2305
-
-  // Use a static buffer large enough for safety
-  static char payhashes[4096];
-  payhashes[0] = '\0'; // Reset buffer at the start of each call
-
-  // Process each line
+  // Concatenate payment hashes into single string with newlines
+  // Each payhash is ~768 chars, so allocate enough space
+  char *payhashes = tor_malloc_zero(smartlist_len(lines) * 1024);
+  
+  // Process each line to extract fingerprint and payment hash
   SMARTLIST_FOREACH_BEGIN(lines, char *, line) {
-    log_debug(LD_CONTROL, "EXTENDPAIDCIRCUIT Line: %s", line);
-
     smartlist_t *tokens = smartlist_new();
-    smartlist_split_string(tokens, line, " ",
-                           SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
-
-    log_debug(LD_CONTROL, "EXTENDPAIDCIRCUIT Token Length: %d", smartlist_len(tokens));
-
+    smartlist_split_string(tokens, line, " ", SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
+    
     if (smartlist_len(tokens) != 2) {
-      connection_printf_to_buf(conn, "512 Invalid line format: %s\r\n", line);
+      log_debug(LD_CONTROL, "Invalid line format: %s", line);
       smartlist_free(tokens);
       continue;
     }
-
+    
     const char *fingerprint = smartlist_get(tokens, 0);
     const char *payhash = smartlist_get(tokens, 1);
-
-    // Add the payhash to our combined payment hashes string
+    
+    // Add this payhash to our combined payment hashes string
     if (strlen(payhashes) > 0) {
-      // Add a newline between entries if not the first one
-      strlcat(payhashes, "\n", sizeof(payhashes));
+      strlcat(payhashes, "\n", smartlist_len(lines) * 1024);
     }
-    strlcat(payhashes, payhash, sizeof(payhashes));
-
-    log_debug(LD_CONTROL, "Line: fingerprint = %s", fingerprint);
-    log_debug(LD_CONTROL, "Payhash length = %zu", strlen(payhash));
-
+    strlcat(payhashes, payhash, smartlist_len(lines) * 1024);
+    
+    log_debug(LD_CONTROL, "Processing hop: fingerprint=%s, payhash length=%zu",
+              fingerprint, strlen(payhash));
+    
     // Validate the fingerprint
     const node_t *node = node_get_by_nickname(fingerprint, 0);
     if (!node) {
       control_printf_endreply(conn, 552, "No such router \"%s\"", fingerprint);
       smartlist_free(tokens);
+      tor_free(payhashes);
       goto done;
     }
     if (!node_has_preferred_descriptor(node, zero_circ)) {
       control_printf_endreply(conn, 552, "No descriptor for \"%s\"", fingerprint);
       smartlist_free(tokens);
+      tor_free(payhashes);
       goto done;
     }
     smartlist_add(nodes, (void*)node);
-
+    
     smartlist_free(tokens);
   } SMARTLIST_FOREACH_END(line);
-
+  
   if (!smartlist_len(nodes)) {
     control_write_endreply(conn, 512, "No valid nodes provided");
+    tor_free(payhashes);
     goto done;
   }
 
-  log_info(LD_CONTROL, "ELTOR circuit payment hash total length: %zu", strlen(payhashes));
-
   // Store the payment hash in the circuit
   tor_free(circ->payhash);
-  circ->payhash = tor_strdup(payhashes);
+  circ->payhash = payhashes;
+  log_info(LD_CONTROL, "ELTOR circuit payment hash total length: %zu", strlen(payhashes));
 
+  // Append hops to circuit path
   bool first_node = zero_circ;
-  SMARTLIST_FOREACH(nodes, const node_t *, node,
-  {
+  SMARTLIST_FOREACH(nodes, const node_t *, node, {
     extend_info_t *info = extend_info_from_node(node, first_node, true);
     if (!info) {
       tor_assert_nonfatal(first_node);
@@ -223,6 +227,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     first_node = 0;
   });
 
+  // Handle new circuit creation vs extending existing circuit
   if (zero_circ) {
     // Handle new circuit creation
     int err_reason = 0;
@@ -239,7 +244,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
       circuit_set_state(TO_CIRCUIT(circ), CIRCUIT_STATE_BUILDING);
       if ((err_reason = circuit_send_next_onion_skin(circ)) < 0) {
         log_info(LD_CONTROL,
-                 "send_next_onion_skin failed; circuit marked for closing.");
+                 "circuit_send_next_onion_skin failed; circuit marked for closing.");
         circuit_mark_for_close(TO_CIRCUIT(circ), -err_reason);
         control_write_endreply(conn, 551, "Couldn't send onion skin");
         goto done;
