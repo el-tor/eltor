@@ -1077,7 +1077,7 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
                           &circ->cpath->handshake_state,
                           cc.onionskin,
                           sizeof(cc.onionskin),
-                          NULL ); // TODO pass PayHash
+                          eltor_payhash ); // TODO pass PayHash
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create (first hop) failed.");
     return - END_CIRC_REASON_INTERNAL;
