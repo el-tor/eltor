@@ -74,16 +74,39 @@ const control_cmd_syntax_t extendpaidcircuit_syntax = {
   .kvline_flags = KV_OMIT_VALS
 };
 
-/** Called when we get an EXTENDPAIDCIRCUIT message.  Try to extend the listed
- * circuit with paymentidhash, and report success or failure. */
-int handle_control_extendpaidcircuit(control_connection_t *conn,
+/** Helper function: Return the circuit with ID <b>circ_id</b>, or NULL
+ * if no such circuit exists. */
+static origin_circuit_t *
+get_circ(const char *circ_id)
+{
+  uint32_t id;
+  origin_circuit_t *circ;
+  
+  if (!strcasecmp(circ_id, "0"))
+    return NULL;
+
+  id = (uint32_t) tor_parse_ulong(circ_id, 10, 0, UINT32_MAX, NULL, NULL);
+  if (!id)
+    return NULL;
+  
+  circ = circuit_get_by_global_id(id);
+  if (!circ || circ->base_.marked_for_close)
+    return NULL;
+  
+  return circ;
+}
+
+/** Called when we get an EXTENDPAIDCIRCUIT message. Try to extend the listed
+ * circuit with payment hash data, and report success or failure. */
+int 
+handle_control_extendpaidcircuit(control_connection_t *conn,
                                  const control_cmd_args_t *args)
 {
   smartlist_t *nodes = smartlist_new();
   origin_circuit_t *circ = NULL;
   uint8_t intended_purpose = CIRCUIT_PURPOSE_C_GENERAL;
   const char *circ_id = smartlist_get(args->args, 0);
-  // bool zero_circ = !strcmp("0", circ_id);
+  bool zero_circ = !strcmp("0", circ_id);
 
   const char *body = args->cmddata;
 
@@ -94,15 +117,22 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
   smartlist_split_string(lines, body, "\n",
                          SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
 
-  // if (zero_circ) {
-  //   circ = origin_circuit_init(intended_purpose, 0);
-  //   circ->first_hop_from_controller = 1;
-  // } 
-  
-  // else if (!(circ = get_circ(circ_id))) {
-  //   control_printf_endreply(conn, 552, "Unknown circuit \"%s\"", circ_id);
-  //   goto done;
-  // }
+  if (zero_circ) {
+    // Creating a new circuit
+    circ = origin_circuit_init(intended_purpose, 0);
+    if (!circ) {
+      control_write_endreply(conn, 551, "Couldn't create circuit");
+      goto done;
+    }
+    circ->first_hop_from_controller = 1;
+  } else {
+    // Extending an existing circuit
+    circ = get_circ(circ_id);
+    if (!circ) {
+      control_printf_endreply(conn, 552, "Unknown circuit \"%s\"", circ_id);
+      goto done;
+    }
+  }
 
   circ->any_hop_from_controller = 1;
 
@@ -123,7 +153,6 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
 
     log_debug(LD_CONTROL, "EXTENDPAIDCIRCUIT Token Length: %d", smartlist_len(tokens));
 
-
     if (smartlist_len(tokens) != 2) {
       connection_printf_to_buf(conn, "512 Invalid line format: %s\r\n", line);
       smartlist_free(tokens);
@@ -133,30 +162,28 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
     const char *fingerprint = smartlist_get(tokens, 0);
     const char *payhash = smartlist_get(tokens, 1);
 
-    
+    // Add the payhash to our combined payment hashes string
+    if (strlen(payhashes) > 0) {
+      // Add a newline between entries if not the first one
+      strlcat(payhashes, "\n", sizeof(payhashes));
+    }
     strlcat(payhashes, payhash, sizeof(payhashes));
 
-    log_debug(LD_CONTROL, "Line: fingerprint = %s, payhashes = %s", fingerprint, payhashes);
+    log_debug(LD_CONTROL, "Line: fingerprint = %s", fingerprint);
+    log_debug(LD_CONTROL, "Payhash length = %zu", strlen(payhash));
 
-
-    // TODO Validate inputs
-    // if (strlen(payhash) != 64) {
-    //   connection_printf_to_buf(conn, "513 PaymentIdHash must be 64 characters.\r\n");
-    //   smartlist_free(tokens);
-    //   continue;
-    // }
-
+    // Validate the fingerprint
     const node_t *node = node_get_by_nickname(fingerprint, 0);
     if (!node) {
       control_printf_endreply(conn, 552, "No such router \"%s\"", fingerprint);
       smartlist_free(tokens);
       goto done;
     }
-    // if (!node_has_preferred_descriptor(node, zero_circ)) {
-    //   control_printf_endreply(conn, 552, "No descriptor for \"%s\"", fingerprint);
-    //   smartlist_free(tokens);
-    //   goto done;
-    // }
+    if (!node_has_preferred_descriptor(node, zero_circ)) {
+      control_printf_endreply(conn, 552, "No descriptor for \"%s\"", fingerprint);
+      smartlist_free(tokens);
+      goto done;
+    }
     smartlist_add(nodes, (void*)node);
 
     smartlist_free(tokens);
@@ -167,42 +194,45 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
     goto done;
   }
 
-  log_debug(LD_CONTROL, "ELTOR circ->payhash %s", payhashes);
+  log_info(LD_CONTROL, "ELTOR circuit payment hash total length: %zu", strlen(payhashes));
 
+  // Store the payment hash in the circuit
   tor_free(circ->payhash);
   circ->payhash = tor_strdup(payhashes);
 
-  // bool first_node = zero_circ;
-  // SMARTLIST_FOREACH(nodes, const node_t *, node,
-  // {
-  //   extend_info_t *info = extend_info_from_node(node, first_node, true);
-  //   if (!info) {
-  //     tor_assert_nonfatal(first_node);
-  //     log_warn(LD_CONTROL,
-  //              "controller tried to connect to a node that lacks a suitable "
-  //              "descriptor, or which doesn't have any "
-  //              "addresses that are allowed by the firewall configuration; "
-  //              "circuit marked for closing.");
-  //     circuit_mark_for_close(TO_CIRCUIT(circ), -END_CIRC_REASON_CONNECTFAILED);
-  //     control_write_endreply(conn, 551, "Couldn't start circuit");
-  //     goto done;
-  //   }
-  //   circuit_append_new_exit(circ, info);
-  //   if (circ->build_state->desired_path_len > 1) {
-  //     circ->build_state->onehop_tunnel = 0;
-  //   }
-  //   extend_info_free(info);
-  //   first_node = 0;
-  // });
+  bool first_node = zero_circ;
+  SMARTLIST_FOREACH(nodes, const node_t *, node,
+  {
+    extend_info_t *info = extend_info_from_node(node, first_node, true);
+    if (!info) {
+      tor_assert_nonfatal(first_node);
+      log_warn(LD_CONTROL,
+               "controller tried to connect to a node that lacks a suitable "
+               "descriptor, or which doesn't have any "
+               "addresses that are allowed by the firewall configuration; "
+               "circuit marked for closing.");
+      circuit_mark_for_close(TO_CIRCUIT(circ), -END_CIRC_REASON_CONNECTFAILED);
+      control_write_endreply(conn, 551, "Couldn't start circuit");
+      goto done;
+    }
+    circuit_append_new_exit(circ, info);
+    if (circ->build_state->desired_path_len > 1) {
+      circ->build_state->onehop_tunnel = 0;
+    }
+    extend_info_free(info);
+    first_node = 0;
+  });
 
-  // if (zero_circ) {
-  //   int err_reason = 0;
-  //   if ((err_reason = circuit_handle_first_hop(circ)) < 0) {
-  //     circuit_mark_for_close(TO_CIRCUIT(circ), -err_reason);
-  //     control_write_endreply(conn, 551, "Couldn't start circuit");
-  //     goto done;
-  //   }
-  // } else {
+  if (zero_circ) {
+    // Handle new circuit creation
+    int err_reason = 0;
+    if ((err_reason = circuit_handle_first_hop(circ)) < 0) {
+      circuit_mark_for_close(TO_CIRCUIT(circ), -err_reason);
+      control_write_endreply(conn, 551, "Couldn't start circuit");
+      goto done;
+    }
+  } else {
+    // Handle extending existing circuit
     if (circ->base_.state == CIRCUIT_STATE_OPEN ||
         circ->base_.state == CIRCUIT_STATE_GUARD_WAIT) {
       int err_reason = 0;
@@ -214,16 +244,19 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
         control_write_endreply(conn, 551, "Couldn't send onion skin");
         goto done;
       }
+    } else {
+      control_write_endreply(conn, 551, 
+                           "Circuit is not in a state that can be extended");
+      goto done;
     }
-  //}
+  }
 
   control_printf_endreply(conn, 250, "EXTENDED %lu",
                           (unsigned long)circ->global_identifier);
-  // if (zero_circ) /* send a 'launched' event, for completeness */
-  //   circuit_event_status(circ, CIRC_EVENT_LAUNCHED, 0);
+  if (zero_circ) /* send a 'launched' event, for completeness */
+    circuit_event_status(circ, CIRC_EVENT_LAUNCHED, 0);
+  
 done:
-  // TODO ? Free allocated memory
-  // tor_free(circ->payhashes);
   SMARTLIST_FOREACH(lines, char *, cp, tor_free(cp));
   smartlist_free(lines);
   smartlist_free(nodes);
