@@ -1069,7 +1069,7 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
     //  4. Connect to hidden service
     payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
   } else {
-    payment_util_get_preimage_from_circ(&eltor_payhash, payhash);
+    payment_util_get_payhash_from_circ(&eltor_payhash, payhash, 1);
   }
 
   len = onion_skin_create(cc.handshake_type,
@@ -1221,19 +1221,6 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
    * in the extend2 cell if we're configured to use it, though. */
   ed25519_pubkey_copy(&ec.ed_pubkey, &hop->extend_info->ed_identity);
 
-  len = onion_skin_create(ec.create_cell.handshake_type,
-                          hop->extend_info,
-                          &hop->handshake_state,
-                          ec.create_cell.onionskin,
-                          sizeof(ec.create_cell.onionskin), 
-                          NULL); // TODO pass payhash
-  if (len < 0) {
-    log_warn(LD_CIRC,"onion_skin_create failed.");
-    return - END_CIRC_REASON_INTERNAL;
-  }
-  ec.create_cell.handshake_len = len;
-
-  
   // Find the hop number
   int hop_num = 0;
   for (crypt_path_t *cur = circ->cpath; cur != NULL; cur = cur->next) {
@@ -1251,19 +1238,32 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   uint8_t purpose = circ->base_.purpose;
   log_info(LD_CIRC, "ELTOR circuit purpose: %u", purpose);
 
-  // if (
-  //   circuit_purpose_is_hidden_service(purpose)
-  // ) {
+  if (
+    circuit_purpose_is_hidden_service(purpose)
+  ) {
     // Skip payments for hidden services for now, just use dummy values
     // TODO: Build RPC commands for the following tasks:
     // 	1. Create directory circuit
     // 	2. Fetch hidden service descriptor
     // 	3. Build rendezvous circuit
     //  4. Connect to hidden service
-  //  payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
-  //} else {
-    payment_util_get_preimage_from_circ(&eltor_payhash, payhash);
-  //}
+    payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
+  } else {
+    payment_util_get_payhash_from_circ(&eltor_payhash, payhash, 1);
+  }
+
+  len = onion_skin_create(ec.create_cell.handshake_type,
+                          hop->extend_info,
+                          &hop->handshake_state,
+                          ec.create_cell.onionskin,
+                          sizeof(ec.create_cell.onionskin), 
+                          eltor_payhash); // TODO pass payhash
+  if (len < 0) {
+    log_warn(LD_CIRC,"onion_skin_create failed.");
+    return - END_CIRC_REASON_INTERNAL;
+  }
+  ec.create_cell.handshake_len = len;
+
 
   log_info(LD_CIRC,"Sending extend relay cell with eltor. payhash: %s", eltor_payhash);
   {

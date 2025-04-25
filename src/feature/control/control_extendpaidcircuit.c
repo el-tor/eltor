@@ -106,6 +106,13 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
 
   circ->any_hop_from_controller = 1;
 
+  // Concatenate payhash into payhashes
+  // Each payhash is 768 chars, 3 rounds = 3*768 + null terminator = 2305
+
+  // Use a static buffer large enough for safety
+  static char payhashes[4096];
+  payhashes[0] = '\0'; // Reset buffer at the start of each call
+
   // Process each line
   SMARTLIST_FOREACH_BEGIN(lines, char *, line) {
     log_debug(LD_CONTROL, "EXTENDPAIDCIRCUIT Line: %s", line);
@@ -126,10 +133,11 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
     const char *fingerprint = smartlist_get(tokens, 0);
     const char *payhash = smartlist_get(tokens, 1);
 
-    log_debug(LD_CONTROL, "Line: fingerprint = %s, payhashes = %s", fingerprint, payhash);
+    
+    strlcat(payhashes, payhash, sizeof(payhashes));
 
-    // Add paymentidhash the circuit
-    circ->payhash = tor_strdup(payhash);
+    log_debug(LD_CONTROL, "Line: fingerprint = %s, payhashes = %s", fingerprint, payhashes);
+
 
     // TODO Validate inputs
     // if (strlen(payhash) != 64) {
@@ -158,6 +166,11 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
     control_write_endreply(conn, 512, "No valid nodes provided");
     goto done;
   }
+
+  log_debug(LD_CONTROL, "ELTOR circ->payhash %s", payhashes);
+
+  tor_free(circ->payhash);
+  circ->payhash = tor_strdup(payhashes);
 
   bool first_node = zero_circ;
   SMARTLIST_FOREACH(nodes, const node_t *, node,
@@ -208,10 +221,9 @@ int handle_control_extendpaidcircuit(control_connection_t *conn,
                           (unsigned long)circ->global_identifier);
   if (zero_circ) /* send a 'launched' event, for completeness */
     circuit_event_status(circ, CIRC_EVENT_LAUNCHED, 0);
-
 done:
   // TODO ? Free allocated memory
-  // tor_free(circ->payhash);
+  // tor_free(circ->payhashes);
   SMARTLIST_FOREACH(lines, char *, cp, tor_free(cp));
   smartlist_free(lines);
   smartlist_free(nodes);

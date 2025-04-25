@@ -10,7 +10,7 @@
 void payment_util_hex_to_bytes(const char* hex, unsigned char* bytes, size_t bytes_len);
 int payment_util_verify_preimage(const char* preimage_hex, const char* payhash_hex);
 void payment_util_get_preimage_from_torrc(char *eltor_payhash, int hop_num);
-void payment_util_get_preimage_from_circ(char *eltor_payhash, char *payhash);
+void payment_util_get_payhash_from_circ(char *eltor_payhash, char *payhash, int hop_num);
 
 int payment_util_has_paid(const char *contact_info, const uint8_t *payload, size_t payload_len);
 int payment_util_has_payment_id_hash(const uint8_t *payload, size_t payload_len);

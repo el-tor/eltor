@@ -100,7 +100,7 @@ payment_util_get_preimage_from_torrc(char *eltor_payhash, int hop_num)
 }
 
 void
-payment_util_get_preimage_from_circ(char *eltor_payhash, char *payhash)
+payment_util_get_payhash_from_circ(char *eltor_payhash, char *payhash, int hop_num)
 {
   // Ensure the input buffers and circuit are valid
   // tor_assert(eltor_preimage);
@@ -119,7 +119,7 @@ payment_util_get_preimage_from_circ(char *eltor_payhash, char *payhash)
 
 
   // Define buffer sizes
-  const size_t raw_size = 768; // handshake_fee_payment_hash+handshake_fee_preimage+10_payment_ids_concatinated
+  const size_t raw_size = 2304; // handshake_fee_payment_hash+handshake_fee_preimage+10_payment_ids_concatinated
   const size_t prefix_size = 13; // Length of "eltor_payhash"
   const size_t total_size = raw_size + prefix_size + 1; // +1 for null terminator
 
@@ -132,9 +132,17 @@ payment_util_get_preimage_from_circ(char *eltor_payhash, char *payhash)
   // 2. Parse Payhash
   char eltor_payhash_raw[raw_size + 1];
   memset(eltor_payhash_raw, 0, sizeof(eltor_payhash_raw)); // null terminator
-  strncpy(eltor_payhash_raw, payhash, raw_size);
-  eltor_payhash_raw[raw_size] = '\0'; // Ensure null termination
-  log_warn(LD_CONFIG, "eltor_payhash_raw : %s", eltor_payhash_raw);
+
+  // Calculate offset based on hop_num (1-based)
+  size_t offset = (hop_num - 1) * 768;
+  if (offset + 768 > raw_size) {
+    log_warn(LD_CONFIG, "Invalid hop_num or payhash too short");
+    eltor_payhash_raw[0] = '\0';
+  } else {
+    strncpy(eltor_payhash_raw, payhash + offset, 768);
+    eltor_payhash_raw[768] = '\0'; // Ensure null termination
+    log_info(LD_CONFIG, "eltor_payhash_raw (hop %d): %s", hop_num, eltor_payhash_raw);
+  }
 
   // 3. Prefix the Preimage string
   // const char prefix[] = "eltor_preimage";
@@ -205,10 +213,10 @@ payment_util_has_payment_id_hash(const uint8_t *payload, size_t payload_len)
   size_t plen = strlen(prefixPayHash);
   const void *foundPayHash = tor_memmem(payload, payload_len, prefixPayHash, plen);
   if (foundPayHash) {
-      char payhash[768 + 1]; // null-terminated string
+      char payhash[2304 + 1]; // null-terminated string
       size_t indexPayHash = (const uint8_t *)foundPayHash - payload;
-      memcpy(payhash, payload + indexPayHash + plen, 768);
-      payhash[768] = '\0'; // Null-terminate the string
+      memcpy(payhash, payload + indexPayHash + plen, 2304);
+      payhash[2304] = '\0'; // Null-terminate the string
       log_info(LD_APP, "EVT ElTorRelay: %s, PayHash: %s", get_options()->Nickname,
                payhash);
       control_event_payment_id_hash_received(payhash);

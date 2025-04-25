@@ -138,6 +138,10 @@ onion_skin_create(int type,
 {
   int r = -1;
 
+  if (eltor_payhash) {
+    log_info(LD_GENERAL, "ELTOR onion_skin_create payhash %s", eltor_payhash);
+  }
+
   switch (type) {
   case ONION_HANDSHAKE_TYPE_TAP:
     if (onion_skin_out_maxlen < TAP_ONIONSKIN_CHALLENGE_LEN)
