@@ -30,7 +30,9 @@
 #include "lib/ctime/di_ops.h"
 #include "lib/log/util_bug.h"
 #include "lib/encoding/binascii.h"
+#include "lib/intmath/cmp.h" 
 
+#include <ctype.h> 
 #include <string.h>
 
 /* Parameters used to keep the outputs of this handshake from colliding with
@@ -496,6 +498,41 @@ onion_skin_ntor3_server_handshake_part1(
 
   // Add specific check for payment hash in the client handshake
   log_notice(LD_CIRC, "ELTOR RELAY: Processing NTOR3 client handshake (len=%zu)", client_handshake_len);
+  // Add this code to display handshake contents in human-readable format
+  if (client_handshake_len > 0) {
+    // First try to extract any text content
+    char *text_version = tor_malloc(client_handshake_len + 1);
+    memcpy(text_version, client_handshake, client_handshake_len);
+    text_version[client_handshake_len] = '\0';
+    
+    // Replace non-printable chars with spaces for readability
+    for (size_t i = 0; i < client_handshake_len; i++) {
+      if (!isprint(text_version[i]) && !isspace(text_version[i])) {
+        text_version[i] = ' ';
+      }
+    }
+    
+    // Log text representation
+    log_notice(LD_CIRC, "ELTOR RELAY: Handshake text representation: %s", text_version);
+    tor_free(text_version);
+    
+    // Log hex representation in chunks for readability
+    log_notice(LD_CIRC, "ELTOR RELAY: Handshake in hex format:");
+    const size_t CHUNK_SIZE = 16;
+    for (size_t i = 0; i < client_handshake_len; i += CHUNK_SIZE) {
+      size_t len = MIN(CHUNK_SIZE, client_handshake_len - i);
+      log_notice(LD_CIRC, "  %04zx: %s", i, hex_str((const char *)client_handshake + i, len));
+    }
+    
+    // Check specifically for the payment hash prefix
+    const char *prefixPayHash = "eltor_payhash";
+    for (size_t i = 0; i < client_handshake_len - strlen(prefixPayHash); i++) {
+      if (memcmp(client_handshake + i, prefixPayHash, strlen(prefixPayHash)) == 0) {
+        log_notice(LD_CIRC, "ELTOR RELAY: Found payment hash prefix at offset %zu", i);
+        break;
+      }
+    }
+  }
   const char *prefixPayHash = "eltor_payhash";
   // const void *foundPayHash = tor_memmem(client_handshake, client_handshake_len, prefixPayHash, strlen(prefixPayHash));
   // if (foundPayHash) {
@@ -647,9 +684,6 @@ onion_skin_ntor3_server_handshake_part1(
         
         log_notice(LD_CIRC, "ELTOR RELAY: Extracted payment hash (len=%zu): %.50s...",
                   strlen(payhash), payhash);
-                  
-        // Send to control port
-        // control_event_payment_id_hash_received(payhash);
         tor_free(payhash);
       }
     } else {
