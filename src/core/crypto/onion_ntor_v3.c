@@ -44,6 +44,9 @@
 #define T_FINAL TWEAK("kdf_final")
 #define T_AUTH TWEAK("auth_final")
 
+extern const void *tor_memmem(const void *haystack, size_t haystack_len,
+  const void *needle, size_t needle_len);
+
 /**
  * Add @a len bytes of @a data as input to the provided @a xof.
  *
@@ -618,16 +621,36 @@ onion_skin_ntor3_server_handshake_part1(
   }
 
   // After decrypting the message
+  // After decrypting the message
   if (*client_message_out && *client_message_len_out > 0) {
     log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message (len=%zu)", *client_message_len_out);
+    
     // Check for payhash in the decrypted message
-    // foundPayHash = tor_memmem(*client_message_out, *client_message_len_out, prefixPayHash, strlen(prefixPayHash));
-    // if (foundPayHash) {
-    //   size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
-    //   log_notice(LD_CIRC, "ELTOR RELAY: Found payhash in decrypted message at offset %zu", indexPayHash);
-    // } else {
-    //   log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in decrypted message");
-    // }
+    const void *foundPayHash = tor_memmem(*client_message_out, *client_message_len_out,
+                                      prefixPayHash, strlen(prefixPayHash));
+    if (foundPayHash) {
+      size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
+      log_notice(LD_CIRC, "ELTOR RELAY: Found payhash in decrypted message at offset %zu",
+                indexPayHash);
+      
+      // Extract and process the payment hash
+      size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
+      if (remaining > 0) {
+        char *payhash = tor_malloc(remaining + 1);
+        memcpy(payhash, (char*)*client_message_out + indexPayHash + strlen(prefixPayHash), 
+              remaining);
+        payhash[remaining] = '\0';
+        
+        log_notice(LD_CIRC, "ELTOR RELAY: Extracted payment hash (len=%zu): %.50s...",
+                  strlen(payhash), payhash);
+                  
+        // Send to control port
+        // control_event_payment_id_hash_received(payhash);
+        tor_free(payhash);
+      }
+    } else {
+      log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in decrypted message");
+    }
   }
 
   return 0;
