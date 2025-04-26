@@ -29,6 +29,7 @@
 #include "lib/crypt_ops/crypto_util.h"
 #include "lib/ctime/di_ops.h"
 #include "lib/log/util_bug.h"
+#include "lib/encoding/binascii.h"
 
 #include <string.h>
 
@@ -624,6 +625,9 @@ onion_skin_ntor3_server_handshake_part1(
   // After decrypting the message
   if (*client_message_out && *client_message_len_out > 0) {
     log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message (len=%zu)", *client_message_len_out);
+
+    log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message hex dump: %s",
+      hex_str((const char *)*client_message_out, *client_message_len_out));
     
     // Check for payhash in the decrypted message
     const void *foundPayHash = tor_memmem(*client_message_out, *client_message_len_out,

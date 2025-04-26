@@ -19,7 +19,10 @@
         "circuitlist.h": "c",
         "routermode.h": "c",
         "selftest.h": "c",
-        "extend_info_st.h": "c"
+        "extend_info_st.h": "c",
+        "util_bug.h": "c",
+        "control.h": "c",
+        "di_ops.h": "c"
     },
     "cSpell.words": [
         "eltor",
