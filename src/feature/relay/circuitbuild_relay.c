@@ -444,7 +444,11 @@ circuit_extend(struct cell_t *cell, struct circuit_t *circ)
   if (circuit_extend_state_valid_helper(circ) < 0)
     return -1;
 
+  log_notice(LD_CIRC, "ELTOR RELAY %s: Processing EXTEND cell (circuit ID: %u)", get_options()->Nickname, circ->n_circ_id);
+
   relay_header_unpack(&rh, cell->payload);
+
+  log_notice(LD_CIRC, "ELTOR RELAY %s: Unpacked relay header (cmd=%d, len=%d)", get_options()->Nickname, rh.command, (int)rh.length);
 
   if (extend_cell_parse(&ec, rh.command,
                         cell->payload+RELAY_HEADER_SIZE,
@@ -454,19 +458,17 @@ circuit_extend(struct cell_t *cell, struct circuit_t *circ)
     return -1;
   }
 
-  log_debug(LD_CIRC, "ELTOR Received extend cell payload (len=%d): %s",
-        (int)sizeof(cell->payload),
-        hex_str(cell->payload, sizeof(cell->payload)));
+  log_notice(LD_CIRC, "ELTOR RELAY %s: Received extend cell payload (len=%d)", get_options()->Nickname, (int)sizeof(cell->payload));
 
-  // Check if payment has been made
-  // int has_paid = payment_util_has_paid(get_options()->ContactInfo, cell->payload, sizeof(cell->payload));
-  // if (has_paid == 0) {
-  //   return -1;
-  // }
-  // Check to to see if a payment id has was passed in the cell
+  // Check to to see if a payment id hash was passed
   int has_payment_id_hash = payment_util_has_payment_id_hash(cell->payload, sizeof(cell->payload));
   if (has_payment_id_hash == 0) {
+    log_notice(LD_CIRC, "ELTOR RELAY %s: No payment hash found in extend cell",
+              get_options()->Nickname);
     return -1;
+  } else {
+    log_notice(LD_CIRC, "ELTOR RELAY %s: Successfully found payment hash in extend cell",
+              get_options()->Nickname);
   }
 
   if (circuit_extend_add_ed25519_helper(&ec) < 0)

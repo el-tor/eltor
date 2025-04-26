@@ -207,19 +207,50 @@ payment_util_has_paid(const char *contact_info, const uint8_t *payload,
 // Function to check if a payment id hash was passed
 int
 payment_util_has_payment_id_hash(const uint8_t *payload, size_t payload_len)
-{ 
-  // Check for payment id hash
+{
   const char *prefixPayHash = "eltor_payhash";
   size_t plen = strlen(prefixPayHash);
+  
+  // Log relay nickname and circuit ID
+  log_notice(LD_APP, "ELTOR RELAY %s: Checking for payment hash in cell payload (len=%zu)",
+            get_options()->Nickname, payload_len);
+  
+  // Search for the prefix in the payload
   const void *foundPayHash = tor_memmem(payload, payload_len, prefixPayHash, plen);
   if (foundPayHash) {
-      char payhash[768 + 1]; // null-terminated string
-      size_t indexPayHash = (const uint8_t *)foundPayHash - payload;
-      memcpy(payhash, payload + indexPayHash + plen, 2304);
-      payhash[768] = '\0'; // Null-terminate the string
-      log_info(LD_APP, "EVT ElTorRelay: %s, PayHash: %s", get_options()->Nickname, payhash);
-      control_event_payment_id_hash_received(payhash);
-      return 1;
+    size_t indexPayHash = (const uint8_t *)foundPayHash - payload;
+    log_notice(LD_APP, "ELTOR RELAY %s: Found payhash at offset %zu in payload",
+              get_options()->Nickname, indexPayHash);
+    
+    // Make sure we have enough room to get the hash
+    size_t remaining = payload_len - (indexPayHash + plen);
+    if (remaining < 1) {
+      log_warn(LD_APP, "ELTOR RELAY %s: Found prefix but no room for payhash",
+              get_options()->Nickname);
+      return 0;
+    }
+    
+    // Extract a reasonable amount of the hash (up to 768 bytes)
+    size_t copy_len = MIN(768, remaining);
+    
+    char payhash[769]; // 768 + null terminator
+    memcpy(payhash, (const char*)payload + indexPayHash + plen, copy_len);
+    payhash[copy_len] = '\0';
+    
+    log_notice(LD_APP, "ELTOR RELAY %s: Successfully extracted payhash (length=%zu)",
+              get_options()->Nickname, strlen(payhash));
+    log_notice(LD_APP, "ELTOR RELAY %s: Payment hash first 50 chars: %.50s...",
+              get_options()->Nickname, payhash);
+    
+    control_event_payment_id_hash_received(payhash);
+    return 1;
+  } else {
+    log_notice(LD_APP, "ELTOR RELAY %s: PayHash prefix not found in payload",
+              get_options()->Nickname);
+    
+    // Add additional debugging to check for any string that looks like a payment hash
+    log_debug(LD_APP, "ELTOR RELAY %s: Full payload hex dump: %s",
+             get_options()->Nickname, hex_str(payload, payload_len));
+    return 0;
   }
-  return 0;
 }

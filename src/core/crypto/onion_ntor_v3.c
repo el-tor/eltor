@@ -200,6 +200,13 @@ onion_skin_ntor3_create_nokeygen(
   *onion_skin_out = NULL;
   *onion_skin_len_out = 0;
 
+  // Add detailed logging at the start
+  log_notice(LD_CIRC, "ELTOR CLIENT: Creating NTOR3 handshake with message_len=%zu", 
+    message_len);
+  if (message && message_len > 20) {
+    log_notice(LD_CIRC, "ELTOR CLIENT: Message begins with: %.20s...", message);
+  }
+
   // Set up the handshake state object.
   *handshake_state_out = tor_malloc_zero(sizeof(ntor3_handshake_state_t));
   memcpy(&(*handshake_state_out)->client_keypair, client_keypair,
@@ -277,6 +284,11 @@ onion_skin_ntor3_create_nokeygen(
   memwipe(&mac_key, 0, sizeof(mac_key));
   memwipe(encrypted_message, 0, message_len);
   tor_free(encrypted_message);
+
+  // After building the onion skin, add this:
+  log_notice(LD_CIRC, "ELTOR CLIENT: Completed NTOR3 onion_skin (len=%zu)", 
+           *onion_skin_len_out);
+  //log_notice(LD_CIRC, "ELTOR CLIENT: First 50 bytes of onion_skin: %s", hex_str(*onion_skin_out, MIN(50, *onion_skin_len_out)));
 
   return 0;
 }
@@ -478,6 +490,19 @@ onion_skin_ntor3_server_handshake_part1(
   *client_message_len_out = 0;
   *state_out = NULL;
 
+  // Add specific check for payment hash in the client handshake
+  log_notice(LD_CIRC, "ELTOR RELAY: Processing NTOR3 client handshake (len=%zu)", client_handshake_len);
+  const char *prefixPayHash = "eltor_payhash";
+  // const void *foundPayHash = tor_memmem(client_handshake, client_handshake_len, prefixPayHash, strlen(prefixPayHash));
+  // if (foundPayHash) {
+  //   size_t indexPayHash = (const uint8_t *)foundPayHash - client_handshake;
+  //   log_notice(LD_CIRC, "ELTOR RELAY: Found payhash in NTOR3 handshake at offset %zu", indexPayHash);
+  // } else {
+  //   log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in NTOR3 handshake");
+  //   // Log the handshake content for debugging
+  //   // log_notice(LD_CIRC, "ELTOR RELAY: First 50 bytes of handshake: %s", hex_str(client_handshake, MIN(50, client_handshake_len)));
+  // }
+
   int problems = 0;
 
   // Initialize state.
@@ -590,6 +615,19 @@ onion_skin_ntor3_server_handshake_part1(
     *client_message_len_out = 0;
     ntor3_server_handshake_state_free(*state_out);
     return -1;
+  }
+
+  // After decrypting the message
+  if (*client_message_out && *client_message_len_out > 0) {
+    log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message (len=%zu)", *client_message_len_out);
+    // Check for payhash in the decrypted message
+    // foundPayHash = tor_memmem(*client_message_out, *client_message_len_out, prefixPayHash, strlen(prefixPayHash));
+    // if (foundPayHash) {
+    //   size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
+    //   log_notice(LD_CIRC, "ELTOR RELAY: Found payhash in decrypted message at offset %zu", indexPayHash);
+    // } else {
+    //   log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in decrypted message");
+    // }
   }
 
   return 0;

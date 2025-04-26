@@ -138,8 +138,13 @@ onion_skin_create(int type,
 {
   int r = -1;
 
+  // Add detailed logging for payment hash
   if (eltor_payhash) {
-    log_info(LD_GENERAL, "ELTOR onion_skin_create payhash %s", eltor_payhash);
+    log_info(LD_GENERAL, "ELTOR onion_skin_create with payhash length: %zu", 
+            strlen(eltor_payhash));
+    log_debug(LD_GENERAL, "ELTOR payhash first 50 chars: %.50s...", eltor_payhash);
+  } else {
+    log_info(LD_GENERAL, "ELTOR onion_skin_create with NO payhash");
   }
 
   switch (type) {
@@ -187,46 +192,48 @@ onion_skin_create(int type,
     uint8_t *onion_skin = NULL;
     size_t onion_skin_len = 0;
 
+    // Now handle the payment hash
     if (eltor_payhash && strlen(eltor_payhash) > 0) {
-      log_info(LD_GENERAL, "ELTOR adding payhash to NTOR_V3, length: %zu", 
-               strlen(eltor_payhash));
-               
-      // Create an extended message that includes the payment hash
+      log_notice(LD_GENERAL, "ELTOR CLIENT: Adding payment hash to NTOR_V3 client message");
+      
+      // Create an extended message that includes the payment hash with prefix
       uint8_t *extended_msg = NULL;
       size_t extended_msg_len = 0;
       
-      // Build the complete message with prefix
-      char *prefixed_hash = NULL;
       const char prefixPayHash[] = "eltor_payhash";
-      tor_asprintf(&prefixed_hash, "%s%s", prefixPayHash, eltor_payhash);
       
-      // Calculate new message size and allocate
-      extended_msg_len = msg_len + strlen(prefixed_hash) + 1; // +1 for marker
+      // Calculate full length needed
+      extended_msg_len = msg_len + strlen(prefixPayHash) + strlen(eltor_payhash) + 1; // +1 for marker
       extended_msg = tor_malloc(extended_msg_len);
       
-      // Copy original message
+      // Copy the original message first
       memcpy(extended_msg, msg, msg_len);
       
-      // Add marker and payhash
+      // Add marker at the end of original message
       extended_msg[msg_len] = 0x01; // Marker to indicate payment hash follows
-      memcpy(extended_msg + msg_len + 1, prefixed_hash, strlen(prefixed_hash));
       
-      // Debug log
-      log_info(LD_GENERAL, "ELTOR extended message length: %zu, original: %zu", 
-               extended_msg_len, msg_len);
+      // Copy the prefixed payhash after the marker
+      memcpy(extended_msg + msg_len + 1, prefixPayHash, strlen(prefixPayHash));
+      memcpy(extended_msg + msg_len + 1 + strlen(prefixPayHash), 
+            eltor_payhash, strlen(eltor_payhash));
+      
+      log_notice(LD_GENERAL, "ELTOR CLIENT: Extended message length: %zu (original: %zu)", 
+                extended_msg_len, msg_len);
+      log_notice(LD_GENERAL, "ELTOR CLIENT: PayHash (first 50 chars): %.50s...", eltor_payhash);
       
       // Free original message and replace with extended one
       tor_free(msg);
       msg = extended_msg;
       msg_len = extended_msg_len;
-      tor_free(prefixed_hash);
+    } else {
+      log_notice(LD_GENERAL, "ELTOR CLIENT: No payment hash provided for NTOR_V3");
     }
 
     int status = onion_skin_ntor3_create(
                              &node->ed_identity,
                              &node->curve25519_onion_key,
                              NTOR3_VERIFICATION_ARGS,
-                             msg, msg_len, /* client message */
+                             msg, msg_len, /* client message now includes the payment hash */
                              &state_out->u.ntor3,
                              &onion_skin, &onion_skin_len);
     tor_free(msg);
