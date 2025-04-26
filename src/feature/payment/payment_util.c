@@ -307,3 +307,32 @@ payment_util_get_hop_payhash(origin_circuit_t *circ, crypt_path_t *hop)
     return NULL;
   }
 }
+
+/**
+ * Helper function to get the payment hash for the first hop in a circuit.
+ * This is simpler than the general hop function since we always use hop_num = 1.
+ * 
+ * @param circ The origin circuit containing the payment hash
+ * @return Static buffer containing the payment hash for the first hop, or NULL if not found
+ */
+const char *
+payment_util_get_first_hop_payhash(origin_circuit_t *circ)
+{
+  if (!circ || !circ->payhash)
+    return NULL;
+  
+  static char extracted_payhash[PAYMENT_PAYHASH_SIZE];
+  memset(extracted_payhash, 0, sizeof(extracted_payhash));
+  
+  // Extract the first hop's payment hash (hop_num = 1)
+  payment_util_get_payhash_from_circ(extracted_payhash, circ->payhash, 1);
+  
+  if (strlen(extracted_payhash) > 0) {
+    log_info(LD_CIRC, "ELTOR: Found first hop payment hash (length: %zu)",
+             strlen(extracted_payhash));
+    return extracted_payhash;
+  } else {
+    log_info(LD_CIRC, "ELTOR: No payment hash found for first hop");
+    return NULL;
+  }
+}

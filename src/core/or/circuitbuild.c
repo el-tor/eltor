@@ -1078,7 +1078,7 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
   //  payment_util_get_payhash_from_circ(&eltor_payhash, payhash, 1);
   // }
   
-  const char *hop_payhash = payment_util_get_hop_payhash(circ, circ->cpath);
+  const char *hop_payhash = payment_util_get_first_hop_payhash(circ);
 
   len = onion_skin_create(cc.handshake_type,
                           circ->cpath->extend_info,
