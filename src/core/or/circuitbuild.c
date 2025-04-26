@@ -1075,15 +1075,17 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
   //   //  4. Connect to hidden service
   //  payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
   // } else {
-  //   payment_util_get_payhash_from_circ(&eltor_payhash, payhash, 1);
+  //  payment_util_get_payhash_from_circ(&eltor_payhash, payhash, 1);
   // }
+  
+  const char *hop_payhash = payment_util_get_hop_payhash(circ, circ->cpath);
 
   len = onion_skin_create(cc.handshake_type,
                           circ->cpath->extend_info,
                           &circ->cpath->handshake_state,
                           cc.onionskin,
                           sizeof(cc.onionskin),
-                          circ->payhash ? circ->payhash : NULL );
+                          hop_payhash);
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create (first hop) failed.");
     return - END_CIRC_REASON_INTERNAL;
@@ -1264,10 +1266,12 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   //   payment_util_get_payhash_from_circ(&eltor_payhash, payhash, hop_num);
   // }
 
+  const char *hop_payhash = payment_util_get_hop_payhash(circ, hop);
+
   // Add debugging to show we have the payment hash
-  if (circ->payhash) {
+  if (hop_payhash) {
     log_info(LD_GENERAL, "ELTOR intermediate hop with PayHash length: %zu", 
-             strlen(circ->payhash));
+             strlen(hop_payhash));
   } else {
     log_info(LD_GENERAL, "ELTOR intermediate hop with NO PayHash");
   }
@@ -1277,7 +1281,7 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
                           &hop->handshake_state,
                           ec.create_cell.onionskin,
                           sizeof(ec.create_cell.onionskin), 
-                          circ->payhash ? circ->payhash : NULL); // TODO finish passing payhash downstream
+                          hop_payhash); // TODO finish passing payhash downstream
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create failed.");
     return - END_CIRC_REASON_INTERNAL;

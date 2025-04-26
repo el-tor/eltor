@@ -9,6 +9,8 @@
 #include "feature/payment/payment_util.h"
 #include "core/or/origin_circuit_st.h"
 #include "feature/control/control_events.h"
+#include "core/or/origin_circuit_st.h"
+#include "core/or/crypt_path_st.h"
 
 // Function to convert a hex string to a byte array
 void
@@ -252,5 +254,56 @@ payment_util_has_payment_id_hash(const uint8_t *payload, size_t payload_len)
     log_debug(LD_APP, "ELTOR RELAY %s: Full payload hex dump: %s",
              get_options()->Nickname, hex_str(payload, payload_len));
     return 0;
+  }
+}
+
+
+/** 
+ * Helper function to get the payment hash for a specific hop in a circuit.
+ * 
+ * @param circ The origin circuit containing the payment hash
+ * @param hop The crypt path for the hop we're extending to
+ * @return Static buffer containing the payment hash for this hop, or NULL if not found
+ */
+const char *
+payment_util_get_hop_payhash(origin_circuit_t *circ, crypt_path_t *hop)
+{
+  if (!circ || !circ->payhash || !hop)
+    return NULL;
+  
+  // Find the hop number
+  int hop_num = 0;
+  for (crypt_path_t *cur = circ->cpath; cur != NULL; cur = cur->next) {
+    hop_num++;
+    if (cur == hop) {
+      break;
+    }
+    if (cur->next == circ->cpath) {
+      break; // Full loop without finding hop
+    }
+  }
+  
+  // No match found or invalid hop
+  if (hop_num <= 0) {
+    log_warn(LD_GENERAL, "ELTOR: Could not determine hop number");
+    return NULL;
+  }
+  
+  log_info(LD_GENERAL, "ELTOR: Extracting payment hash for hop %d", hop_num);
+  
+  // Allocate a buffer for the extracted payment hash
+  static char extracted_payhash[PAYMENT_PAYHASH_SIZE];
+  memset(extracted_payhash, 0, sizeof(extracted_payhash));
+  
+  // Use existing function to extract the payment hash for this hop
+  payment_util_get_payhash_from_circ(extracted_payhash, circ->payhash, hop_num);
+  
+  if (strlen(extracted_payhash) > 0) {
+    log_info(LD_GENERAL, "ELTOR: Found payment hash for hop %d (first 20 chars): %.20s...", 
+             hop_num, extracted_payhash);
+    return extracted_payhash;
+  } else {
+    log_info(LD_GENERAL, "ELTOR: No payment hash found for hop %d", hop_num);
+    return NULL;
   }
 }
