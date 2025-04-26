@@ -228,20 +228,21 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   });
 
   // Handle new circuit creation vs extending existing circuit
-  // if (zero_circ) {
-  //   // Handle new circuit creation
+  if (zero_circ) {
+    // Handle new circuit creation
+    int err_reason = 0;
+    if ((err_reason = circuit_handle_first_hop(circ)) < 0) {
+      circuit_mark_for_close(TO_CIRCUIT(circ), -err_reason);
+      control_write_endreply(conn, 551, "Couldn't start circuit");
+      goto done;
+    }
+  } else {
+    // TODO test this
+    // Handle extending existing circuit
+    if (circ->base_.state == CIRCUIT_STATE_OPEN ||
+        circ->base_.state == CIRCUIT_STATE_GUARD_WAIT) {
       int err_reason = 0;
-  //   if ((err_reason = circuit_handle_first_hop(circ)) < 0) {
-  //     circuit_mark_for_close(TO_CIRCUIT(circ), -err_reason);
-  //     control_write_endreply(conn, 551, "Couldn't start circuit");
-  //     goto done;
-  //   }
-  // } else {
-  //   // Handle extending existing circuit
-  //   if (circ->base_.state == CIRCUIT_STATE_OPEN ||
-  //       circ->base_.state == CIRCUIT_STATE_GUARD_WAIT) {
-  //     int err_reason = 0;
-  //     circuit_set_state(TO_CIRCUIT(circ), CIRCUIT_STATE_BUILDING);
+      circuit_set_state(TO_CIRCUIT(circ), CIRCUIT_STATE_BUILDING);
       if ((err_reason = circuit_send_next_onion_skin(circ)) < 0) {
         log_info(LD_CONTROL,
                  "circuit_send_next_onion_skin failed; circuit marked for closing.");
@@ -249,12 +250,12 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
         control_write_endreply(conn, 551, "Couldn't send onion skin");
         goto done;
       }
-  //   } else {
-  //     control_write_endreply(conn, 551, 
-  //                          "Circuit is not in a state that can be extended");
-  //     goto done;
-  //   }
-  // }
+    } else {
+      control_write_endreply(conn, 551, 
+                           "Circuit is not in a state that can be extended");
+      goto done;
+    }
+  }
 
   control_printf_endreply(conn, 250, "EXTENDED %lu",
                           (unsigned long)circ->global_identifier);
