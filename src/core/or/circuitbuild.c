@@ -1083,7 +1083,7 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
                           &circ->cpath->handshake_state,
                           cc.onionskin,
                           sizeof(cc.onionskin),
-                          circ->payhash );
+                          circ->payhash ? circ->payhash : NULL );
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create (first hop) failed.");
     return - END_CIRC_REASON_INTERNAL;
@@ -1277,7 +1277,7 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
                           &hop->handshake_state,
                           ec.create_cell.onionskin,
                           sizeof(ec.create_cell.onionskin), 
-                          circ->payhash); // TODO finish passing payhash downstream
+                          circ->payhash ? circ->payhash : NULL); // TODO finish passing payhash downstream
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create failed.");
     return - END_CIRC_REASON_INTERNAL;
