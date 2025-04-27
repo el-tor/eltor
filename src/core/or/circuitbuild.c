@@ -1201,8 +1201,7 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
 
   // Add debug log for PayHash if present
   if (circ->payhash) {
-  log_info(LD_GENERAL, "ELTOR intermediate hop with PayHash length: %zu", 
-      strlen(circ->payhash));
+    log_info(LD_GENERAL, "ELTOR intermediate hop with PayHash length: %zu", strlen(circ->payhash));
   }
 
   circuit_pick_extend_handshake(&ec.cell_type,
@@ -1289,12 +1288,12 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   ec.create_cell.handshake_len = len;
 
 
-  log_info(LD_CIRC,"Sending extend relay cell with eltor. payhash: %s", circ->payhash);
+  log_info(LD_CIRC,"Sending extend relay cell with eltor. payhash: %s", hop_payhash);
   {
     uint8_t command = 0;
     uint16_t payload_len=0;
     uint8_t payload[RELAY_PAYLOAD_SIZE];
-    if (extend_cell_format(&command, &payload_len, payload, &ec, circ->payhash)<0) {
+    if (extend_cell_format(&command, &payload_len, payload, &ec, hop_payhash)<0) {
       log_warn(LD_CIRC,"Couldn't format extend cell");
       return -END_CIRC_REASON_INTERNAL;
     }
