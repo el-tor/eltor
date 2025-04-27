@@ -25,7 +25,10 @@
         "di_ops.h": "c",
         "binascii.h": "c",
         "util_string.h": "c",
-        "torint.h": "c"
+        "torint.h": "c",
+        "control_events.h": "c",
+        "log.h": "c",
+        "cmp.h": "c"
     },
     "cSpell.words": [
         "eltor",

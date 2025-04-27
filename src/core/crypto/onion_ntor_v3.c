@@ -31,6 +31,12 @@
 #include "lib/log/util_bug.h"
 #include "lib/encoding/binascii.h"
 #include "lib/intmath/cmp.h" 
+#include "feature/payment/payment_util.h"
+#include "core/or/origin_circuit_st.h"
+#include "feature/control/control_events.h"
+#include "core/or/origin_circuit_st.h"
+#include "core/or/crypt_path_st.h"
+
 
 #include <ctype.h> 
 #include <string.h>
@@ -661,36 +667,41 @@ onion_skin_ntor3_server_handshake_part1(
   // After decrypting the message
   if (*client_message_out && *client_message_len_out > 0) {
     log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message (len=%zu)", *client_message_len_out);
-    // Print the first bytes in hex
-    log_notice(LD_CIRC, "ELTOR RELAY: Decrypted message first bytes: %s",
-          hex_str((const char *)*client_message_out, MIN(32, *client_message_len_out)));
-
-    // Print all printable substrings in the message
-    size_t start = 0;
-    while (start < *client_message_len_out) {
-      // Skip non-printable bytes
-      while (start < *client_message_len_out &&
-         !(isprint((*client_message_out)[start]) || isspace((*client_message_out)[start]))) {
-      start++;
+    
+    // Log the first few bytes for debugging
+    log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message hex dump: %s",
+              hex_str((const char *)*client_message_out, MIN(32, *client_message_len_out)));
+    
+    // Check for the prefixPayHash directly
+    const char *prefixPayHash = "eltor_payhash";
+    const void *foundPayHash = tor_memmem(*client_message_out, *client_message_len_out,
+                                        prefixPayHash, strlen(prefixPayHash));
+    
+    if (foundPayHash) {
+      size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
+      log_notice(LD_CIRC, "ELTOR RELAY: Found payment hash prefix at offset %zu", indexPayHash);
+      
+      // Extract and process the payment hash
+      size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
+      if (remaining > 0) {
+        char *payhash = tor_malloc(remaining + 1);
+        memcpy(payhash, (char*)*client_message_out + indexPayHash + strlen(prefixPayHash), 
+              remaining);
+        payhash[remaining] = '\0';
+        
+        log_notice(LD_CIRC, "ELTOR RELAY: Extracted payment hash (len=%zu)", strlen(payhash));
+        if (strlen(payhash) > 50) {
+          log_notice(LD_CIRC, "ELTOR RELAY: Payment hash first 50 chars: %.50s...", payhash);
+        } else {
+          log_notice(LD_CIRC, "ELTOR RELAY: Payment hash: %s", payhash);
+        }
+        control_event_payment_id_hash_received(payhash);        
+        tor_free(payhash);
       }
-      size_t end = start;
-      // Find the end of the printable substring
-      while (end < *client_message_len_out &&
-         (isprint((*client_message_out)[end]) || isspace((*client_message_out)[end]))) {
-      end++;
-      }
-      if (end > start) {
-      size_t len = end - start;
-      char *printable = tor_malloc(len + 1);
-      memcpy(printable, *client_message_out + start, len);
-      printable[len] = '\0';
-      log_notice(LD_CIRC, "ELTOR RELAY: Decrypted message printable string: %s", printable);
-      tor_free(printable);
-      start = end;
-      } else {
-      start++;
-      }
+    } else {
+      log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in decrypted message");
     }
+  
 
     // Check for extended message format (our marker is 0x02 at position 3)
     if (*client_message_len_out > 4 && (*client_message_out)[0] == 0x01 && 
@@ -725,12 +736,7 @@ onion_skin_ntor3_server_handshake_part1(
             log_notice(LD_CIRC, "ELTOR RELAY: PayHash first 50 chars: %.50s...", payhash);
           } else {
             log_notice(LD_CIRC, "ELTOR RELAY: PayHash: %s", payhash);
-          }
-          
-          // CRITICAL: Send the payment hash to the control port
-          //#include "feature/control/control_events.h"
-          // control_event_payment_id_hash_received(payhash);
-          
+          }          
           tor_free(payhash);
         }
       }
