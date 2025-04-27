@@ -37,4 +37,6 @@ relay_payments_find_by_fingerprint(const relay_payments_t *payments,
 /* Validation functions */
 int relay_payment_item_is_valid(const relay_payment_item_t *item);
 
+void log_relay_payment(const relay_payment_item_t *payment_item);
+
 #endif /* !defined(RELAY_PAYMENTS_H) */

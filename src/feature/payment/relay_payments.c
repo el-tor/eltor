@@ -177,3 +177,27 @@ relay_payment_item_is_valid(const relay_payment_item_t *item)
 
   return 1;
 }
+
+/**
+ * Log the contents of a relay_payment_item_t for debugging.
+ */
+void
+log_relay_payment(const relay_payment_item_t *payment_item)
+{
+  log_debug(
+      LD_CONTROL,
+      "Parsed payment_item: fingerprint=%s, handshake_payment_hash=%s, "
+      "handshake_preimage=%s, payhashes=%s, wire_format=%s",
+      payment_item && payment_item->fingerprint ? payment_item->fingerprint
+                                                : "(null)",
+      payment_item && payment_item->handshake_payment_hash
+          ? payment_item->handshake_payment_hash
+          : "(null)",
+      payment_item && payment_item->handshake_preimage
+          ? payment_item->handshake_preimage
+          : "(null)",
+      payment_item && payment_item->payhashes ? payment_item->payhashes
+                                              : "(null)",
+      payment_item && payment_item->wire_format ? payment_item->wire_format
+                                                : "(null)");
+}

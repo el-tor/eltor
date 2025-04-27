@@ -11,11 +11,13 @@
 #include "feature/control/control_events.h"
 #include "core/or/origin_circuit_st.h"
 #include "core/or/crypt_path_st.h"
+#include "feature/payment/relay_payments.h"
+
 
 // Function to convert a hex string to a byte array
 void
 payment_util_hex_to_bytes(const char *hex, unsigned char *bytes,
-                           size_t bytes_len)
+                          size_t bytes_len)
 {
   for (size_t i = 0; i < bytes_len; ++i) {
     sscanf(hex + 2 * i, "%2hhx", &bytes[i]);
@@ -24,8 +26,7 @@ payment_util_hex_to_bytes(const char *hex, unsigned char *bytes,
 
 // Function to verify if the preimage matches the given payment hash
 int
-payment_util_verify_preimage(const char *preimage_hex,
-                              const char *payhash_hex)
+payment_util_verify_preimage(const char *preimage_hex, const char *payhash_hex)
 {
   unsigned char preimage[32];
   unsigned char payhash[32];
@@ -102,7 +103,8 @@ payment_util_get_preimage_from_torrc(char *eltor_payhash, int hop_num)
 }
 
 void
-payment_util_get_payhash_from_circ(char *eltor_payhash, char *payhash, int hop_num)
+payment_util_get_payhash_from_circ(char *eltor_payhash, char *payhash,
+                                   int hop_num)
 {
   // Ensure the input buffers and circuit are valid
   // tor_assert(eltor_preimage);
@@ -119,16 +121,17 @@ payment_util_get_payhash_from_circ(char *eltor_payhash, char *payhash, int hop_n
     return;
   }
 
-
   // Define buffer sizes
-  const size_t raw_size = 2304; // handshake_fee_payment_hash+handshake_fee_preimage+10_payment_ids_concatinated
+  const size_t raw_size =
+      2304; // handshake_fee_payment_hash+handshake_fee_preimage+10_payment_ids_concatinated
   const size_t prefix_size = 13; // Length of "eltor_payhash"
-  const size_t total_size = raw_size + prefix_size + 1; // +1 for null terminator
+  const size_t total_size =
+      raw_size + prefix_size + 1; // +1 for null terminator
 
   // 1. Parse Preimage
   // char eltor_preimage_raw[raw_size + 1];
-  // memset(eltor_preimage_raw, 0, sizeof(eltor_preimage_raw)); // null terminator
-  // strncpy(eltor_preimage_raw, preimage, raw_size);
+  // memset(eltor_preimage_raw, 0, sizeof(eltor_preimage_raw)); // null
+  // terminator strncpy(eltor_preimage_raw, preimage, raw_size);
   // eltor_preimage_raw[raw_size] = '\0'; // Ensure null termination
 
   // 2. Parse Payhash
@@ -143,7 +146,8 @@ payment_util_get_payhash_from_circ(char *eltor_payhash, char *payhash, int hop_n
   } else {
     strncpy(eltor_payhash_raw, payhash + offset, 768);
     eltor_payhash_raw[768] = '\0'; // Ensure null termination
-    log_info(LD_CONFIG, "eltor_payhash_raw (hop %d): %s", hop_num, eltor_payhash_raw);
+    log_info(LD_CONFIG, "eltor_payhash_raw (hop %d): %s", hop_num,
+             eltor_payhash_raw);
   }
 
   // 3. Prefix the Preimage string
@@ -152,13 +156,14 @@ payment_util_get_payhash_from_circ(char *eltor_payhash, char *payhash, int hop_n
 
   // 4. Prefix the PayHash string
   const char prefixPayHash[] = "eltor_payhash";
-  snprintf(eltor_payhash, total_size, "%s%s", prefixPayHash, eltor_payhash_raw);
+  snprintf(eltor_payhash, total_size, "%s%s", prefixPayHash,
+           eltor_payhash_raw);
 }
 
 // Function to check if payment has been made
 int
 payment_util_has_paid(const char *contact_info, const uint8_t *payload,
-                       size_t payload_len)
+                      size_t payload_len)
 {
   if (!contact_info) {
     log_info(LD_APP,
@@ -212,65 +217,71 @@ payment_util_has_payment_id_hash(const uint8_t *payload, size_t payload_len)
 {
   const char *prefixPayHash = "eltor_payhash";
   size_t plen = strlen(prefixPayHash);
-  
+
   // Log relay nickname and circuit ID
-  log_notice(LD_APP, "ELTOR RELAY %s: Checking for payment hash in cell payload (len=%zu)",
-            get_options()->Nickname, payload_len);
-  
+  log_notice(
+      LD_APP,
+      "ELTOR RELAY %s: Checking for payment hash in cell payload (len=%zu)",
+      get_options()->Nickname, payload_len);
+
   // Search for the prefix in the payload
-  const void *foundPayHash = tor_memmem(payload, payload_len, prefixPayHash, plen);
+  const void *foundPayHash =
+      tor_memmem(payload, payload_len, prefixPayHash, plen);
   if (foundPayHash) {
     size_t indexPayHash = (const uint8_t *)foundPayHash - payload;
-    log_notice(LD_APP, "ELTOR RELAY %s: Found payhash at offset %zu in payload",
-              get_options()->Nickname, indexPayHash);
-    
+    log_notice(LD_APP,
+               "ELTOR RELAY %s: Found payhash at offset %zu in payload",
+               get_options()->Nickname, indexPayHash);
+
     // Make sure we have enough room to get the hash
     size_t remaining = payload_len - (indexPayHash + plen);
     if (remaining < 1) {
       log_warn(LD_APP, "ELTOR RELAY %s: Found prefix but no room for payhash",
-              get_options()->Nickname);
+               get_options()->Nickname);
       return 0;
     }
-    
+
     // Extract a reasonable amount of the hash (up to 768 bytes)
     size_t copy_len = MIN(768, remaining);
-    
+
     char payhash[769]; // 768 + null terminator
-    memcpy(payhash, (const char*)payload + indexPayHash + plen, copy_len);
+    memcpy(payhash, (const char *)payload + indexPayHash + plen, copy_len);
     payhash[copy_len] = '\0';
-    
-    log_notice(LD_APP, "ELTOR RELAY %s: Successfully extracted payhash (length=%zu)",
-              get_options()->Nickname, strlen(payhash));
+
+    log_notice(LD_APP,
+               "ELTOR RELAY %s: Successfully extracted payhash (length=%zu)",
+               get_options()->Nickname, strlen(payhash));
     log_notice(LD_APP, "ELTOR RELAY %s: Payment hash first 50 chars: %.50s...",
-              get_options()->Nickname, payhash);
-    
+               get_options()->Nickname, payhash);
+
     // control_event_payment_id_hash_received(payhash);
     return 1;
   } else {
     log_notice(LD_APP, "ELTOR RELAY %s: PayHash prefix not found in payload",
-              get_options()->Nickname);
-    
-    // Add additional debugging to check for any string that looks like a payment hash
+               get_options()->Nickname);
+
+    // Add additional debugging to check for any string that looks like a
+    // payment hash
     log_debug(LD_APP, "ELTOR RELAY %s: Full payload hex dump: %s",
-             get_options()->Nickname, hex_str(payload, payload_len));
+              get_options()->Nickname, hex_str(payload, payload_len));
     return 0;
   }
 }
 
-
-/** 
+/**
  * Helper function to get the payment hash for a specific hop in a circuit.
- * 
+ *
  * @param circ The origin circuit containing the payment hash
  * @param hop The crypt path for the hop we're extending to
- * @return Static buffer containing the payment hash for this hop, or NULL if not found
+ * @return Static buffer containing the payment hash for this hop, or NULL if
+ * not found
  */
 const char *
 payment_util_get_hop_payhash(origin_circuit_t *circ, crypt_path_t *hop)
 {
   if (!circ || !circ->payhashes || !hop)
     return NULL;
-  
+
   // Find the hop number
   int hop_num = 0;
   for (crypt_path_t *cur = circ->cpath; cur != NULL; cur = cur->next) {
@@ -282,24 +293,26 @@ payment_util_get_hop_payhash(origin_circuit_t *circ, crypt_path_t *hop)
       break; // Full loop without finding hop
     }
   }
-  
+
   // No match found or invalid hop
   if (hop_num <= 0) {
     log_warn(LD_GENERAL, "ELTOR: Could not determine hop number");
     return NULL;
   }
-  
+
   log_info(LD_GENERAL, "ELTOR: Extracting payment hash for hop %d", hop_num);
-  
+
   // Allocate a buffer for the extracted payment hash
   static char extracted_payhash[PAYMENT_PAYHASH_SIZE];
   memset(extracted_payhash, 0, sizeof(extracted_payhash));
-  
+
   // Use existing function to extract the payment hash for this hop
-  payment_util_get_payhash_from_circ(extracted_payhash, circ->payhashes, hop_num);
-  
+  payment_util_get_payhash_from_circ(extracted_payhash, circ->payhashes,
+                                     hop_num);
+
   if (strlen(extracted_payhash) > 0) {
-    log_info(LD_GENERAL, "ELTOR: Found payment hash for hop %d (first 20 chars): %.20s...", 
+    log_info(LD_GENERAL,
+             "ELTOR: Found payment hash for hop %d (first 20 chars): %.20s...",
              hop_num, extracted_payhash);
     return extracted_payhash;
   } else {
@@ -310,23 +323,25 @@ payment_util_get_hop_payhash(origin_circuit_t *circ, crypt_path_t *hop)
 
 /**
  * Helper function to get the payment hash for the first hop in a circuit.
- * This is simpler than the general hop function since we always use hop_num = 1.
- * 
+ * This is simpler than the general hop function since we always use hop_num
+ * = 1.
+ *
  * @param circ The origin circuit containing the payment hash
- * @return Static buffer containing the payment hash for the first hop, or NULL if not found
+ * @return Static buffer containing the payment hash for the first hop, or NULL
+ * if not found
  */
 const char *
 payment_util_get_first_hop_payhash(origin_circuit_t *circ)
 {
   if (!circ || !circ->payhashes)
     return NULL;
-  
+
   static char extracted_payhash[PAYMENT_PAYHASH_SIZE];
   memset(extracted_payhash, 0, sizeof(extracted_payhash));
-  
+
   // Extract the first hop's payment hash (hop_num = 1)
   payment_util_get_payhash_from_circ(extracted_payhash, circ->payhashes, 1);
-  
+
   if (strlen(extracted_payhash) > 0) {
     log_info(LD_CIRC, "ELTOR: Found first hop payment hash (length: %zu)",
              strlen(extracted_payhash));
@@ -335,4 +350,81 @@ payment_util_get_first_hop_payhash(origin_circuit_t *circ)
     log_info(LD_CIRC, "ELTOR: No payment hash found for first hop");
     return NULL;
   }
+}
+
+/**
+ * Parse a raw payment line into a structured relay_payment_item_t.
+ * Format: "fingerprint handshake_payment_hash(64) + handshake_preimage(64) +
+ * payhashes"
+ *
+ * @param line The raw line to parse
+ * @return A newly allocated relay_payment_item_t or NULL on error
+ */
+relay_payment_item_t *
+payment_util_parse_payment_line(const char *line)
+{
+  if (!line || !strlen(line))
+    return NULL;
+
+  relay_payment_item_t *item = relay_payment_item_new();
+  if (!item)
+    return NULL;
+
+  // Split line by space to get fingerprint and payload
+  char *space = strchr(line, ' ');
+  if (!space) {
+    log_warn(LD_CONTROL,
+             "ELTOR: Invalid payment line format (no space found)");
+    relay_payment_item_free(item);
+    return NULL;
+  }
+
+  // Extract fingerprint (part before space)
+  size_t fp_len = space - line;
+  item->fingerprint = tor_malloc_zero(fp_len + 1);
+  memcpy(item->fingerprint, line, fp_len);
+
+  // Get the payload after the space
+  const char *payload = space + 1;
+  size_t payload_len = strlen(payload);
+
+  // Check if payload is long enough
+  if (payload_len < 128) { // At least 64+64 chars for hash and preimage
+    log_warn(LD_CONTROL, "ELTOR: Invalid payment payload (too short: %zu)",
+             payload_len);
+    relay_payment_item_free(item);
+    return NULL;
+  }
+
+  // Extract handshake payment hash (first 64 chars)
+  item->handshake_payment_hash = tor_malloc_zero(65);
+  memcpy(item->handshake_payment_hash, payload, 64);
+
+  // Extract handshake preimage (next 64 chars)
+  item->handshake_preimage = tor_malloc_zero(65);
+  memcpy(item->handshake_preimage, payload + 64, 64);
+
+  // Extract payhashes (remaining chars)
+  size_t payhashes_len = payload_len - 128;
+  if (payhashes_len > 0) {
+    item->payhashes = tor_malloc_zero(payhashes_len + 1);
+    memcpy(item->payhashes, payload + 128, payhashes_len);
+  } else {
+    item->payhashes = tor_strdup("");
+  }
+
+  // Set wire_format as "eltor_payhash" + payload
+  const char *prefix = "eltor_payhash";
+  size_t prefix_len = strlen(prefix);
+  item->wire_format = tor_malloc_zero(prefix_len + payload_len + 1);
+  memcpy(item->wire_format, prefix, prefix_len);
+  memcpy(item->wire_format + prefix_len, payload, payload_len);
+
+  log_debug(
+      LD_CONTROL,
+      "ELTOR: Parsed payment line for %s (hash: %.10s..., preimage: %.10s...)",
+      item->fingerprint, item->handshake_payment_hash,
+      item->handshake_preimage);
+
+  return item;
 }

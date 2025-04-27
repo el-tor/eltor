@@ -56,6 +56,9 @@
 #include "feature/nodelist/node_st.h"
 #include "feature/nodelist/routerinfo_st.h"
 #include "app/config/statefile.h"
+#include "feature/nodelist/describe.h"
+#include "feature/payment/relay_payments.h"
+#include "feature/payment/payment_util.h"
 #include "feature/payment/relay_payments.h"
 
 #ifdef HAVE_UNISTD_H
@@ -132,9 +135,8 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   char *payhashes = tor_malloc_zero(smartlist_len(lines) * 1024);
 
   // TODO new structure for relay payments, need to implement
-  // relay_payments_t *relay_payments = relay_payments_new();
+  relay_payments_t *relay_payments = relay_payments_new();
   //    relay_payments = [{fingerprint: "", handshake_payment_hash: "", handshake_preimage: "", payhashes: "", wire_format: "eltor_payhash+payment_id_hash_round1+payment_id_hash_round2+...payment_id_hash_round10"}];
-
   
   // Process each line to extract fingerprint and payhashes
   SMARTLIST_FOREACH_BEGIN(lines, char *, line) {
@@ -149,6 +151,18 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     
     const char *fingerprint = smartlist_get(tokens, 0);
     const char *payhash = smartlist_get(tokens, 1);
+
+    // NEW Use parser instead of manual steps
+    relay_payment_item_t *payment_item = payment_util_parse_payment_line(line);
+    if (!payment_item) {
+      log_warn(LD_CONTROL, "Invalid payment line: %s", line);
+      smartlist_free(tokens);
+      continue;
+    }
+    // Add to our structured collection
+    relay_payments_add_item(relay_payments, payment_item);
+    // Log the parsed payment_item fields for debugging
+    log_relay_payment(payment_item);
     
     // Add this payhash to our combined payment hashes string
     if (strlen(payhashes) > 0) {
@@ -165,6 +179,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
       control_printf_endreply(conn, 552, "No such router \"%s\"", fingerprint);
       smartlist_free(tokens);
       tor_free(payhashes);
+      relay_payments_free(relay_payments);
       goto done;
     }
     if (!node_has_preferred_descriptor(node, zero_circ)) {
@@ -194,14 +209,16 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   SMARTLIST_FOREACH(nodes, const node_t *, node, {
     extend_info_t *info = extend_info_from_node(node, first_node, true);
     if (!info) {
-      tor_assert_nonfatal(first_node);
+      // Don't assert - it's normal for any hop to potentially fail
       log_warn(LD_CONTROL,
-               "controller tried to connect to a node that lacks a suitable "
+               "controller tried to connect to %s node (%s) that lacks a suitable "
                "descriptor, or which doesn't have any "
-               "addresses that are allowed by the firewall configuration; "
-               "circuit marked for closing.");
-      circuit_mark_for_close(TO_CIRCUIT(circ), -END_CIRC_REASON_CONNECTFAILED);
-      control_write_endreply(conn, 551, "Couldn't start circuit");
+               "addresses allowed by the firewall configuration; "
+               "circuit marked for closing.",
+               first_node ? "first" : "non-first",
+               node_describe(node));
+      circuit_mark_for_close(TO_CIRCUIT(circ), END_CIRC_REASON_CONNECTFAILED);
+      control_write_endreply(conn, 551, "Couldn't extend circuit: missing descriptor or valid address");
       goto done;
     }
     circuit_append_new_exit(circ, info);
@@ -251,5 +268,8 @@ done:
   SMARTLIST_FOREACH(lines, char *, cp, tor_free(cp));
   smartlist_free(lines);
   smartlist_free(nodes);
+  if (circ && circ->relay_payments != relay_payments) {
+    relay_payments_free(relay_payments);
+  }
   return 0;
 }

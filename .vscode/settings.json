@@ -83,7 +83,8 @@
         "mainloop_pubsub.h": "c",
         "onion_ntor.h": "c",
         "cpath_build_state_st.h": "c",
-        "routerstatus_st.h": "c"
+        "routerstatus_st.h": "c",
+        "control_cmd_args_st.h": "c"
     },
     "cSpell.words": [
         "eltor",
