@@ -723,8 +723,8 @@ onion_skin_ntor3_server_handshake_part1(
         size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
         if (remaining > 0) {
           // Cap at a reasonable maximum size
-          if (remaining > 10240)
-            remaining = 10240;
+          if (remaining > 11240)
+            remaining = 11240;
             
           char *payhash = tor_malloc(remaining + 1);
           memcpy(payhash, (char*)*client_message_out + indexPayHash + strlen(prefixPayHash), 
@@ -732,11 +732,8 @@ onion_skin_ntor3_server_handshake_part1(
           payhash[remaining] = '\0';
           
           log_notice(LD_CIRC, "ELTOR RELAY: Extracted large payment hash (len=%zu)", strlen(payhash));
-          if (strlen(payhash) > 50) {
-            log_notice(LD_CIRC, "ELTOR RELAY: PayHash first 50 chars: %.50s...", payhash);
-          } else {
-            log_notice(LD_CIRC, "ELTOR RELAY: PayHash: %s", payhash);
-          }          
+          log_notice(LD_CIRC, "ELTOR RELAY: PayHash: %s", payhash);
+                  
           tor_free(payhash);
         }
       }

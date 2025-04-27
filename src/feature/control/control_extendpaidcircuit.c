@@ -1,9 +1,9 @@
 /**
  * \file control_extendpaidcircuit.c
  * \brief EXTENDPAIDCIRCUIT 0
- *        fingerprint paymentidhash 
- *        fingerprint paymentidhash 
- *        fingerprint paymentidhash
+ *        realy_fingerprint_1 handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10
+ *        realy_fingerprint_2 handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10 
+ *        realy_fingerprint_3 handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10
  */
 
 #define CONTROL_EVENTS_PRIVATE
@@ -55,8 +55,8 @@
 #include "feature/control/control_connection_st.h"
 #include "feature/nodelist/node_st.h"
 #include "feature/nodelist/routerinfo_st.h"
-
 #include "app/config/statefile.h"
+#include "feature/payment/relay_payments.h"
 
 #ifdef HAVE_UNISTD_H
 #  include <unistd.h>
@@ -73,28 +73,6 @@ const control_cmd_syntax_t extendpaidcircuit_syntax = {
   .accept_keywords = true,
   .kvline_flags = KV_OMIT_VALS
 };
-
-/** Helper function: Return the circuit with ID <b>circ_id</b>, or NULL
- * if no such circuit exists. */
-static origin_circuit_t *
-get_circ(const char *circ_id)
-{
-  uint32_t id;
-  origin_circuit_t *circ;
-  
-  if (!strcasecmp(circ_id, "0"))
-    return NULL;
-
-  id = (uint32_t) tor_parse_ulong(circ_id, 10, 0, UINT32_MAX, NULL, NULL);
-  if (!id)
-    return NULL;
-  
-  circ = circuit_get_by_global_id(id);
-  if (!circ || circ->base_.marked_for_close)
-    return NULL;
-  
-  return circ;
-}
 
 /** Called when we get an EXTENDPAIDCIRCUIT message. Try to extend the listed
  * circuit with payment hash data, and report success or failure. */
@@ -130,6 +108,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     circ->first_hop_from_controller = 1;
     log_debug(LD_CONTROL, "Created new circuit for EXTENDPAIDCIRCUIT");
   } else {
+    // TODO handle better to avoid crashing
     uint32_t id;
     id = (uint32_t) tor_parse_ulong(circ_id, 10, 0, UINT32_MAX, NULL, NULL);
     if (!id) {
@@ -148,10 +127,16 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   circ->any_hop_from_controller = 1;
 
   // Concatenate payment hashes into single string with newlines
-  // Each payhash is ~768 chars, so allocate enough space
+  // Each payhash is ~768 chars (one for each relay, and 12 hashes concatinated), so allocate enough space
+  // i.e payhashes is this concatinated "handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10"
   char *payhashes = tor_malloc_zero(smartlist_len(lines) * 1024);
+
+  // TODO new structure for relay payments, need to implement
+  // relay_payments_t *relay_payments = relay_payments_new();
+  //    relay_payments = [{fingerprint: "", handshake_payment_hash: "", handshake_preimage: "", payhashes: "", wire_format: "eltor_payhash+payment_id_hash_round1+payment_id_hash_round2+...payment_id_hash_round10"}];
+
   
-  // Process each line to extract fingerprint and payment hash
+  // Process each line to extract fingerprint and payhashes
   SMARTLIST_FOREACH_BEGIN(lines, char *, line) {
     smartlist_t *tokens = smartlist_new();
     smartlist_split_string(tokens, line, " ", SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
@@ -200,8 +185,8 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   }
 
   // Store the payment hash in the circuit
-  tor_free(circ->payhash);
-  circ->payhash = payhashes;
+  tor_free(circ->payhashes);
+  circ->payhashes = payhashes;
   log_info(LD_CONTROL, "ELTOR circuit payment hash total length: %zu", strlen(payhashes));
 
   // Append hops to circuit path

@@ -474,7 +474,8 @@ origin_circuit_init(uint8_t purpose, int flags)
   circ->build_state->need_conflux =
     ((flags & CIRCLAUNCH_NEED_CONFLUX) ? 1 : 0);
   circ->base_.purpose = purpose;
-  circ->payhash = NULL;
+  circ->payhashes = NULL;
+  circ->relay_payments = NULL;
   return circ;
 }
 
@@ -1026,12 +1027,12 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
   create_cell_t cc;
   memset(&cc, 0, sizeof(cc));
 
-  log_debug(LD_CIRC, "First skin; sending create cell. PayHash: %s", circ->payhash ? "present" : "absent");
+  log_debug(LD_CIRC, "First skin; sending create cell. payhashes: %s", circ->payhashes ? "present" : "absent");
 
   // Add debug log for PayHash if present
-  if (circ->payhash) {
+  if (circ->payhashes) {
     log_info(LD_GENERAL, "ELTOR first hop with PayHash length: %zu", 
-             strlen(circ->payhash));
+             strlen(circ->payhashes));
   }
 
   if (circ->build_state->onehop_tunnel) {
@@ -1197,11 +1198,11 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   tor_addr_make_unspec(&ec.orport_ipv4.addr);
   tor_addr_make_unspec(&ec.orport_ipv6.addr);
 
-  log_debug(LD_CIRC, "Starting to send subsequent skin. PayHash: %s", circ->payhash ? "present" : "absent");
+  log_debug(LD_CIRC, "Starting to send subsequent skin. payhashes: %s", circ->payhashes ? "present" : "absent");
 
   // Add debug log for PayHash if present
-  if (circ->payhash) {
-    log_info(LD_GENERAL, "ELTOR intermediate hop with PayHash length: %zu", strlen(circ->payhash));
+  if (circ->payhashes) {
+    log_info(LD_GENERAL, "ELTOR intermediate hop with payhashes length: %zu", strlen(circ->payhashes));
   }
 
   circuit_pick_extend_handshake(&ec.cell_type,

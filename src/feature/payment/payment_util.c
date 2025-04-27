@@ -268,7 +268,7 @@ payment_util_has_payment_id_hash(const uint8_t *payload, size_t payload_len)
 const char *
 payment_util_get_hop_payhash(origin_circuit_t *circ, crypt_path_t *hop)
 {
-  if (!circ || !circ->payhash || !hop)
+  if (!circ || !circ->payhashes || !hop)
     return NULL;
   
   // Find the hop number
@@ -296,7 +296,7 @@ payment_util_get_hop_payhash(origin_circuit_t *circ, crypt_path_t *hop)
   memset(extracted_payhash, 0, sizeof(extracted_payhash));
   
   // Use existing function to extract the payment hash for this hop
-  payment_util_get_payhash_from_circ(extracted_payhash, circ->payhash, hop_num);
+  payment_util_get_payhash_from_circ(extracted_payhash, circ->payhashes, hop_num);
   
   if (strlen(extracted_payhash) > 0) {
     log_info(LD_GENERAL, "ELTOR: Found payment hash for hop %d (first 20 chars): %.20s...", 
@@ -318,14 +318,14 @@ payment_util_get_hop_payhash(origin_circuit_t *circ, crypt_path_t *hop)
 const char *
 payment_util_get_first_hop_payhash(origin_circuit_t *circ)
 {
-  if (!circ || !circ->payhash)
+  if (!circ || !circ->payhashes)
     return NULL;
   
   static char extracted_payhash[PAYMENT_PAYHASH_SIZE];
   memset(extracted_payhash, 0, sizeof(extracted_payhash));
   
   // Extract the first hop's payment hash (hop_num = 1)
-  payment_util_get_payhash_from_circ(extracted_payhash, circ->payhash, 1);
+  payment_util_get_payhash_from_circ(extracted_payhash, circ->payhashes, 1);
   
   if (strlen(extracted_payhash) > 0) {
     log_info(LD_CIRC, "ELTOR: Found first hop payment hash (length: %zu)",
