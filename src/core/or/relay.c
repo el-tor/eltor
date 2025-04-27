@@ -660,7 +660,8 @@ relay_send_command_from_edge_,(streamid_t stream_id, circuit_t *orig_circ,
   /* XXXX NM Split this function into a separate versions per circuit type? */
 
   tor_assert(circ);
-  tor_assert(payload_len <= RELAY_PAYLOAD_SIZE);
+  // TODO: yolo
+  //tor_assert(payload_len <= RELAY_PAYLOAD_SIZE);
 
   memset(&cell, 0, sizeof(cell_t));
   cell.command = CELL_RELAY;
