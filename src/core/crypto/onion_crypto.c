@@ -201,14 +201,45 @@ onion_skin_create(int type,
     if (eltor_payhash && strlen(eltor_payhash) > 0) {
       log_notice(LD_GENERAL, "ELTOR CLIENT: Adding payment hash to NTOR_V3 client message");
       
-      // Create an extended message that includes the payment hash with prefix
+      // Calculate full length needed for extended message
+      const char prefixPayHash[] = "eltor_payhash";
+      char *hash_to_use = NULL;
+      size_t hash_len = 0;
+      bool using_digest = false;
+      
+      // If payment hash is very large, hash it to make it more manageable
+      if (strlen(eltor_payhash) > 1024) {
+        uint8_t digest[DIGEST256_LEN];
+        char digest_hex[DIGEST256_LEN*2+1];
+        
+        log_notice(LD_GENERAL, "ELTOR CLIENT: PayHash too large (%zu bytes), creating digest",
+                  strlen(eltor_payhash));
+                  
+        // Create SHA256 hash of the full payment hash
+        crypto_digest256((char*)digest, eltor_payhash, strlen(eltor_payhash), DIGEST_SHA256);
+        
+        // Convert to hex
+        base16_encode(digest_hex, sizeof(digest_hex), (const char*)digest, DIGEST256_LEN);
+        
+        // Use the hex digest as the payment hash
+        hash_to_use = tor_strdup(digest_hex);
+        hash_len = strlen(hash_to_use);
+        using_digest = true;
+        
+        log_notice(LD_GENERAL, "ELTOR CLIENT: Using SHA256 digest of payment hash: %s", 
+                  hash_to_use);
+      } else {
+        // Use original payment hash
+        hash_to_use = tor_strdup(eltor_payhash);
+        hash_len = strlen(hash_to_use);
+      }
+      
+      // Create an extended message
       uint8_t *extended_msg = NULL;
       size_t extended_msg_len = 0;
       
-      const char prefixPayHash[] = "eltor_payhash";
-      
-      // Calculate full length needed
-      extended_msg_len = msg_len + strlen(prefixPayHash) + strlen(eltor_payhash) + 1; // +1 for marker
+      // Format: [base_msg][marker][digest_flag][prefixPayHash][hash]
+      extended_msg_len = msg_len + 2 + strlen(prefixPayHash) + hash_len; // +2 for markers
       extended_msg = tor_malloc(extended_msg_len);
       
       // Copy the original message first
@@ -217,35 +248,50 @@ onion_skin_create(int type,
       // Add marker at the end of original message
       extended_msg[msg_len] = 0x01; // Marker to indicate payment hash follows
       
-      // Copy the prefixed payhash after the marker
-      memcpy(extended_msg + msg_len + 1, prefixPayHash, strlen(prefixPayHash));
-      memcpy(extended_msg + msg_len + 1 + strlen(prefixPayHash), 
-            eltor_payhash, strlen(eltor_payhash));
+      // Add flag to indicate if we're using a digest (0x01) or full hash (0x00)
+      extended_msg[msg_len+1] = using_digest ? 0x01 : 0x00;
       
-      log_notice(LD_GENERAL, "ELTOR CLIENT: Extended message length: %zu (original: %zu)", 
-                extended_msg_len, msg_len);
-      log_notice(LD_GENERAL, "ELTOR CLIENT: PayHash (first 50 chars): %.50s...", eltor_payhash);
+      // Copy the prefixed payhash after the markers
+      memcpy(extended_msg + msg_len + 2, prefixPayHash, strlen(prefixPayHash));
+      memcpy(extended_msg + msg_len + 2 + strlen(prefixPayHash), 
+            hash_to_use, hash_len);
+      
+      log_notice(LD_GENERAL, "ELTOR CLIENT: Extended message length: %zu (original: %zu, hash: %zu)", 
+                extended_msg_len, msg_len, hash_len);
+      log_notice(LD_GENERAL, "ELTOR CLIENT: First 50 bytes of extended message: %s", 
+                hex_str((const char *)extended_msg, MIN(50, extended_msg_len)));
       
       // Free original message and replace with extended one
       tor_free(msg);
+      tor_free(hash_to_use);
       msg = extended_msg;
       msg_len = extended_msg_len;
     } else {
       log_notice(LD_GENERAL, "ELTOR CLIENT: No payment hash provided for NTOR_V3");
     }
 
+    // Verify message size is reasonable for debug purposes
+    log_notice(LD_GENERAL, "ELTOR CLIENT: Creating NTOR3 handshake with message len=%zu", msg_len);
+
     int status = onion_skin_ntor3_create(
-                             &node->ed_identity,
-                             &node->curve25519_onion_key,
-                             NTOR3_VERIFICATION_ARGS,
-                             msg, msg_len, /* client message now includes the payment hash */
-                             &state_out->u.ntor3,
-                             &onion_skin, &onion_skin_len);
+                            &node->ed_identity,
+                            &node->curve25519_onion_key,
+                            NTOR3_VERIFICATION_ARGS,
+                            msg, msg_len,
+                            &state_out->u.ntor3,
+                            &onion_skin, &onion_skin_len);
+                            
+    // Debug output right after creation
+    log_notice(LD_GENERAL, "ELTOR CLIENT: NTOR3 create returned status=%d, onion_skin_len=%zu", 
+              status, onion_skin_len);
+              
     tor_free(msg);
     if (status < 0) {
       return -1;
     }
     if (onion_skin_len > onion_skin_out_maxlen) {
+      log_warn(LD_GENERAL, "ELTOR CLIENT: Onion skin too large: %zu bytes vs %zu allowed",
+            onion_skin_len, onion_skin_out_maxlen);
       tor_free(onion_skin);
       return -1;
     }
