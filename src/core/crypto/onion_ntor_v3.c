@@ -661,8 +661,36 @@ onion_skin_ntor3_server_handshake_part1(
   // After decrypting the message
   if (*client_message_out && *client_message_len_out > 0) {
     log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message (len=%zu)", *client_message_len_out);
+    // Print the first bytes in hex
     log_notice(LD_CIRC, "ELTOR RELAY: Decrypted message first bytes: %s",
-              hex_str((const char *)*client_message_out, MIN(32, *client_message_len_out)));
+          hex_str((const char *)*client_message_out, MIN(32, *client_message_len_out)));
+
+    // Print all printable substrings in the message
+    size_t start = 0;
+    while (start < *client_message_len_out) {
+      // Skip non-printable bytes
+      while (start < *client_message_len_out &&
+         !(isprint((*client_message_out)[start]) || isspace((*client_message_out)[start]))) {
+      start++;
+      }
+      size_t end = start;
+      // Find the end of the printable substring
+      while (end < *client_message_len_out &&
+         (isprint((*client_message_out)[end]) || isspace((*client_message_out)[end]))) {
+      end++;
+      }
+      if (end > start) {
+      size_t len = end - start;
+      char *printable = tor_malloc(len + 1);
+      memcpy(printable, *client_message_out + start, len);
+      printable[len] = '\0';
+      log_notice(LD_CIRC, "ELTOR RELAY: Decrypted message printable string: %s", printable);
+      tor_free(printable);
+      start = end;
+      } else {
+      start++;
+      }
+    }
 
     // Check for extended message format (our marker is 0x02 at position 3)
     if (*client_message_len_out > 4 && (*client_message_out)[0] == 0x01 && 
