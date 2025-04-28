@@ -503,43 +503,43 @@ onion_skin_ntor3_server_handshake_part1(
   *state_out = NULL;
 
   // Add specific check for payment hash in the client handshake
-  log_notice(LD_CIRC, "ELTOR RELAY: Processing NTOR3 client handshake (len=%zu)", client_handshake_len);
-  // Add this code to display handshake contents in human-readable format
-  if (client_handshake_len > 0) {
-    // First try to extract any text content
-    char *text_version = tor_malloc(client_handshake_len + 1);
-    memcpy(text_version, client_handshake, client_handshake_len);
-    text_version[client_handshake_len] = '\0';
+  // log_notice(LD_CIRC, "ELTOR RELAY: Processing NTOR3 client handshake (len=%zu)", client_handshake_len);
+  // // Add this code to display handshake contents in human-readable format
+  // if (client_handshake_len > 0) {
+  //   // First try to extract any text content
+  //   char *text_version = tor_malloc(client_handshake_len + 1);
+  //   memcpy(text_version, client_handshake, client_handshake_len);
+  //   text_version[client_handshake_len] = '\0';
     
-    // Replace non-printable chars with spaces for readability
-    for (size_t i = 0; i < client_handshake_len; i++) {
-      if (!isprint(text_version[i]) && !isspace(text_version[i])) {
-        text_version[i] = ' ';
-      }
-    }
+  //   // Replace non-printable chars with spaces for readability
+  //   for (size_t i = 0; i < client_handshake_len; i++) {
+  //     if (!isprint(text_version[i]) && !isspace(text_version[i])) {
+  //       text_version[i] = ' ';
+  //     }
+  //   }
     
-    // Log text representation
-    log_notice(LD_CIRC, "ELTOR RELAY: Handshake text representation: %s", text_version);
-    tor_free(text_version);
+  //   // Log text representation
+  //   log_notice(LD_CIRC, "ELTOR RELAY: Handshake text representation: %s", text_version);
+  //   tor_free(text_version);
     
-    // Log hex representation in chunks for readability
-    log_notice(LD_CIRC, "ELTOR RELAY: Handshake in hex format:");
-    const size_t CHUNK_SIZE = 16;
-    for (size_t i = 0; i < client_handshake_len; i += CHUNK_SIZE) {
-      size_t len = MIN(CHUNK_SIZE, client_handshake_len - i);
-      log_notice(LD_CIRC, "  %04zx: %s", i, hex_str((const char *)client_handshake + i, len));
-    }
+  //   // Log hex representation in chunks for readability
+  //   log_notice(LD_CIRC, "ELTOR RELAY: Handshake in hex format:");
+  //   const size_t CHUNK_SIZE = 16;
+  //   for (size_t i = 0; i < client_handshake_len; i += CHUNK_SIZE) {
+  //     size_t len = MIN(CHUNK_SIZE, client_handshake_len - i);
+  //     log_notice(LD_CIRC, "  %04zx: %s", i, hex_str((const char *)client_handshake + i, len));
+  //   }
     
-    // Check specifically for the payment hash prefix
-    const char *prefixPayHash = "eltor_payhash";
-    for (size_t i = 0; i < client_handshake_len - strlen(prefixPayHash); i++) {
-      if (memcmp(client_handshake + i, prefixPayHash, strlen(prefixPayHash)) == 0) {
-        log_notice(LD_CIRC, "ELTOR RELAY: Found payment hash prefix at offset %zu", i);
-        break;
-      }
-    }
-  }
-  const char *prefixPayHash = "eltor_payhash";
+  //   // Check specifically for the payment hash prefix
+  //   const char *prefixPayHash = "eltor_payhash";
+  //   for (size_t i = 0; i < client_handshake_len - strlen(prefixPayHash); i++) {
+  //     if (memcmp(client_handshake + i, prefixPayHash, strlen(prefixPayHash)) == 0) {
+  //       log_notice(LD_CIRC, "ELTOR RELAY: Found payment hash prefix at offset %zu", i);
+  //       break;
+  //     }
+  //   }
+  // }
+  // const char *prefixPayHash = "eltor_payhash";
   // const void *foundPayHash = tor_memmem(client_handshake, client_handshake_len, prefixPayHash, strlen(prefixPayHash));
   // if (foundPayHash) {
   //   size_t indexPayHash = (const uint8_t *)foundPayHash - client_handshake;
@@ -678,6 +678,8 @@ onion_skin_ntor3_server_handshake_part1(
                                         prefixPayHash, strlen(prefixPayHash));
     
     if (foundPayHash) {
+      log_notice(LD_CIRC, "ELTOR RELAY: Found Payment hash: %s", foundPayHash); 
+
       size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
       log_notice(LD_CIRC, "ELTOR RELAY: Found payment hash prefix at offset %zu", indexPayHash);
       
@@ -685,67 +687,69 @@ onion_skin_ntor3_server_handshake_part1(
       size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
       if (remaining > 0) {
         char *payhash = tor_malloc(remaining + 1);
-        memcpy(payhash, (char*)*client_message_out + indexPayHash + strlen(prefixPayHash), 
-              remaining);
+        memcpy(payhash, (const char*)*client_message_out + indexPayHash + strlen(prefixPayHash), remaining);
         payhash[remaining] = '\0';
-        
-        log_notice(LD_CIRC, "ELTOR RELAY: Extracted payment hash (len=%zu)", strlen(payhash));
+
         log_notice(LD_CIRC, "ELTOR RELAY: Payment hash: %s", payhash); 
-        control_event_payment_id_hash_received(payhash);        
+        control_event_payment_id_hash_received(payhash);
+
         tor_free(payhash);
       }
+        
     } else {
       log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in decrypted message");
     }
+  }
+  
   
 
     // Check for extended message format (our marker is 0x02 at position 3)
-    if (*client_message_len_out > 4 && (*client_message_out)[0] == 0x01 && 
-        (*client_message_out)[1] == 0x01 && (*client_message_out)[3] == 0x02) {
+  //   if (*client_message_len_out > 4 && (*client_message_out)[0] == 0x01 && 
+  //       (*client_message_out)[1] == 0x01 && (*client_message_out)[3] == 0x02) {
       
-      log_notice(LD_CIRC, "ELTOR RELAY: Found extended message format");
+  //     log_notice(LD_CIRC, "ELTOR RELAY: Found extended message format");
       
-      // Check for payment hash prefix
-      const void *foundPayHash = tor_memmem(*client_message_out + 4, // Start after marker
-                                        *client_message_len_out - 4,
-                                        prefixPayHash, strlen(prefixPayHash));
+  //     // Check for payment hash prefix
+  //     const void *foundPayHash = tor_memmem(*client_message_out + 4, // Start after marker
+  //                                       *client_message_len_out - 4,
+  //                                       prefixPayHash, strlen(prefixPayHash));
       
-      if (foundPayHash) {
-        size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
-        log_notice(LD_CIRC, "ELTOR RELAY: Found payhash in extended message at offset %zu",
-                  indexPayHash);
+  //     if (foundPayHash) {
+  //       size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
+  //       log_notice(LD_CIRC, "ELTOR RELAY: Found payhash in extended message at offset %zu",
+  //                 indexPayHash);
         
-        // Extract and process the payment hash - properly handle larger hashes!
-        size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
-        if (remaining > 0) {
-          // Cap at a reasonable maximum size
-          if (remaining > 11240)
-            remaining = 11240;
+  //       // Extract and process the payment hash - properly handle larger hashes!
+  //       size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
+  //       if (remaining > 0) {
+  //         // Cap at a reasonable maximum size
+  //         if (remaining > 11240)
+  //           remaining = 11240;
             
-          char *payhash = tor_malloc(remaining + 1);
-          memcpy(payhash, (char*)*client_message_out + indexPayHash + strlen(prefixPayHash), 
-                remaining);
-          payhash[remaining] = '\0';
+  //         char *payhash = tor_malloc(remaining + 1);
+  //         memcpy(payhash, (char*)*client_message_out + indexPayHash + strlen(prefixPayHash), 
+  //               remaining);
+  //         payhash[remaining] = '\0';
           
-          log_notice(LD_CIRC, "ELTOR RELAY: Extracted large payment hash (len=%zu)", strlen(payhash));
-          log_notice(LD_CIRC, "ELTOR RELAY: PayHash: %s", payhash);
+  //         log_notice(LD_CIRC, "ELTOR RELAY: Extracted large payment hash (len=%zu)", strlen(payhash));
+  //         log_notice(LD_CIRC, "ELTOR RELAY: PayHash: %s", payhash);
                   
-          tor_free(payhash);
-        }
-      }
-    } else {
-      // Standard message format - check for payhash as before
-      const char *prefixPayHash = "eltor_payhash";
-      const void *foundPayHash = tor_memmem(*client_message_out, *client_message_len_out,
-                                        prefixPayHash, strlen(prefixPayHash));
-      if (foundPayHash) {
-        // Process as before for backward compatibility
-        // ...
-      } else {
-        log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in decrypted message");
-      }
-    }
-  }
+  //         tor_free(payhash);
+  //       }
+  //     }
+  //   } else {
+  //     // Standard message format - check for payhash as before
+  //     const char *prefixPayHash = "eltor_payhash";
+  //     const void *foundPayHash = tor_memmem(*client_message_out, *client_message_len_out,
+  //                                       prefixPayHash, strlen(prefixPayHash));
+  //     if (foundPayHash) {
+  //       // Process as before for backward compatibility
+  //       // ...
+  //     } else {
+  //       log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in decrypted message");
+  //     }
+  //   }
+  // }
 
   return 0;
 }
