@@ -2297,6 +2297,8 @@ int control_event_payment_id_hash_received(char *payment_id_hash)
     log_info(LD_APP, "LOG EVENT_PAYMENT_ID_HASH_RECEIVED %s", payment_id_hash);
     send_control_event(EVENT_PAYMENT_ID_HASH_RECEIVED,
                      "650 EVENT_PAYMENT_ID_HASH_RECEIVED %s\r\n", payment_id_hash);
+    // Force immediate flush
+    queued_events_flush_all(1);  // The '1' parameter means "force immediate send"  
   //} else {
   //  log_info(LD_APP, "LOG EVENT_PAYMENT_ID_HASH_RECEIVED NOT INTERESTING");
   //}
