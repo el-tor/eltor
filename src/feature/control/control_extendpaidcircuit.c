@@ -6,6 +6,55 @@
  *        realy_fingerprint_3 handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10
  */
 
+
+/** Circuit Building Process (Function Chain)
+* --------------------------------------------
+* 
+* src/core/or/circuitbuild.c:2678-2699 - circuit_handle_first_hop(circ)
+*   → src/core/or/circuitbuild.c:394-430 - onion_populate_cpath(circ)
+*     → src/core/or/circuitbuild.c:505-538 - onion_extend_cpath(circ)
+*       → src/core/or/circuitbuild.c:845-864 - circuit_send_first_onion_skin(circ) 
+*         → src/feature/payment/payment_util.c:320-343 - payment_util_get_first_hop_payhash(circ)
+*           → src/feature/payment/payment_util.c:280-316 - payment_util_get_payhash_from_struct(circ, 1)
+*             → src/feature/payment/relay_payments.c:250-268 - relay_payments_find_by_index(payments, 0)
+*         → src/core/crypto/onion.c:162-189 - onion_skin_create() [creates handshake with payment]
+*           → src/core/crypto/onion_ntor_v3.c:456-493 - create_onion_skin_ntor_v3_with_payment()
+*             → src/core/crypto/onion_ntor_v3.c:126-134 - ntor3_derivate_secret_with_payment()
+*               → [includes payment hash in CREATE/EXTEND2 cell]
+*   → src/core/or/circuitbuild.c:2712-2731 - circuit_send_first_onion_skin(circ)
+*     → src/core/or/command.c:1243-1271 - connection_or_send_cell(link, cell)
+*       → src/core/or/connection_or.c:1842-1860 - connection_or_write_cell_to_buf()
+* 
+*/
+
+
+/** Relay Side (Function Chain)
+* ------------------------------
+* 
+* src/core/or/command.c:1345-1382 - command_process_cell(cell_t *cell)
+*   → src/core/or/circuit.c:724-743 - circuit_receive(circ, cell)
+*     → src/feature/relay/circuitbuild_relay.c:126-177 - command_process_create_cell(circ, cell)
+*       → src/core/crypto/onion_fast.c:287-312 - onion_skin_server_handshake() [for fast handshake]
+*       → src/core/crypto/onion_ntor_v3.c:512-559 - onion_skin_server_handshake_ntor_v3() [for ntor]
+*         → src/feature/payment/payment_extract.c:67-95 - extract_payment_hash_from_cell()
+*           → [payment hash extracted from handshake]
+*         → src/feature/payment/payment_validate.c:126-174 - validate_payment_hash()
+*           → src/feature/payment/payment_rpc.c:88-123 - verify_payment_hash_with_rpc()
+*             → [validates payment hash against expected value from RPC]
+*
+*/
+
+/** Payment Structs
+* ------------------------------
+* 
+* src/feature/control/control_extendpaidcircuit.c:151-170 - handle_control_extendpaidcircuit()
+*   → Parses payment lines from controller command
+*   → src/feature/payment/relay_payments.c:94-110 - relay_payments_new() [creates structured payments]
+*   → src/feature/payment/payment_util.c:460-498 - payment_util_parse_payment_line() [parses each line]
+*   → src/feature/payment/relay_payments.c:126-131 - relay_payments_add_item() [adds to collection]
+*   → Stores data in origin_circuit_t->relay_payments and origin_circuit_t->payhashes
+*/
+
 #define CONTROL_EVENTS_PRIVATE
 #define CONTROL_MODULE_PRIVATE
 #define CONTROL_GETINFO_PRIVATE
@@ -203,6 +252,9 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   tor_free(circ->payhashes);
   circ->payhashes = payhashes;
   log_info(LD_CONTROL, "ELTOR circuit payment hash total length: %zu", strlen(payhashes));
+
+  tor_free(circ->relay_payments);
+  circ->relay_payments = relay_payments;
 
   // Append hops to circuit path
   bool first_node = zero_circ;

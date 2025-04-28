@@ -690,11 +690,7 @@ onion_skin_ntor3_server_handshake_part1(
         payhash[remaining] = '\0';
         
         log_notice(LD_CIRC, "ELTOR RELAY: Extracted payment hash (len=%zu)", strlen(payhash));
-        if (strlen(payhash) > 50) {
-          log_notice(LD_CIRC, "ELTOR RELAY: Payment hash first 50 chars: %.50s...", payhash);
-        } else {
-          log_notice(LD_CIRC, "ELTOR RELAY: Payment hash: %s", payhash);
-        }
+        log_notice(LD_CIRC, "ELTOR RELAY: Payment hash: %s", payhash); 
         control_event_payment_id_hash_received(payhash);        
         tor_free(payhash);
       }

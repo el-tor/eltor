@@ -2293,13 +2293,13 @@ control_events_free_all(void)
 int control_event_payment_id_hash_received(char *payment_id_hash)
 {
 
-  if (EVENT_IS_INTERESTING(EVENT_PAYMENT_ID_HASH_RECEIVED)) {
+  //if (EVENT_IS_INTERESTING(EVENT_PAYMENT_ID_HASH_RECEIVED)) {
     log_info(LD_APP, "LOG EVENT_PAYMENT_ID_HASH_RECEIVED %s", payment_id_hash);
     send_control_event(EVENT_PAYMENT_ID_HASH_RECEIVED,
                      "650 EVENT_PAYMENT_ID_HASH_RECEIVED %s\r\n", payment_id_hash);
-  } else {
-    log_info(LD_APP, "LOG EVENT_PAYMENT_ID_HASH_RECEIVED NOT INTERESTING");
-  }
+  //} else {
+  //  log_info(LD_APP, "LOG EVENT_PAYMENT_ID_HASH_RECEIVED NOT INTERESTING");
+  //}
 
   return 0;
 }
