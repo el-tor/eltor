@@ -213,10 +213,11 @@ onion_skin_ntor3_create_nokeygen(
   *onion_skin_len_out = 0;
 
   // Add detailed logging at the start
-  log_notice(LD_CIRC, "ELTOR CLIENT: Creating NTOR3 handshake with message_len=%zu", 
-    message_len);
-  if (message && message_len > 20) {
-    log_notice(LD_CIRC, "ELTOR CLIENT: Message begins with: %.20s...", message);
+  if (message && message_len > 0) {
+    // Log the entire message as a safe escaped string
+    log_notice(LD_CIRC, "ELTOR CLIENT: Message (len=%zu): %s",
+           message_len,
+           (const char *)message);
   }
 
   // Set up the handshake state object.
@@ -666,7 +667,9 @@ onion_skin_ntor3_server_handshake_part1(
 
   // After decrypting the message
   if (*client_message_out && *client_message_len_out > 0) {
-    log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message (len=%zu)", *client_message_len_out);
+    log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message (len=%zu): %s",
+         *client_message_len_out,
+         (const char *)*client_message_out);
     
     // Log the first few bytes for debugging
     log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message hex dump: %s",
@@ -676,6 +679,8 @@ onion_skin_ntor3_server_handshake_part1(
     const char *prefixPayHash = "eltor_payhash";
     const void *foundPayHash = tor_memmem(*client_message_out, *client_message_len_out,
                                         prefixPayHash, strlen(prefixPayHash));
+
+        
     
     if (foundPayHash) {
       log_notice(LD_CIRC, "ELTOR RELAY: Found Payment hash: %s", foundPayHash); 
@@ -686,7 +691,7 @@ onion_skin_ntor3_server_handshake_part1(
       // Extract and process the payment hash
       size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
       if (remaining > 0) {
-        char *payhash = tor_malloc(remaining + 1);
+        char *payhash = tor_malloc(remaining + 3);
         memcpy(payhash, (const char*)*client_message_out + indexPayHash + strlen(prefixPayHash), remaining);
         payhash[remaining] = '\0';
 
