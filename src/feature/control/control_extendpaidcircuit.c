@@ -1,9 +1,9 @@
 /**
  * \file control_extendpaidcircuit.c
  * \brief EXTENDPAIDCIRCUIT 0
- *        realy_fingerprint_1 handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10
- *        realy_fingerprint_2 handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10 
- *        realy_fingerprint_3 handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10
+ *        relay_fingerprint_1 handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10
+ *        relay_fingerprint_2 handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10 
+ *        relay_fingerprint_3 handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10
  */
 
 
