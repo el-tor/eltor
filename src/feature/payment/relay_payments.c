@@ -159,6 +159,22 @@ relay_payments_find_by_fingerprint(const relay_payments_t *payments,
 }
 
 /**
+ * Find a relay payment item by its hop number (list index)
+ *
+ * @param payments The collection to search
+ * @param hop_num The index (hop number) to retrieve
+ * @return The relay_payment_item_t at the given index, or NULL if out of bounds
+ */
+relay_payment_item_t *
+relay_payments_find_by_hop_num(const relay_payments_t *payments, int hop_num)
+{
+  if (!payments || hop_num < 1 || hop_num > smartlist_len(payments))
+    return NULL;
+
+  return smartlist_get(payments, hop_num - 1);
+}
+
+/**
  * Validate that a relay payment item has all required fields
  */
 int

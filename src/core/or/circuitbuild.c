@@ -87,6 +87,7 @@
 #include "trunnel/congestion_control.h"
 
 #include "feature/payment/payment_util.h"
+#include "feature/payment/relay_payments.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -1266,7 +1267,14 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   //   payment_util_get_payhash_from_circ(&eltor_payhash, payhash, hop_num);
   // }
 
-  const char *hop_payhash = payment_util_get_hop_payhash(circ, hop);
+  // const char *hop_payhash = payment_util_get_hop_payhash(circ, hop);
+  // Safely get the payhash for this hop, if available
+  const relay_payment_item_t *payment = relay_payments_find_by_hop_num(circ->relay_payments, hop_num);
+  const char *hop_payhash = NULL;
+  if (payment && payment->wire_format) {
+    hop_payhash = payment->wire_format;
+  }
+
 
   // Add debugging to show we have the payment hash
   if (hop_payhash) {

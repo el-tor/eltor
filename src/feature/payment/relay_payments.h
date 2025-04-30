@@ -25,14 +25,12 @@ void relay_payments_add_item(relay_payments_t *payments,
                              relay_payment_item_t *item);
 
 /* Clone/copy functions */
-relay_payment_item_t *
-relay_payment_item_clone(const relay_payment_item_t *item);
+relay_payment_item_t *relay_payment_item_clone(const relay_payment_item_t *item);
 relay_payments_t *relay_payments_clone(const relay_payments_t *payments);
 
 /* Search/query functions */
-relay_payment_item_t *
-relay_payments_find_by_fingerprint(const relay_payments_t *payments,
-                                   const char *fingerprint);
+relay_payment_item_t *relay_payments_find_by_fingerprint(const relay_payments_t *payments, const char *fingerprint);
+relay_payment_item_t *relay_payments_find_by_hop_num(const relay_payments_t *payments, int hop_num);
 
 /* Validation functions */
 int relay_payment_item_is_valid(const relay_payment_item_t *item);

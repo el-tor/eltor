@@ -691,7 +691,7 @@ onion_skin_ntor3_server_handshake_part1(
       // Extract and process the payment hash
       size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
       if (remaining > 0) {
-        char *payhash = tor_malloc(remaining + 3);
+        char *payhash = tor_malloc(remaining + 1);
         memcpy(payhash, (const char*)*client_message_out + indexPayHash + strlen(prefixPayHash), remaining);
         payhash[remaining] = '\0';
 
