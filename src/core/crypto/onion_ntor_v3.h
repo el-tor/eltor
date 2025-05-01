@@ -72,7 +72,7 @@ int onion_skin_ntor3_server_handshake_part1(
                 uint8_t **client_message_out,
                 size_t *client_message_len_out,
                 ntor3_server_handshake_state_t **state_out,
-                circid_t *circ_id);
+                uint64_t *global_id);
 
 int onion_skin_ntor3_server_handshake_part2(
                 const ntor3_server_handshake_state_t *state,

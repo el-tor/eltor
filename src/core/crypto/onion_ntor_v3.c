@@ -501,7 +501,7 @@ onion_skin_ntor3_server_handshake_part1(
                 uint8_t **client_message_out,
                 size_t *client_message_len_out,
                 ntor3_server_handshake_state_t **state_out,
-                circid_t *circ_id)
+                uint64_t *global_id)
 {
   *client_message_out = NULL;
   *client_message_len_out = 0;
@@ -651,13 +651,13 @@ onion_skin_ntor3_server_handshake_part1(
         memcpy(payhash, (const char*)*client_message_out + indexPayHash + strlen(prefixPayHash), remaining);
         payhash[remaining] = '\0';
 
-        circid_t local_circ_id = 0;
-        if (circ_id != NULL) {
-          local_circ_id = get_local_circid_from_global(*circ_id);
-        }
+        // circid_t local_circ_id = 0;
+        // if (circ_id != NULL) {
+        //   local_circ_id = get_local_circid_from_global(*circ_id);
+        // }
 
         log_notice(LD_CIRC, "ELTOR RELAY: Payment hash: %s", payhash); 
-        control_event_payment_id_hash_received(payhash, &local_circ_id);
+        control_event_payment_id_hash_received(payhash, &global_id);
 
         tor_free(payhash);
       }
