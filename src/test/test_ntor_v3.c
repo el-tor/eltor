@@ -106,7 +106,8 @@ test_ntor3_testvecs(void *arg)
                     sizeof(verification),
                     &cm,
                     &cm_len,
-                    &relay_state);
+                    &relay_state,
+                   "");
   tt_int_op(r, OP_EQ, 0);
   tt_int_op(cm_len, OP_EQ, sizeof(client_message));
   tt_mem_op(cm, OP_EQ, client_message, cm_len);
@@ -224,7 +225,7 @@ run_full_handshake(circuit_params_t *serv_params_in,
                               &server_keys, serv_params_in,
                               serv_reply, sizeof(serv_reply),
                               serv_keys, sizeof(serv_keys),
-                              rend_nonce, serv_params_out);
+                              rend_nonce, serv_params_out, "");
   tt_int_op(reply_len, OP_NE, -1);
 
   tt_int_op(onion_skin_client_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,

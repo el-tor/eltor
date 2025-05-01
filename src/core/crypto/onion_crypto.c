@@ -337,7 +337,8 @@ onion_skin_server_handshake(int type,
                       size_t reply_out_maxlen,
                       uint8_t *keys_out, size_t keys_out_len,
                       uint8_t *rend_nonce_out,
-                      circuit_params_t *params_out)
+                      circuit_params_t *params_out,
+                      circid_t *circ_id)
 {
   int r = -1;
   memset(params_out, 0, sizeof(*params_out));
@@ -409,7 +410,7 @@ onion_skin_server_handshake(int type,
                onion_skin, onionskin_len,
                NTOR3_VERIFICATION_ARGS,
                &client_msg, &client_msg_len,
-               &state) < 0) {
+               &state, circ_id) < 0) {
       return -1;
     }
 

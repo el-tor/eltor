@@ -254,7 +254,7 @@ payment_util_has_payment_id_hash(const uint8_t *payload, size_t payload_len)
     log_notice(LD_APP, "ELTOR RELAY %s: Payment hash first 50 chars: %.50s...",
                get_options()->Nickname, payhash);
 
-    // control_event_payment_id_hash_received(payhash);
+    // control_event_payment_id_hash_received(payhash, circ_id);
     return 1;
   } else {
     log_notice(LD_APP, "ELTOR RELAY %s: PayHash prefix not found in payload",
