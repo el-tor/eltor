@@ -84,7 +84,10 @@
         "onion_ntor.h": "c",
         "cpath_build_state_st.h": "c",
         "routerstatus_st.h": "c",
-        "control_cmd_args_st.h": "c"
+        "control_cmd_args_st.h": "c",
+        "control_extendpaidcircuit.h": "c",
+        "control_getinfo.h": "c",
+        "ctype.h": "c"
     },
     "cSpell.words": [
         "eltor",

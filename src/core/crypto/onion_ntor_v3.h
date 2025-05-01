@@ -85,6 +85,8 @@ int onion_skin_ntor3_server_handshake_part2(
                 uint8_t *keys_out,
                 size_t keys_out_len);
 
+circid_t get_local_circid_from_global(circid_t global_id);
+
 #ifdef ONION_NTOR_V3_PRIVATE
 struct ntor3_handshake_state_t {
   /** Ephemeral (x,X) keypair. */

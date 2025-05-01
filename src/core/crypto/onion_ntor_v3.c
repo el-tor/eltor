@@ -36,7 +36,10 @@
 #include "feature/control/control_events.h"
 #include "core/or/origin_circuit_st.h"
 #include "core/or/crypt_path_st.h"
-
+#include "feature/control/control_cmd.h"
+#include "core/or/or.h"
+#include "core/or/or_circuit_st.h"
+#include "core/or/circuitlist.h"
 
 #include <ctype.h> 
 #include <string.h>
@@ -648,8 +651,13 @@ onion_skin_ntor3_server_handshake_part1(
         memcpy(payhash, (const char*)*client_message_out + indexPayHash + strlen(prefixPayHash), remaining);
         payhash[remaining] = '\0';
 
+        circid_t local_circ_id = 0;
+        if (circ_id != NULL) {
+          local_circ_id = get_local_circid_from_global(*circ_id);
+        }
+
         log_notice(LD_CIRC, "ELTOR RELAY: Payment hash: %s", payhash); 
-        control_event_payment_id_hash_received(payhash, circ_id);
+        control_event_payment_id_hash_received(payhash, &local_circ_id);
 
         tor_free(payhash);
       }
@@ -658,58 +666,34 @@ onion_skin_ntor3_server_handshake_part1(
       log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in decrypted message");
     }
   }
-  
-  
-
-    // Check for extended message format (our marker is 0x02 at position 3)
-  //   if (*client_message_len_out > 4 && (*client_message_out)[0] == 0x01 && 
-  //       (*client_message_out)[1] == 0x01 && (*client_message_out)[3] == 0x02) {
-      
-  //     log_notice(LD_CIRC, "ELTOR RELAY: Found extended message format");
-      
-  //     // Check for payment hash prefix
-  //     const void *foundPayHash = tor_memmem(*client_message_out + 4, // Start after marker
-  //                                       *client_message_len_out - 4,
-  //                                       prefixPayHash, strlen(prefixPayHash));
-      
-  //     if (foundPayHash) {
-  //       size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
-  //       log_notice(LD_CIRC, "ELTOR RELAY: Found payhash in extended message at offset %zu",
-  //                 indexPayHash);
-        
-  //       // Extract and process the payment hash - properly handle larger hashes!
-  //       size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
-  //       if (remaining > 0) {
-  //         // Cap at a reasonable maximum size
-  //         if (remaining > 11240)
-  //           remaining = 11240;
-            
-  //         char *payhash = tor_malloc(remaining + 1);
-  //         memcpy(payhash, (char*)*client_message_out + indexPayHash + strlen(prefixPayHash), 
-  //               remaining);
-  //         payhash[remaining] = '\0';
-          
-  //         log_notice(LD_CIRC, "ELTOR RELAY: Extracted large payment hash (len=%zu)", strlen(payhash));
-  //         log_notice(LD_CIRC, "ELTOR RELAY: PayHash: %s", payhash);
-                  
-  //         tor_free(payhash);
-  //       }
-  //     }
-  //   } else {
-  //     // Standard message format - check for payhash as before
-  //     const char *prefixPayHash = "eltor_payhash";
-  //     const void *foundPayHash = tor_memmem(*client_message_out, *client_message_len_out,
-  //                                       prefixPayHash, strlen(prefixPayHash));
-  //     if (foundPayHash) {
-  //       // Process as before for backward compatibility
-  //       // ...
-  //     } else {
-  //       log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in decrypted message");
-  //     }
-  //   }
-  // }
 
   return 0;
+}
+
+circid_t get_local_circid_from_global(circid_t global_id)
+{
+  // Find the circuit by global ID
+  circuit_t *circ = circuit_get_by_global_id(global_id);
+  if (!circ) {
+    log_warn(LD_CIRC, "ELTOR RELAY: Couldn't find circuit with global ID %u", 
+            (unsigned)global_id);
+    return 0; // Invalid circuit ID
+  }
+  
+  // For relays, we need to get the p_circ_id (previous hop circuit ID)
+  // since that's the ID being used for communication with the client
+  if (!CIRCUIT_IS_ORIGIN(circ)) {
+    or_circuit_t *or_circ = TO_OR_CIRCUIT((circuit_t *)circ);
+    circid_t local_id = or_circ->p_circ_id;
+    log_notice(LD_CIRC, "ELTOR RELAY: Mapped global ID %u to local ID %u",
+              (unsigned)global_id, (unsigned)local_id);
+    return local_id;
+  } else {
+    // This shouldn't happen on a relay for client circuits
+    log_warn(LD_CIRC, "ELTOR RELAY: Circuit with global ID %u is an origin circuit",
+            (unsigned)global_id);
+    return 0;
+  }
 }
 
 /**
