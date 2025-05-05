@@ -15,6 +15,8 @@
 #include "core/or/or.h"
 
 #include "core/or/circuit_st.h"
+#include "feature/payment/relay_payments_st.h" 
+
 
 struct onion_queue_t;
 
@@ -310,7 +312,10 @@ struct origin_circuit_t {
    * to 2*CircuitsAvailableTimoeut. */
   int circuit_idle_timeout;
 
-  char *payhash;
+  char *payhashes;
+
+  relay_payments_t *relay_payments;
+
 };
 
 #endif /* !defined(ORIGIN_CIRCUIT_ST_H) */

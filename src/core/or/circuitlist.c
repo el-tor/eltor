@@ -1225,8 +1225,8 @@ circuit_free_(circuit_t *circ)
     }
     
     // Free payhash if allocated
-    if (ocirc->payhash) {
-      tor_free(ocirc->payhash);
+    if (ocirc->payhashes) {
+      tor_free(ocirc->payhashes);
     }
 
     addr_policy_list_free(ocirc->prepend_policy);

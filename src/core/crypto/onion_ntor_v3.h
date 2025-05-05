@@ -18,6 +18,7 @@
 #include "lib/crypt_ops/crypto_curve25519.h"
 #include "lib/crypt_ops/crypto_ed25519.h"
 #include "lib/malloc/malloc.h"
+#include "core/or/or.h"
 
 /**
  * Client-side state held while an ntor v3 handshake is in progress.
@@ -70,7 +71,8 @@ int onion_skin_ntor3_server_handshake_part1(
                 size_t verification_len,
                 uint8_t **client_message_out,
                 size_t *client_message_len_out,
-                ntor3_server_handshake_state_t **state_out);
+                ntor3_server_handshake_state_t **state_out,
+                uint64_t *global_id);
 
 int onion_skin_ntor3_server_handshake_part2(
                 const ntor3_server_handshake_state_t *state,
@@ -82,6 +84,8 @@ int onion_skin_ntor3_server_handshake_part2(
                 size_t *handshake_len_out,
                 uint8_t *keys_out,
                 size_t keys_out_len);
+
+circid_t get_local_circid_from_global(circid_t global_id);
 
 #ifdef ONION_NTOR_V3_PRIVATE
 struct ntor3_handshake_state_t {

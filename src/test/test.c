@@ -61,6 +61,9 @@
 #include "core/or/or_circuit_st.h"
 #include "feature/relay/onion_queue.h"
 
+#include "feature/payment/payment_util.h"
+extern struct testcase_t payment_tests[];
+
 /** Run unit tests for the onion handshake code. */
 static void
 test_onion_handshake(void *arg)
@@ -882,5 +885,6 @@ struct testgroup_t testgroups[] = {
   { "util/logging/", logging_tests },
   { "util/process/", util_process_tests },
   { "util/thread/", thread_tests },
+  { "payment/", payment_tests },
   END_OF_GROUPS
 };

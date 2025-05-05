@@ -249,7 +249,8 @@ src_test_test_SOURCES += \
 	src/test/test_parsecommon.c \
 	src/test/testing_common.c \
 	src/test/testing_rsakeys.c \
-	src/ext/tinytest.c
+	src/ext/tinytest.c \
+	src/test/test_payment_util.c
 
 if USE_NSS
 # ...

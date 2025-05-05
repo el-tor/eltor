@@ -497,7 +497,8 @@ cpuworker_onion_handshake_threadfn(void *state_, void *work_)
                                   sizeof(cell_out->reply),
                                   rpl.keys, CPATH_KEY_MATERIAL_LEN,
                                   rpl.rend_auth_material,
-                                  &rpl.circ_params);
+                                  &rpl.circ_params,
+                                  "");
   if (n < 0) {
     /* failure */
     log_debug(LD_OR,"onion_skin_server_handshake failed.");

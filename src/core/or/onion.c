@@ -622,8 +622,6 @@ extend_cell_format(uint8_t *command_out, uint16_t *len_out,
   if (check_extend_cell(cell_in) < 0)
     return -1;
 
-  size_t eltor_payhash_len = strlen(eltor_payhash);
-
   p = payload_out;
 
   memset(p, 0, RELAY_PAYLOAD_SIZE);
@@ -720,13 +718,18 @@ extend_cell_format(uint8_t *command_out, uint16_t *len_out,
     return -1;
   }
 
-  // Add eltor_payhash to the payload
-  if (*len_out + eltor_payhash_len <= RELAY_PAYLOAD_SIZE) {
-    memcpy(payload_out + *len_out, eltor_payhash, eltor_payhash_len);
-    *len_out += eltor_payhash_len;
-  } else {
-    log_warn(LD_BUG, "eltor_payhash is too large to fit in the payload");
-    return -1;
+  // Check if eltor_payhash exists before using it
+  if (eltor_payhash) {
+    size_t eltor_payhash_len = strlen(eltor_payhash);
+    
+    // Add eltor_payhash to the payload
+    if (*len_out + eltor_payhash_len <= RELAY_PAYLOAD_SIZE) {
+      memcpy(payload_out + *len_out, eltor_payhash, eltor_payhash_len);
+      *len_out += eltor_payhash_len;
+    } else {
+      log_warn(LD_BUG, "eltor_payhash is too large to fit in the payload");
+      return -1;
+    }
   }
 
   return 0;
