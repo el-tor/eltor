@@ -87,7 +87,8 @@
         "control_cmd_args_st.h": "c",
         "control_extendpaidcircuit.h": "c",
         "control_getinfo.h": "c",
-        "ctype.h": "c"
+        "ctype.h": "c",
+        "circuituse.h": "c"
     },
     "cSpell.words": [
         "eltor",
