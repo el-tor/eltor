@@ -462,10 +462,10 @@ typedef enum {
  */
 
 /** Number of bytes in a cell, minus cell header. */
-#define CELL_PAYLOAD_SIZE 3072 // TODO might be too big
+#define CELL_PAYLOAD_SIZE 2048 // TODO might be too big
 /** Number of bytes in a cell transmitted over the network, in the longest
  * form */
-#define CELL_MAX_NETWORK_SIZE 3077
+#define CELL_MAX_NETWORK_SIZE 2053
 
 /** Maximum length of a header on a variable-length cell. */
 #define VAR_CELL_MAX_HEADER_SIZE 7

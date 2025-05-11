@@ -194,6 +194,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     
     if (smartlist_len(tokens) != 2) {
       log_debug(LD_CONTROL, "Invalid line format: %s", line);
+      SMARTLIST_FOREACH(tokens, char *, tok, tor_free(tok)); // avoid mem leak free the individual tokens in addition to the smartlist:
       smartlist_free(tokens);
       continue;
     }
@@ -205,6 +206,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     relay_payment_item_t *payment_item = payment_util_parse_payment_line(line);
     if (!payment_item) {
       log_warn(LD_CONTROL, "Invalid payment line: %s", line);
+      SMARTLIST_FOREACH(tokens, char *, tok, tor_free(tok)); // free each token
       smartlist_free(tokens);
       continue;
     }
@@ -235,6 +237,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
       control_printf_endreply(conn, 552, "No descriptor for \"%s\"", fingerprint);
       smartlist_free(tokens);
       tor_free(payhashes);
+      relay_payments_free(relay_payments); 
       goto done;
     }
     smartlist_add(nodes, (void*)node);
@@ -245,6 +248,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   if (!smartlist_len(nodes)) {
     control_write_endreply(conn, 512, "No valid nodes provided");
     tor_free(payhashes);
+    relay_payments_free(relay_payments);
     goto done;
   }
 
@@ -320,8 +324,17 @@ done:
   SMARTLIST_FOREACH(lines, char *, cp, tor_free(cp));
   smartlist_free(lines);
   smartlist_free(nodes);
-  if (circ && circ->relay_payments != relay_payments) {
-    relay_payments_free(relay_payments);
+  if (relay_payments) {
+    if (!circ || circ->relay_payments != relay_payments) {
+      relay_payments_free(relay_payments);
+    }
+  }
+  
+  // More robust cleanup for payhashes
+  if (payhashes) {
+    if (!circ || circ->payhashes != payhashes) {
+      tor_free(payhashes);
+    }
   }
   return 0;
 }

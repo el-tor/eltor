@@ -112,9 +112,9 @@ onion_handshake_state_release(onion_handshake_state_t *state)
     state->u.ntor = NULL;
     break;
   case ONION_HANDSHAKE_TYPE_NTOR_V3:
-    if (state->u.ntor3) {  // Add NULL check here
+    if (state->u.ntor3) {
       ntor3_handshake_state_free(state->u.ntor3);
-      state->u.ntor3 = NULL;  // Set to NULL after freeing
+      state->u.ntor3 = NULL;
     }
     break;
   default:
@@ -143,7 +143,6 @@ onion_skin_create(int type,
 {
   int r = -1;
 
-  // Add detailed logging for payment hash
   if (eltor_payhash) {
     log_info(LD_GENERAL, "ELTOR onion_skin_create with payhash length: %zu", 
             strlen(eltor_payhash));
@@ -231,16 +230,14 @@ onion_skin_create(int type,
     log_notice(LD_GENERAL, "ELTOR CLIENT: Creating NTOR3 handshake with message len=%zu", msg_len);
 
     int status = onion_skin_ntor3_create(
-                            &node->ed_identity,
-                            &node->curve25519_onion_key,
-                            NTOR3_VERIFICATION_ARGS,
-                            msg, msg_len,
-                            &state_out->u.ntor3,
-                            &onion_skin, &onion_skin_len);
+                          &node->ed_identity,
+                          &node->curve25519_onion_key,
+                          NTOR3_VERIFICATION_ARGS,
+                          msg, msg_len,
+                          &state_out->u.ntor3,
+                          &onion_skin, &onion_skin_len);
                             
-    // Debug output right after creation
-    log_notice(LD_GENERAL, "ELTOR CLIENT: NTOR3 create returned status=%d, onion_skin_len=%zu", 
-              status, onion_skin_len);
+    log_notice(LD_GENERAL, "ELTOR CLIENT: NTOR3 create returned status=%d, onion_skin_len=%zu", status, onion_skin_len);
               
     tor_free(msg);
     if (status < 0) {

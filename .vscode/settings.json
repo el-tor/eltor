@@ -88,7 +88,8 @@
         "control_extendpaidcircuit.h": "c",
         "control_getinfo.h": "c",
         "ctype.h": "c",
-        "circuituse.h": "c"
+        "circuituse.h": "c",
+        "onion_ntor_v3.h": "c"
     },
     "cSpell.words": [
         "eltor",

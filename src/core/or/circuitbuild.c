@@ -1062,7 +1062,12 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
     cc.handshake_type = ONION_HANDSHAKE_TYPE_FAST;
   }
   
-  const char *hop_payhash = payment_util_get_first_hop_payhash(circ);
+  char hop_payhash_buf[PAYMENT_PAYHASH_SIZE] = {0};
+  const char *tmp = payment_util_get_first_hop_payhash(circ);
+  if (tmp) {
+    strlcpy(hop_payhash_buf, tmp, sizeof(hop_payhash_buf));
+  }
+  const char *hop_payhash = (*hop_payhash_buf) ? hop_payhash_buf : NULL;
 
   len = onion_skin_create(cc.handshake_type,
                           circ->cpath->extend_info,
@@ -1185,7 +1190,7 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
 
   // Add debug log for PayHash if present
   if (circ->payhashes) {
-    log_info(LD_GENERAL, "ELTOR intermediate hop with payhashes length: %zu", strlen(circ->payhashes));
+    log_debug(LD_CIRC, "ELTOR intermediate hop with payhashes length: %zu", strlen(circ->payhashes));
   }
 
   circuit_pick_extend_handshake(&ec.cell_type,
