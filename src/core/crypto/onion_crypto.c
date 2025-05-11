@@ -96,8 +96,6 @@ server_onion_keys_free_(server_onion_keys_t *keys)
 void
 onion_handshake_state_release(onion_handshake_state_t *state)
 {
-  if (!state)
-    return;
   switch (state->tag) {
   case ONION_HANDSHAKE_TYPE_TAP:
     crypto_dh_free(state->u.tap);
@@ -112,10 +110,7 @@ onion_handshake_state_release(onion_handshake_state_t *state)
     state->u.ntor = NULL;
     break;
   case ONION_HANDSHAKE_TYPE_NTOR_V3:
-    if (state->u.ntor3) {
-      ntor3_handshake_state_free(state->u.ntor3);
-      state->u.ntor3 = NULL;
-    }
+    ntor3_handshake_state_free(state->u.ntor3);
     break;
   default:
     /* LCOV_EXCL_START

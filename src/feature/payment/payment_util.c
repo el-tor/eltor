@@ -141,7 +141,8 @@ payment_util_get_payhash_from_circ(char *eltor_payhash, char *payhash,
 
   // Calculate offset based on hop_num (1-based)
   size_t offset = (hop_num - 1) * 768;
-  if (offset + 768 > raw_size) {
+  size_t payhash_len = strlen(payhash);
+  if (offset + 768 > payhash_len) {
     log_warn(LD_CONFIG, "Invalid hop_num or payhash too short");
     eltor_payhash_raw[0] = '\0';
   } else {

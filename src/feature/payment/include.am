@@ -8,4 +8,4 @@ LIBTOR_APP_A_SOURCES += src/feature/payment/relay_payments.c
 # Add the header file to the build
 noinst_HEADERS += src/feature/payment/payment_util.h
 noinst_HEADERS += src/feature/payment/relay_payments_st.h
-LIBTOR_APP_A_SOURCES += src/feature/payment/relay_payments.h
+noinst_HEADERS += src/feature/payment/relay_payments.h

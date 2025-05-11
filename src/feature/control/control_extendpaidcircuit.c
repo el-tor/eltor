@@ -141,7 +141,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   const char *body = args->cmddata;
   log_debug(LD_CONTROL, "EXTENDPAIDCIRCUIT: %s", body);
 
-  // Parse multiline input
+  // 1. Parse multiline input
   smartlist_t *lines = smartlist_new();
   smartlist_split_string(lines, body, "\n", SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
 
@@ -150,7 +150,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     goto done;
   }
 
-  // Create circuit if circ_id is "0", otherwise get the circuit
+  // 2. Create circuit if circ_id is "0", otherwise get the circuit
   if (zero_circ) {
     circ = origin_circuit_init(intended_purpose, 0);
     if (!circ) {
@@ -178,23 +178,30 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
 
   circ->any_hop_from_controller = 1;
 
-  // Concatenate payment hashes into single string with newlines
+  // 3. Concatenate payment hashes into single string with newlines
   // Each payhash is ~768 chars (one for each relay, and 12 hashes concatinated), so allocate enough space
   // i.e payhashes is this concatinated "handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10"
-  char *payhashes = tor_malloc_zero(smartlist_len(lines) * 1024);
+  size_t max_line_length = 0;
+  SMARTLIST_FOREACH_BEGIN(lines, char *, line) { 
+    size_t len = strlen(line); 
+    if (len > max_line_length) max_line_length = len;
+  }
+  SMARTLIST_FOREACH_END(line); 
+  size_t buffer_size = (max_line_length + 1) * smartlist_len(lines) + 1;
+  char *payhashes = tor_malloc_zero(buffer_size);
 
   // TODO new structure for relay payments, need to implement
   relay_payments_t *relay_payments = relay_payments_new();
   //    relay_payments = [{fingerprint: "", handshake_payment_hash: "", handshake_preimage: "", payhashes: "", wire_format: "eltor_payhash+payment_id_hash_round1+payment_id_hash_round2+...payment_id_hash_round10"}];
   
-  // Process each line to extract fingerprint and payhashes
+  // 4. Process each line to extract fingerprint and payhashes
   SMARTLIST_FOREACH_BEGIN(lines, char *, line) {
     smartlist_t *tokens = smartlist_new();
     smartlist_split_string(tokens, line, " ", SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
     
     if (smartlist_len(tokens) != 2) {
       log_debug(LD_CONTROL, "Invalid line format: %s", line);
-      SMARTLIST_FOREACH(tokens, char *, tok, tor_free(tok)); // avoid mem leak free the individual tokens in addition to the smartlist:
+      SMARTLIST_FOREACH(tokens, char *, tok, tor_free(tok)); // avoid mem leak free the individual tokens in addition to the smartlist
       smartlist_free(tokens);
       continue;
     }
@@ -216,10 +223,28 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     log_relay_payment(payment_item);
     
     // Add this payhash to our combined payment hashes string
-    if (strlen(payhashes) > 0) {
-      strlcat(payhashes, "\n", smartlist_len(lines) * 1024);
+    // Calculate remaining buffer space
+    size_t buffer_size = smartlist_len(lines) * 1024;
+    size_t current_len = strlen(payhashes);
+    size_t remaining = buffer_size - current_len - 1; // -1 for null terminator
+    if (current_len > 0) {
+      // Add newline if we have previous content
+      if (remaining >= 1) { // Space for at least the newline
+        strlcat(payhashes, "\n", buffer_size);
+        remaining--;
+      } else {
+        log_warn(LD_CONTROL, "Buffer too small for newline separator");
+        continue;
+      }
     }
-    strlcat(payhashes, payhash, smartlist_len(lines) * 1024);
+    // Add the payhash if there's enough room
+    if (strlen(payhash) <= remaining) {
+      strlcat(payhashes, payhash, buffer_size);
+    } else {
+      log_warn(LD_CONTROL, "Buffer too small for payhash, truncating");
+      strncat(payhashes + current_len, payhash, remaining);
+      payhashes[buffer_size - 1] = '\0';
+    }
     
     log_debug(LD_CONTROL, "Processing hop: fingerprint=%s, payhash length=%zu",
               fingerprint, strlen(payhash));
@@ -252,10 +277,20 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     goto done;
   }
 
-  // Store the payment hash in the circuit
+  // 5. Store the payment hash in the circuit
   tor_free(circ->payhashes);
   circ->payhashes = payhashes;
   log_info(LD_CONTROL, "ELTOR circuit payment hash total length: %zu", strlen(payhashes));
+  // Check if total payment hash size is reasonable
+  const size_t max_payhash_size = 10 * 1024; // Example limit
+  if (strlen(payhashes) > max_payhash_size) {
+    log_warn(LD_CONTROL, "ELTOR circuit payment hash exceeds maximum size (%zu > %zu)",
+             strlen(payhashes), max_payhash_size);
+    control_write_endreply(conn, 552, "Payment hash data exceeds maximum size");
+    goto done;
+  }
+
+log_info(LD_CONTROL, "ELTOR circuit payment hash total length: %zu", strlen(payhashes));
 
   tor_free(circ->relay_payments);
   circ->relay_payments = relay_payments;
@@ -285,7 +320,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     first_node = 0;
   });
 
-  // Handle new circuit creation vs extending existing circuit
+  // 7. Handle new circuit creation vs extending existing circuit
   if (zero_circ) {
     // Handle new circuit creation
     int err_reason = 0;
