@@ -1,0 +1,9 @@
+CompileFlags:
+  Add: -Wall
+
+Diagnostics:
+  ClangTidy:
+    Add:
+      - "clang-analyzer-*"
+      - "bugprone-*"
+      - "performance-*"

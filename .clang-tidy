@@ -1,0 +1,36 @@
+Checks: >
+  clang-analyzer-core.*,
+  clang-analyzer-deadcode.*,
+  clang-analyzer-nullability.*,
+  clang-analyzer-security.*,
+  clang-analyzer-unix.Malloc,
+  clang-analyzer-unix.StdCLibraryFunctions,
+  clang-analyzer-unix.cstring,
+  bugprone-*,
+  performance-*,
+  -clang-analyzer-cplusplus.*,
+  -modernize-*,
+  -readability-identifier-naming,
+  -readability-function-cognitive-complexity,
+  -hicpp-*
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*'
+FormatStyle: file
+
+CheckOptions:
+  # Warn on using sizeof on a pointer (common C mistake)
+  - key:             bugprone-sizeof-expression.WarnOnPointerDecay
+    value:           'true'
+
+  # Warn when return values from critical functions are ignored
+  - key:             bugprone-unused-return-value.CheckFunctions
+    value:           'free;realloc;close;fclose;write;read'
+
+  # Make sure all allocations (malloc-like) are eventually freed
+  - key:             clang-analyzer-unix.Malloc.SizeThreshold
+    value:           '1'
+
+  # Tor often uses large switch statements — don’t warn
+  - key:             readability-function-size.LineThreshold
+    value:           '0'
