@@ -49,6 +49,7 @@
  * This module is also the entry point for our out-of-memory handler
  * logic, which was originally circuit-focused.
  **/
+#include "feature/payment/relay_payments.h"
 #define CIRCUITLIST_PRIVATE
 #define OCIRC_EVENT_PRIVATE
 #include "lib/cc/torint.h"  /* TOR_PRIuSZ */
@@ -1180,6 +1181,14 @@ circuit_free_(circuit_t *circ)
 
   if (CIRCUIT_IS_ORIGIN(circ)) {
     origin_circuit_t *ocirc = TO_ORIGIN_CIRCUIT(circ);
+    if (ocirc->relay_payments) {
+      relay_payments_free(ocirc->relay_payments);
+      ocirc->relay_payments = NULL;
+    }
+    if (ocirc->payhashes) {
+      tor_free(ocirc->payhashes);
+      ocirc->payhashes = NULL;
+    }
     mem = ocirc;
     memlen = sizeof(origin_circuit_t);
     tor_assert(circ->magic == ORIGIN_CIRCUIT_MAGIC);
