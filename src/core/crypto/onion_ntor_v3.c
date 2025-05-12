@@ -29,7 +29,20 @@
 #include "lib/crypt_ops/crypto_util.h"
 #include "lib/ctime/di_ops.h"
 #include "lib/log/util_bug.h"
+#include "lib/encoding/binascii.h"
+#include "lib/intmath/cmp.h" 
+#include "feature/payment/payment_util.h"
+#include "core/or/origin_circuit_st.h"
+#include "feature/control/control_events.h"
+#include "core/or/origin_circuit_st.h"
+#include "core/or/crypt_path_st.h"
+#include "feature/control/control_cmd.h"
+#include "core/or/or.h"
+#include "core/or/or_circuit_st.h"
+#include "core/or/circuitlist.h"
+#include "lib/string/util_string.h"
 
+#include <ctype.h> 
 #include <string.h>
 
 /* Parameters used to keep the outputs of this handshake from colliding with
@@ -278,6 +291,9 @@ onion_skin_ntor3_create_nokeygen(
   memwipe(encrypted_message, 0, message_len);
   tor_free(encrypted_message);
 
+  // After building the onion skin, add this:
+  log_notice(LD_CIRC, "ELTOR CLIENT: Completed NTOR3 onion_skin (len=%zu)", *onion_skin_len_out);
+
   return 0;
 }
 
@@ -472,7 +488,8 @@ onion_skin_ntor3_server_handshake_part1(
                 size_t verification_len,
                 uint8_t **client_message_out,
                 size_t *client_message_len_out,
-                ntor3_server_handshake_state_t **state_out)
+                ntor3_server_handshake_state_t **state_out,
+                uint64_t *global_id)
 {
   *client_message_out = NULL;
   *client_message_len_out = 0;
@@ -590,6 +607,47 @@ onion_skin_ntor3_server_handshake_part1(
     *client_message_len_out = 0;
     ntor3_server_handshake_state_free(*state_out);
     return -1;
+  }
+
+  // After decrypting the message
+  if (*client_message_out && *client_message_len_out > 0) {
+    log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message (len=%zu): %s",
+         *client_message_len_out,
+         (const char *)*client_message_out);
+    
+    // Log the first few bytes for debugging
+    log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message hex dump: %s",
+              hex_str((const char *)*client_message_out, MIN(32, *client_message_len_out)));
+    
+    // Check for the prefixPayHash directly
+    const char *prefixPayHash = "eltor_payhash";
+    const void *foundPayHash = tor_memmem(*client_message_out, *client_message_len_out,
+                                        prefixPayHash, strlen(prefixPayHash));
+
+    if (foundPayHash) {
+      log_notice(LD_CIRC, "ELTOR RELAY: Found Payment hash: %s", foundPayHash); 
+
+      size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
+      log_notice(LD_CIRC, "ELTOR RELAY: Found payment hash prefix at offset %zu", indexPayHash);
+      
+      // Extract and process the payment hash
+      size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
+      if (remaining > 0) {
+        char *payhash = tor_malloc(remaining + 1);
+        memcpy(payhash, (const char*)*client_message_out + indexPayHash + strlen(prefixPayHash), remaining);
+        payhash[remaining] = '\0';
+
+        // TODO - figure out how to get the circuit ID
+
+        log_notice(LD_CIRC, "ELTOR RELAY: Payment hash: %s", payhash); 
+        control_event_payment_id_hash_received(payhash, &global_id);
+
+        tor_free(payhash);
+      }
+        
+    } else {
+      log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in decrypted message");
+    }
   }
 
   return 0;

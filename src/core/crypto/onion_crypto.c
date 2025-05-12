@@ -138,6 +138,14 @@ onion_skin_create(int type,
 {
   int r = -1;
 
+  if (eltor_payhash) {
+    log_info(LD_GENERAL, "ELTOR onion_skin_create with payhash length: %zu", 
+            strlen(eltor_payhash));
+    log_debug(LD_GENERAL, "ELTOR payhash first 50 chars: %.50s...", eltor_payhash);
+  } else {
+    log_info(LD_GENERAL, "ELTOR onion_skin_create with NO payhash");
+  }
+
   switch (type) {
   case ONION_HANDSHAKE_TYPE_TAP:
     if (onion_skin_out_maxlen < TAP_ONIONSKIN_CHALLENGE_LEN)
@@ -182,18 +190,57 @@ onion_skin_create(int type,
       return -1;
     uint8_t *onion_skin = NULL;
     size_t onion_skin_len = 0;
+
+    // Now handle the payment hash
+    if (eltor_payhash && strlen(eltor_payhash) > 0) {
+      log_notice(LD_GENERAL, "ELTOR CLIENT: Adding payment hash to NTOR_V3 client message");
+      
+      // Create an extended message
+      uint8_t *extended_msg = NULL;
+      size_t extended_msg_len = 0;
+      
+      // The payment hash already contains the "eltor_payhash" prefix
+      // Just append it directly after the original message
+      extended_msg_len = msg_len + strlen(eltor_payhash);
+      extended_msg = tor_malloc(extended_msg_len);
+      
+      // Copy the original message first
+      memcpy(extended_msg, msg, msg_len);
+      
+      // Copy the payment hash with its built-in prefix
+      memcpy(extended_msg + msg_len, eltor_payhash, strlen(eltor_payhash));
+      
+      log_notice(LD_GENERAL, "ELTOR CLIENT: Extended message length: %zu (original: %zu, hash: %zu)", 
+                extended_msg_len, msg_len, strlen(eltor_payhash));
+      log_notice(LD_GENERAL, "ELTOR CLIENT: First 50 bytes of extended message: %s", 
+                hex_str((const char *)extended_msg, MIN(50, extended_msg_len)));
+      
+      // Free original message and replace with extended one
+      tor_free(msg);
+      msg = extended_msg;
+      msg_len = extended_msg_len;
+    }
+
+    // Verify message size is reasonable for debug purposes
+    log_notice(LD_GENERAL, "ELTOR CLIENT: Creating NTOR3 handshake with message len=%zu", msg_len);
+
     int status = onion_skin_ntor3_create(
-                             &node->ed_identity,
-                             &node->curve25519_onion_key,
-                             NTOR3_VERIFICATION_ARGS,
-                             msg, msg_len, /* client message */
-                             &state_out->u.ntor3,
-                             &onion_skin, &onion_skin_len);
+                          &node->ed_identity,
+                          &node->curve25519_onion_key,
+                          NTOR3_VERIFICATION_ARGS,
+                          msg, msg_len,
+                          &state_out->u.ntor3,
+                          &onion_skin, &onion_skin_len);
+                            
+    log_notice(LD_GENERAL, "ELTOR CLIENT: NTOR3 create returned status=%d, onion_skin_len=%zu", status, onion_skin_len);
+              
     tor_free(msg);
     if (status < 0) {
       return -1;
     }
     if (onion_skin_len > onion_skin_out_maxlen) {
+      log_warn(LD_GENERAL, "ELTOR CLIENT: Onion skin too large: %zu bytes vs %zu allowed",
+            onion_skin_len, onion_skin_out_maxlen);
       tor_free(onion_skin);
       return -1;
     }
@@ -282,7 +329,8 @@ onion_skin_server_handshake(int type,
                       size_t reply_out_maxlen,
                       uint8_t *keys_out, size_t keys_out_len,
                       uint8_t *rend_nonce_out,
-                      circuit_params_t *params_out)
+                      circuit_params_t *params_out,
+                      uint64_t *global_id)
 {
   int r = -1;
   memset(params_out, 0, sizeof(*params_out));
@@ -354,7 +402,7 @@ onion_skin_server_handshake(int type,
                onion_skin, onionskin_len,
                NTOR3_VERIFICATION_ARGS,
                &client_msg, &client_msg_len,
-               &state) < 0) {
+               &state, global_id) < 0) {
       return -1;
     }
 

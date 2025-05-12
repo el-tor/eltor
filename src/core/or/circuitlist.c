@@ -49,6 +49,7 @@
  * This module is also the entry point for our out-of-memory handler
  * logic, which was originally circuit-focused.
  **/
+#include "feature/payment/relay_payments.h"
 #define CIRCUITLIST_PRIVATE
 #define OCIRC_EVENT_PRIVATE
 #include "lib/cc/torint.h"  /* TOR_PRIuSZ */
@@ -1180,6 +1181,14 @@ circuit_free_(circuit_t *circ)
 
   if (CIRCUIT_IS_ORIGIN(circ)) {
     origin_circuit_t *ocirc = TO_ORIGIN_CIRCUIT(circ);
+    if (ocirc->relay_payments) {
+      relay_payments_free(ocirc->relay_payments);
+      ocirc->relay_payments = NULL;
+    }
+    if (ocirc->payhashes) {
+      tor_free(ocirc->payhashes);
+      ocirc->payhashes = NULL;
+    }
     mem = ocirc;
     memlen = sizeof(origin_circuit_t);
     tor_assert(circ->magic == ORIGIN_CIRCUIT_MAGIC);
@@ -1225,8 +1234,8 @@ circuit_free_(circuit_t *circ)
     }
     
     // Free payhash if allocated
-    if (ocirc->payhash) {
-      tor_free(ocirc->payhash);
+    if (ocirc->payhashes) {
+      tor_free(ocirc->payhashes);
     }
 
     addr_policy_list_free(ocirc->prepend_policy);
@@ -2366,6 +2375,20 @@ circuit_about_to_free(circuit_t *circ)
       circ->state != CIRCUIT_STATE_GUARD_WAIT) {
     if (CIRCUIT_IS_ORIGIN(circ)) {
       origin_circuit_t *ocirc = TO_ORIGIN_CIRCUIT(circ);
+      // Comprehensive cleanup for relay_payments
+      if (ocirc->relay_payments) {
+        log_debug(LD_MM, "Freeing relay payments for circuit %lu", 
+                (unsigned long)ocirc->global_identifier);
+        relay_payments_free(ocirc->relay_payments);
+        ocirc->relay_payments = NULL;
+      }
+      // Cleanup for payhashes
+      if (ocirc->payhashes) {
+        log_debug(LD_MM, "Freeing payhashes for circuit %lu",
+                (unsigned long)ocirc->global_identifier);
+        tor_free(ocirc->payhashes);
+        ocirc->payhashes = NULL;
+      }
       circuit_build_failed(ocirc); /* take actions if necessary */
     }
   }

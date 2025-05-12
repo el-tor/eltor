@@ -458,14 +458,14 @@ typedef enum {
  *         Stream ID               [2 bytes]
  *         Partial SHA-1           [4 bytes]
  *         Length                  [2 bytes]
- *         Relay payload           [498 bytes]
+ *         Relay payload           [498 bytes + (payhashes plus some padding)]
  */
 
 /** Number of bytes in a cell, minus cell header. */
-#define CELL_PAYLOAD_SIZE 1024
+#define CELL_PAYLOAD_SIZE 2048 // TODO might be too big
 /** Number of bytes in a cell transmitted over the network, in the longest
  * form */
-#define CELL_MAX_NETWORK_SIZE 1029
+#define CELL_MAX_NETWORK_SIZE 2053
 
 /** Maximum length of a header on a variable-length cell. */
 #define VAR_CELL_MAX_HEADER_SIZE 7

@@ -372,7 +372,8 @@ command_process_create_cell(cell_t *cell, channel_t *chan)
                                        sizeof(created_cell.reply),
                                        keys, CPATH_KEY_MATERIAL_LEN,
                                        rend_circ_nonce,
-                                       &params);
+                                       &params,
+                                       &chan->global_identifier);
     tor_free(create_cell);
     if (len < 0) {
       log_warn(LD_OR,"Failed to generate key material. Closing.");

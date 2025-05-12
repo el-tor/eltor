@@ -87,6 +87,7 @@
 #include "trunnel/congestion_control.h"
 
 #include "feature/payment/payment_util.h"
+#include "feature/payment/relay_payments.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -474,7 +475,8 @@ origin_circuit_init(uint8_t purpose, int flags)
   circ->build_state->need_conflux =
     ((flags & CIRCLAUNCH_NEED_CONFLUX) ? 1 : 0);
   circ->base_.purpose = purpose;
-  circ->payhash = NULL;
+  circ->payhashes = NULL;
+  circ->relay_payments = NULL;
   return circ;
 }
 
@@ -1026,7 +1028,13 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
   create_cell_t cc;
   memset(&cc, 0, sizeof(cc));
 
-  log_debug(LD_CIRC,"First skin; sending create cell.");
+  log_debug(LD_CIRC, "First skin; sending create cell. payhashes: %s", circ->payhashes ? "present" : "absent");
+
+  // Add debug log for PayHash if present
+  if (circ->payhashes) {
+    log_info(LD_GENERAL, "ELTOR first hop with PayHash length: %zu", 
+             strlen(circ->payhashes));
+  }
 
   if (circ->build_state->onehop_tunnel) {
     control_event_bootstrap(BOOTSTRAP_STATUS_ONEHOP_CREATE, 0);
@@ -1053,31 +1061,20 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
     cc.cell_type = CELL_CREATE_FAST;
     cc.handshake_type = ONION_HANDSHAKE_TYPE_FAST;
   }
-
-  char *payhash = circ->payhash;
-  char eltor_payhash[PAYMENT_PAYHASH_SIZE] = {0}; // total size with null terminator
-
-  uint8_t purpose = circ->base_.purpose;
-  if (
-    circuit_purpose_is_hidden_service(purpose)
-  ) {
-    // Skip payments for hidden services for now, just use dummy values
-    // TODO: Build RPC commands for the following tasks:
-    // 	1. Create directory circuit
-    // 	2. Fetch hidden service descriptor
-    // 	3. Build rendezvous circuit
-    //  4. Connect to hidden service
-    payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
-  } else {
-    payment_util_get_preimage_from_circ(&eltor_payhash, payhash);
+  
+  char hop_payhash_buf[PAYMENT_PAYHASH_SIZE] = {0};
+  const char *tmp = payment_util_get_first_hop_payhash(circ);
+  if (tmp) {
+    strlcpy(hop_payhash_buf, tmp, sizeof(hop_payhash_buf));
   }
+  const char *hop_payhash = (*hop_payhash_buf) ? hop_payhash_buf : NULL;
 
   len = onion_skin_create(cc.handshake_type,
                           circ->cpath->extend_info,
                           &circ->cpath->handshake_state,
                           cc.onionskin,
                           sizeof(cc.onionskin),
-                          NULL ); // TODO pass PayHash
+                          hop_payhash);
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create (first hop) failed.");
     return - END_CIRC_REASON_INTERNAL;
@@ -1189,7 +1186,12 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   tor_addr_make_unspec(&ec.orport_ipv4.addr);
   tor_addr_make_unspec(&ec.orport_ipv6.addr);
 
-  log_debug(LD_CIRC,"starting to send subsequent skin.");
+  log_debug(LD_CIRC, "Starting to send subsequent skin. payhashes: %s", circ->payhashes ? "present" : "absent");
+
+  // Add debug log for PayHash if present
+  if (circ->payhashes) {
+    log_debug(LD_CIRC, "ELTOR intermediate hop with payhashes length: %zu", strlen(circ->payhashes));
+  }
 
   circuit_pick_extend_handshake(&ec.cell_type,
                                 &ec.create_cell.cell_type,
@@ -1221,19 +1223,6 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
    * in the extend2 cell if we're configured to use it, though. */
   ed25519_pubkey_copy(&ec.ed_pubkey, &hop->extend_info->ed_identity);
 
-  len = onion_skin_create(ec.create_cell.handshake_type,
-                          hop->extend_info,
-                          &hop->handshake_state,
-                          ec.create_cell.onionskin,
-                          sizeof(ec.create_cell.onionskin), 
-                          NULL); // TODO pass payhash
-  if (len < 0) {
-    log_warn(LD_CIRC,"onion_skin_create failed.");
-    return - END_CIRC_REASON_INTERNAL;
-  }
-  ec.create_cell.handshake_len = len;
-
-  
   // Find the hop number
   int hop_num = 0;
   for (crypt_path_t *cur = circ->cpath; cur != NULL; cur = cur->next) {
@@ -1246,29 +1235,39 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
     }
   }
 
-  char *payhash = circ->payhash;
-  char eltor_payhash[PAYMENT_PAYHASH_SIZE] = {0}; // total size with null terminator
-  uint8_t purpose = circ->base_.purpose;
-  if (
-    circuit_purpose_is_hidden_service(purpose)
-  ) {
-    // Skip payments for hidden services for now, just use dummy values
-    // TODO: Build RPC commands for the following tasks:
-    // 	1. Create directory circuit
-    // 	2. Fetch hidden service descriptor
-    // 	3. Build rendezvous circuit
-    //  4. Connect to hidden service
-    payment_util_get_preimage_from_torrc(&eltor_payhash, 1);
-  } else {
-    payment_util_get_preimage_from_circ(&eltor_payhash, payhash);
+  const relay_payment_item_t *payment = relay_payments_find_by_hop_num(circ->relay_payments, hop_num);
+  const char *hop_payhash = NULL;
+  if (payment && payment->wire_format) {
+    hop_payhash = payment->wire_format;
   }
 
-  log_info(LD_CIRC,"Sending extend relay cell with eltor. payhash: %s", eltor_payhash);
+  // Add debugging to show we have the payment hash
+  if (hop_payhash) {
+    log_info(LD_GENERAL, "ELTOR intermediate hop with PayHash length: %zu", 
+             strlen(hop_payhash));
+  } else {
+    log_info(LD_GENERAL, "ELTOR intermediate hop with NO PayHash");
+  }
+
+  len = onion_skin_create(ec.create_cell.handshake_type,
+                          hop->extend_info,
+                          &hop->handshake_state,
+                          ec.create_cell.onionskin,
+                          sizeof(ec.create_cell.onionskin), 
+                          hop_payhash);
+  if (len < 0) {
+    log_warn(LD_CIRC,"onion_skin_create failed.");
+    return - END_CIRC_REASON_INTERNAL;
+  }
+  ec.create_cell.handshake_len = len;
+
+
+  log_info(LD_CIRC,"Sending extend relay cell with eltor. payhash: %s", hop_payhash);
   {
     uint8_t command = 0;
     uint16_t payload_len=0;
     uint8_t payload[RELAY_PAYLOAD_SIZE];
-    if (extend_cell_format(&command, &payload_len, payload, &ec, eltor_payhash)<0) {
+    if (extend_cell_format(&command, &payload_len, payload, &ec, hop_payhash)<0) {
       log_warn(LD_CIRC,"Couldn't format extend cell");
       return -END_CIRC_REASON_INTERNAL;
     }
