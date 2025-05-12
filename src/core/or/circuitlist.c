@@ -2375,6 +2375,20 @@ circuit_about_to_free(circuit_t *circ)
       circ->state != CIRCUIT_STATE_GUARD_WAIT) {
     if (CIRCUIT_IS_ORIGIN(circ)) {
       origin_circuit_t *ocirc = TO_ORIGIN_CIRCUIT(circ);
+      // Comprehensive cleanup for relay_payments
+      if (ocirc->relay_payments) {
+        log_debug(LD_MM, "Freeing relay payments for circuit %lu", 
+                (unsigned long)ocirc->global_identifier);
+        relay_payments_free(ocirc->relay_payments);
+        ocirc->relay_payments = NULL;
+      }
+      // Cleanup for payhashes
+      if (ocirc->payhashes) {
+        log_debug(LD_MM, "Freeing payhashes for circuit %lu",
+                (unsigned long)ocirc->global_identifier);
+        tor_free(ocirc->payhashes);
+        ocirc->payhashes = NULL;
+      }
       circuit_build_failed(ocirc); /* take actions if necessary */
     }
   }
