@@ -359,17 +359,19 @@ done:
   SMARTLIST_FOREACH(lines, char *, cp, tor_free(cp));
   smartlist_free(lines);
   smartlist_free(nodes);
+  // Only free relay_payments and payhashes if they were not assigned to circ
+  if (circ && circ->relay_payments == relay_payments) {
+    relay_payments = NULL;
+  }
   if (relay_payments) {
-    if (!circ || circ->relay_payments != relay_payments) {
-      relay_payments_free(relay_payments);
-    }
+    relay_payments_free(relay_payments);
+  }
+  if (circ && circ->payhashes == payhashes) {
+    payhashes = NULL;
+  }
+  if (payhashes) {
+    tor_free(payhashes);
   }
   
-  // More robust cleanup for payhashes
-  if (payhashes) {
-    if (!circ || circ->payhashes != payhashes) {
-      tor_free(payhashes);
-    }
-  }
   return 0;
 }
