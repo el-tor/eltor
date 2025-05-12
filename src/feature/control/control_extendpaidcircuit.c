@@ -16,10 +16,9 @@
 *       → src/core/or/circuitbuild.c:845-864 - circuit_send_first_onion_skin(circ) 
 *         → src/feature/payment/payment_util.c:320-343 - payment_util_get_first_hop_payhash(circ)
 *           → src/feature/payment/payment_util.c:280-316 - payment_util_get_payhash_from_struct(circ, 1)
-*             → src/feature/payment/relay_payments.c:250-268 - relay_payments_find_by_index(payments, 0)
+*             → src/feature/payment/relay_payments.c:250-268 - relay_payments_find_by_hop_num()
 *         → src/core/crypto/onion.c:162-189 - onion_skin_create() [creates handshake with payment]
-*           → src/core/crypto/onion_ntor_v3.c:456-493 - create_onion_skin_ntor_v3_with_payment()
-*             → src/core/crypto/onion_ntor_v3.c:126-134 - ntor3_derivate_secret_with_payment()
+*           → src/core/crypto/onion_ntor_v3.c:456-493 - create_onion_skin_ntor_v3()
 *               → [includes payment hash in CREATE/EXTEND2 cell]
 *   → src/core/or/circuitbuild.c:2712-2731 - circuit_send_first_onion_skin(circ)
 *     → src/core/or/command.c:1243-1271 - connection_or_send_cell(link, cell)
@@ -190,7 +189,6 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   size_t buffer_size = (max_line_length + 1) * smartlist_len(lines) + 1;
   char *payhashes = tor_malloc_zero(buffer_size);
 
-  // TODO new structure for relay payments, need to implement
   relay_payments_t *relay_payments = relay_payments_new();
   //    relay_payments = [{fingerprint: "", handshake_payment_hash: "", handshake_preimage: "", payhashes: "", wire_format: "eltor_payhash+payment_id_hash_round1+payment_id_hash_round2+...payment_id_hash_round10"}];
   
@@ -255,16 +253,12 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
       control_printf_endreply(conn, 552, "No such router \"%s\"", fingerprint);
       SMARTLIST_FOREACH(tokens, char *, tok, tor_free(tok));
       smartlist_free(tokens);
-      //tor_free(payhashes);
-      //relay_payments_free(relay_payments);
       goto done;
     }
     if (!node_has_preferred_descriptor(node, zero_circ)) {
       control_printf_endreply(conn, 552, "No descriptor for \"%s\"", fingerprint);
       SMARTLIST_FOREACH(tokens, char *, tok, tor_free(tok));
       smartlist_free(tokens);
-      //tor_free(payhashes);
-      //relay_payments_free(relay_payments); 
       goto done;
     }
     smartlist_add(nodes, (void*)node);
@@ -275,8 +269,6 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   
   if (!smartlist_len(nodes)) {
     control_write_endreply(conn, 512, "No valid nodes provided");
-    // tor_free(payhashes);
-    // relay_payments_free(relay_payments);
     goto done;
   }
 
