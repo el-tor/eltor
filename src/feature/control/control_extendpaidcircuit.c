@@ -253,6 +253,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     const node_t *node = node_get_by_nickname(fingerprint, 0);
     if (!node) {
       control_printf_endreply(conn, 552, "No such router \"%s\"", fingerprint);
+      SMARTLIST_FOREACH(tokens, char *, tok, tor_free(tok));
       smartlist_free(tokens);
       //tor_free(payhashes);
       //relay_payments_free(relay_payments);
@@ -260,6 +261,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     }
     if (!node_has_preferred_descriptor(node, zero_circ)) {
       control_printf_endreply(conn, 552, "No descriptor for \"%s\"", fingerprint);
+      SMARTLIST_FOREACH(tokens, char *, tok, tor_free(tok));
       smartlist_free(tokens);
       //tor_free(payhashes);
       //relay_payments_free(relay_payments); 
@@ -267,6 +269,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     }
     smartlist_add(nodes, (void*)node);
     
+    SMARTLIST_FOREACH(tokens, char *, tok, tor_free(tok));
     smartlist_free(tokens);
   } SMARTLIST_FOREACH_END(line);
   
