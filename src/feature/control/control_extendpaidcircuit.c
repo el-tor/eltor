@@ -290,9 +290,11 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     goto done;
   }
 
-log_info(LD_CONTROL, "ELTOR circuit payment hash total length: %zu", strlen(payhashes));
+  log_info(LD_CONTROL, "ELTOR circuit payment hash total length: %zu", strlen(payhashes));
 
-  tor_free(circ->relay_payments);
+  if (circ->relay_payments) {
+    relay_payments_free(circ->relay_payments);
+  }
   circ->relay_payments = relay_payments;
 
   // Append hops to circuit path
@@ -356,9 +358,13 @@ log_info(LD_CONTROL, "ELTOR circuit payment hash total length: %zu", strlen(payh
     circuit_event_status(circ, CIRC_EVENT_LAUNCHED, 0);
   
 done:
-  SMARTLIST_FOREACH(lines, char *, cp, tor_free(cp));
-  smartlist_free(lines);
-  smartlist_free(nodes);
+  if (lines) {
+    SMARTLIST_FOREACH(lines, char *, cp, tor_free(cp));
+    smartlist_free(lines);
+  }
+  if (nodes) {
+    smartlist_free(nodes);
+  }
   // Only free relay_payments and payhashes if they were not assigned to circ
   if (circ && circ->relay_payments == relay_payments) {
     relay_payments = NULL;
@@ -372,6 +378,6 @@ done:
   if (payhashes) {
     tor_free(payhashes);
   }
-  
+
   return 0;
 }
