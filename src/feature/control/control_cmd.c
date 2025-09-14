@@ -54,6 +54,8 @@
 #include "feature/nodelist/routerinfo_st.h"
 
 #include "app/config/statefile.h"
+#include "feature/payment/relay_payments.h"
+#include "feature/payment/payment_util.h"
 
 static int control_setconf_helper(control_connection_t *conn,
                                   const control_cmd_args_t *args,
@@ -1193,6 +1195,49 @@ handle_control_closecircuit(control_connection_t *conn,
   return 0;
 }
 
+static const control_cmd_syntax_t killpaidcircuit_syntax = {
+  .min_args = 1,
+  .max_args = 1,
+  .accept_keywords = true,
+  .kvline_flags = KV_OMIT_VALS
+};
+
+/** Called when we get a KILLPAIDCIRCUIT command; try to close the named paid 
+ * circuit and report success or failure. */
+static int
+handle_control_killpaidcircuit(control_connection_t *conn,
+                               const control_cmd_args_t *args)
+{
+  const char *circ_id = smartlist_get(args->args, 0);
+  origin_circuit_t *circ = NULL;
+
+  log_debug(LD_CONTROL, "KILLPAIDCIRCUIT: Attempting to kill circuit %s", circ_id);
+
+  if (!(circ=get_circ(circ_id))) {
+    control_printf_endreply(conn, 552, "Unknown circuit \"%s\"", circ_id);
+    return 0;
+  }
+
+  // Check if this is a paid circuit (has payment data)
+  if (!circ->payhashes && !circ->relay_payments) {
+    control_printf_endreply(conn, 552, "Circuit \"%s\" is not a paid circuit", circ_id);
+    return 0;
+  }
+
+  // Check for IfUnused flag (similar to closecircuit)
+  bool safe = config_lines_contain_flag(args->kwargs, "IfUnused");
+
+  if (!safe || !circ->p_streams) {
+    log_info(LD_CONTROL, "Killing paid circuit %s as requested", circ_id);
+    circuit_mark_for_close(TO_CIRCUIT(circ), END_CIRC_REASON_REQUESTED);
+  } else {
+    log_debug(LD_CONTROL, "Circuit %s has active streams, not killing due to IfUnused flag", circ_id);
+  }
+
+  send_control_done(conn);
+  return 0;
+}
+
 static const control_cmd_syntax_t resolve_syntax = {
   .max_args=0,
   .accept_keywords=true,
@@ -2155,6 +2200,7 @@ static const control_cmd_def_t CONTROL_COMMANDS[] =
   ONE_LINE(onion_client_auth_remove, 0),
   ONE_LINE(onion_client_auth_view, 0),
   MULTLINE(extendpaidcircuit, 0),
+  ONE_LINE(killpaidcircuit, 0),
 };
 
 /**
