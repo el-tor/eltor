@@ -1202,24 +1202,83 @@ static const control_cmd_syntax_t killpaidcircuit_syntax = {
   .kvline_flags = KV_OMIT_VALS
 };
 
+/** Helper function to find either an origin circuit or an OR circuit by ID.
+ * For origin circuits, uses the global_identifier.
+ * For OR circuits, iterates through all circuits to find matching circuit IDs.
+ * Returns a circuit_t pointer that can be either type, or NULL if not found.
+ */
+static circuit_t *
+get_circuit_for_kill_command(const char *id)
+{
+  uint32_t n_id;
+  int ok;
+  n_id = (uint32_t) tor_parse_ulong(id, 10, 0, UINT32_MAX, &ok, NULL);
+  if (!ok)
+    return NULL;
+  
+  // First try to find as origin circuit (existing behavior)
+  origin_circuit_t *origin_circ = circuit_get_by_global_id(n_id);
+  if (origin_circ) {
+    return TO_CIRCUIT(origin_circ);
+  }
+  
+  // If not found as origin circuit, search for OR circuits
+  // This searches all circuits to find one where the circuit ID matches
+  SMARTLIST_FOREACH_BEGIN(circuit_get_global_list(), circuit_t *, circ) {
+    if (!CIRCUIT_IS_ORIGIN(circ)) {
+      or_circuit_t *or_circ = TO_OR_CIRCUIT(circ);
+      // Check if either the n_circ_id or p_circ_id matches our target ID
+      if (or_circ->p_circ_id == n_id || circ->n_circ_id == n_id) {
+        if (!circ->marked_for_close) {
+          return circ;
+        }
+      }
+    }
+  } SMARTLIST_FOREACH_END(circ);
+  
+  return NULL;
+}
+
+/** Check if a circuit has payment data.
+ * For origin circuits: check payhashes and relay_payments fields
+ * For OR circuits: currently always returns true since we don't have 
+ * persistent payment storage for relays, but this allows relays to 
+ * kill any circuit passing through them.
+ */
+static int
+circuit_has_payment_data(circuit_t *circ)
+{
+  if (CIRCUIT_IS_ORIGIN(circ)) {
+    origin_circuit_t *origin_circ = TO_ORIGIN_CIRCUIT(circ);
+    return (origin_circ->payhashes || origin_circ->relay_payments);
+  } else {
+    // For OR circuits (relay circuits), we currently don't have persistent
+    // payment data storage. For now, we consider all OR circuits as potentially
+    // having payment data since relays should be able to kill circuits passing
+    // through them. This could be refined in the future with better payment tracking.
+    return 1;
+  }
+}
+
 /** Called when we get a KILLPAIDCIRCUIT command; try to close the named paid 
- * circuit and report success or failure. */
+ * circuit and report success or failure. Works for both origin circuits and
+ * OR circuits (relay circuits). */
 static int
 handle_control_killpaidcircuit(control_connection_t *conn,
                                const control_cmd_args_t *args)
 {
   const char *circ_id = smartlist_get(args->args, 0);
-  origin_circuit_t *circ = NULL;
+  circuit_t *circ = NULL;
 
   log_debug(LD_CONTROL, "KILLPAIDCIRCUIT: Attempting to kill circuit %s", circ_id);
 
-  if (!(circ=get_circ(circ_id))) {
+  if (!(circ = get_circuit_for_kill_command(circ_id))) {
     control_printf_endreply(conn, 552, "Unknown circuit \"%s\"", circ_id);
     return 0;
   }
 
   // Check if this is a paid circuit (has payment data)
-  if (!circ->payhashes && !circ->relay_payments) {
+  if (!circuit_has_payment_data(circ)) {
     control_printf_endreply(conn, 552, "Circuit \"%s\" is not a paid circuit", circ_id);
     return 0;
   }
@@ -1227,9 +1286,20 @@ handle_control_killpaidcircuit(control_connection_t *conn,
   // Check for IfUnused flag (similar to closecircuit)
   bool safe = config_lines_contain_flag(args->kwargs, "IfUnused");
 
-  if (!safe || !circ->p_streams) {
-    log_info(LD_CONTROL, "Killing paid circuit %s as requested", circ_id);
-    circuit_mark_for_close(TO_CIRCUIT(circ), END_CIRC_REASON_REQUESTED);
+  // For origin circuits, check p_streams. For OR circuits, check n_streams.
+  int has_active_streams = 0;
+  if (CIRCUIT_IS_ORIGIN(circ)) {
+    origin_circuit_t *origin_circ = TO_ORIGIN_CIRCUIT(circ);
+    has_active_streams = (origin_circ->p_streams != NULL);
+  } else {
+    or_circuit_t *or_circ = TO_OR_CIRCUIT(circ);
+    has_active_streams = (or_circ->n_streams != NULL);
+  }
+
+  if (!safe || !has_active_streams) {
+    const char *circ_type = CIRCUIT_IS_ORIGIN(circ) ? "origin" : "OR";
+    log_info(LD_CONTROL, "Killing paid %s circuit %s as requested", circ_type, circ_id);
+    circuit_mark_for_close(circ, END_CIRC_REASON_REQUESTED);
   } else {
     log_debug(LD_CONTROL, "Circuit %s has active streams, not killing due to IfUnused flag", circ_id);
   }
