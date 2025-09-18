@@ -47,6 +47,7 @@
 #include "core/or/cpath_build_state_st.h"
 #include "core/or/entry_connection_st.h"
 #include "core/or/origin_circuit_st.h"
+#include "core/or/or_circuit_st.h"
 #include "core/or/socks_request_st.h"
 #include "feature/control/control_cmd_args_st.h"
 #include "feature/control/control_connection_st.h"
