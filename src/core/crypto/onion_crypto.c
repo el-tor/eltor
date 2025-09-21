@@ -6,7 +6,17 @@
 
 /**
  * \file onion_crypto.c
- * \brief Functions to handle different kinds of circuit extension crypto.
+ * \brief Functions to handle different kinds of cironion_skin_server_handshake(int type,
+                      const uint8_t *onion_skin, size_t onionskin_len,
+                      const server_onion_keys_t *keys,
+                      const circuit_params_t *ns_params,
+                      uint8_t *reply_out,
+                      size_t reply_out_maxlen,
+                      uint8_t *keys_out, size_t key_out_len,
+                      uint8_t *rend_nonce_out,
+                      circuit_params_t *negotiated_params_out,
+                      uint64_t *p_circuit_id,
+                      uint64_t *n_circuit_id)sion crypto.
  *
  * In this module, we provide a set of abstractions to create a uniform
  * interface over the three circuit extension handshakes that Tor has used
@@ -330,7 +340,8 @@ onion_skin_server_handshake(int type,
                       uint8_t *keys_out, size_t keys_out_len,
                       uint8_t *rend_nonce_out,
                       circuit_params_t *params_out,
-                      uint64_t *global_id)
+                      uint64_t *p_circuit_id,
+                      uint64_t *n_circuit_id)
 {
   int r = -1;
   memset(params_out, 0, sizeof(*params_out));
@@ -402,7 +413,7 @@ onion_skin_server_handshake(int type,
                onion_skin, onionskin_len,
                NTOR3_VERIFICATION_ARGS,
                &client_msg, &client_msg_len,
-               &state, global_id) < 0) {
+               &state, p_circuit_id, n_circuit_id) < 0) {
       return -1;
     }
 

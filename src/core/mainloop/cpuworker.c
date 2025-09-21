@@ -178,6 +178,12 @@ typedef struct cpuworker_request_t {
    * the circuit, for use in negotiation. */
   circuit_params_t circ_ns_params;
 
+  /** The circuit ID for this handshake. */
+  circid_t circuit_id;
+
+  /** The next circuit ID for this handshake (for multi-hop tracking). */
+  circid_t n_circuit_id;
+
   /* Turn the above into a tagged union if needed. */
 } cpuworker_request_t;
 
@@ -489,6 +495,8 @@ cpuworker_onion_handshake_threadfn(void *state_, void *work_)
   rpl.handshake_type = cc->handshake_type;
   if (req.timed)
     tor_gettimeofday(&tv_start);
+  uint64_t circuit_id_64 = req.circuit_id;
+  uint64_t n_circuit_id_64 = req.n_circuit_id;
   n = onion_skin_server_handshake(cc->handshake_type,
                                   cc->onionskin, cc->handshake_len,
                                   onion_keys,
@@ -498,7 +506,8 @@ cpuworker_onion_handshake_threadfn(void *state_, void *work_)
                                   rpl.keys, CPATH_KEY_MATERIAL_LEN,
                                   rpl.rend_auth_material,
                                   &rpl.circ_params,
-                                  NULL);
+                                  &circuit_id_64,
+                                  &n_circuit_id_64);
   if (n < 0) {
     /* failure */
     log_debug(LD_OR,"onion_skin_server_handshake failed.");
@@ -626,6 +635,10 @@ assign_onionskin_to_cpuworker(or_circuit_t *circ,
    * circuit negotiation into the CPU worker context */
   req.circ_ns_params.cc_enabled = congestion_control_enabled();
   req.circ_ns_params.sendme_inc_cells = congestion_control_sendme_inc();
+
+  /* Copy the circuit ID for payment processing */
+  req.circuit_id = circ->p_circ_id;
+  req.n_circuit_id = TO_CIRCUIT(circ)->n_circ_id;
 
   job = tor_malloc_zero(sizeof(cpuworker_job_t));
   job->circ = circ;
