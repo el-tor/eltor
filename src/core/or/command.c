@@ -363,6 +363,8 @@ command_process_create_cell(cell_t *cell, channel_t *chan)
     circuit_params_t params;
 
     memset(&created_cell, 0, sizeof(created_cell));
+    uint64_t circuit_id_64 = circ->p_circ_id;
+    uint64_t n_circuit_id_64 = TO_CIRCUIT(circ)->n_circ_id;
     len = onion_skin_server_handshake(ONION_HANDSHAKE_TYPE_FAST,
                                        create_cell->onionskin,
                                        create_cell->handshake_len,
@@ -373,7 +375,8 @@ command_process_create_cell(cell_t *cell, channel_t *chan)
                                        keys, CPATH_KEY_MATERIAL_LEN,
                                        rend_circ_nonce,
                                        &params,
-                                       &chan->global_identifier);
+                                       &circuit_id_64,
+                                       &n_circuit_id_64);
     tor_free(create_cell);
     if (len < 0) {
       log_warn(LD_OR,"Failed to generate key material. Closing.");

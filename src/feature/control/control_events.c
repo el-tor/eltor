@@ -2290,10 +2290,17 @@ control_events_free_all(void)
 }
 
 /** Called when a payment id hash is received in an onion cell */
-int control_event_payment_id_hash_received(char *payment_id_hash, uint64_t *global_id)
+int control_event_payment_id_hash_received(char *payment_id_hash, uint64_t *p_circuit_id, uint64_t *n_circuit_id)
 {
-  log_info(LD_APP, "LOG EVENT_PAYMENT_ID_HASH_RECEIVED %u %s", global_id ? (const char*)global_id : "UNKNOWN", payment_id_hash);
-  send_control_event(EVENT_PAYMENT_ID_HASH_RECEIVED, "650 EVENT_PAYMENT_ID_HASH_RECEIVED %llu %s\r\n", global_id ? *global_id : 0, payment_id_hash);
+  log_info(LD_APP, "LOG EVENT_PAYMENT_ID_HASH_RECEIVED P_CircID:%llu N_CircID:%llu PayHash:%s", 
+           p_circuit_id ? *p_circuit_id : 0ULL, 
+           n_circuit_id ? *n_circuit_id : 0ULL, 
+           payment_id_hash);
+  send_control_event(EVENT_PAYMENT_ID_HASH_RECEIVED, 
+                     "650 EVENT_PAYMENT_ID_HASH_RECEIVED P_CIRC_ID=%llu N_CIRC_ID=%llu PAYMENT_HASH=%s\r\n", 
+                     p_circuit_id ? *p_circuit_id : 0ULL, 
+                     n_circuit_id ? *n_circuit_id : 0ULL, 
+                     payment_id_hash);
   // Force immediate flush
   queued_events_flush_all(1);  // The '1' parameter means "force immediate send"  
   return 0;

@@ -96,6 +96,8 @@ test_ntor3_testvecs(void *arg)
                   relay_keypair_b.pubkey.public_key,
                   &relay_keypair_b);
 
+  uint64_t p_circ_id = 12345;
+  uint64_t n_circ_id = 67890;
   int r = onion_skin_ntor3_server_handshake_part1(
                     private_keys,
                     &client_keypair_x,
@@ -107,7 +109,8 @@ test_ntor3_testvecs(void *arg)
                     &cm,
                     &cm_len,
                     &relay_state,
-                   "");
+                    &p_circ_id,
+                    &n_circ_id);
   tt_int_op(r, OP_EQ, 0);
   tt_int_op(cm_len, OP_EQ, sizeof(client_message));
   tt_mem_op(cm, OP_EQ, client_message, cm_len);
@@ -220,12 +223,15 @@ run_full_handshake(circuit_params_t *serv_params_in,
 
   server_keys.junk_keypair = &handshake_state.u.ntor3->client_keypair;
 
+  uint64_t test_p_circ = 999;
+  uint64_t test_n_circ = 888;
   reply_len = onion_skin_server_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,
                               onionskin, onionskin_len,
                               &server_keys, serv_params_in,
                               serv_reply, sizeof(serv_reply),
                               serv_keys, sizeof(serv_keys),
-                              rend_nonce, serv_params_out, "");
+                              rend_nonce, serv_params_out, 
+                              &test_p_circ, &test_n_circ);
   tt_int_op(reply_len, OP_NE, -1);
 
   tt_int_op(onion_skin_client_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,

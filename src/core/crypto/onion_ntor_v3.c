@@ -44,6 +44,7 @@
 
 #include <ctype.h> 
 #include <string.h>
+#include <inttypes.h>
 
 /* Parameters used to keep the outputs of this handshake from colliding with
  * others.  These are defined in the specification. */
@@ -489,7 +490,8 @@ onion_skin_ntor3_server_handshake_part1(
                 uint8_t **client_message_out,
                 size_t *client_message_len_out,
                 ntor3_server_handshake_state_t **state_out,
-                uint64_t *global_id)
+                uint64_t *p_circuit_id,
+                uint64_t *n_circuit_id)
 {
   *client_message_out = NULL;
   *client_message_len_out = 0;
@@ -625,9 +627,11 @@ onion_skin_ntor3_server_handshake_part1(
                                         prefixPayHash, strlen(prefixPayHash));
 
     if (foundPayHash) {
-      log_notice(LD_CIRC, "ELTOR RELAY: Found Payment hash: %s", foundPayHash); 
-
       size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
+      log_notice(LD_CIRC, "ELTOR RELAY: Found Payment hash: %.*s", 
+                 (int)MIN(32, *client_message_len_out - indexPayHash - strlen(prefixPayHash)),
+                 (const char *)foundPayHash); 
+
       log_notice(LD_CIRC, "ELTOR RELAY: Found payment hash prefix at offset %zu", indexPayHash);
       
       // Extract and process the payment hash
@@ -637,10 +641,11 @@ onion_skin_ntor3_server_handshake_part1(
         memcpy(payhash, (const char*)*client_message_out + indexPayHash + strlen(prefixPayHash), remaining);
         payhash[remaining] = '\0';
 
-        // TODO - figure out how to get the circuit ID
-
-        log_notice(LD_CIRC, "ELTOR RELAY: Payment hash: %s", payhash); 
-        control_event_payment_id_hash_received(payhash, &global_id);
+        log_notice(LD_CIRC, "ELTOR RELAY: Payment hash: %s, P_CircuitID: %"PRIu64", N_CircuitID: %"PRIu64, 
+                   payhash, 
+                   p_circuit_id ? *p_circuit_id : 0,
+                   n_circuit_id ? *n_circuit_id : 0);
+        control_event_payment_id_hash_received(payhash, p_circuit_id, n_circuit_id);
 
         tor_free(payhash);
       }

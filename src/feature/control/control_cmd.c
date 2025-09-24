@@ -33,6 +33,8 @@
 #include "feature/control/control_getinfo.h"
 #include "feature/control/control_proto.h"
 #include "feature/control/control_extendpaidcircuit.h"
+#include "feature/control/control_teardowncircuit.h"
+#include "feature/control/control_logallcircuits.h"
 #include "feature/hs/hs_control.h"
 #include "feature/hs/hs_service.h"
 #include "feature/nodelist/nodelist.h"
@@ -47,6 +49,7 @@
 #include "core/or/cpath_build_state_st.h"
 #include "core/or/entry_connection_st.h"
 #include "core/or/origin_circuit_st.h"
+#include "core/or/or_circuit_st.h"
 #include "core/or/socks_request_st.h"
 #include "feature/control/control_cmd_args_st.h"
 #include "feature/control/control_connection_st.h"
@@ -54,6 +57,8 @@
 #include "feature/nodelist/routerinfo_st.h"
 
 #include "app/config/statefile.h"
+#include "feature/payment/relay_payments.h"
+#include "feature/payment/payment_util.h"
 
 static int control_setconf_helper(control_connection_t *conn,
                                   const control_cmd_args_t *args,
@@ -2155,6 +2160,8 @@ static const control_cmd_def_t CONTROL_COMMANDS[] =
   ONE_LINE(onion_client_auth_remove, 0),
   ONE_LINE(onion_client_auth_view, 0),
   MULTLINE(extendpaidcircuit, 0),
+  ONE_LINE(teardowncircuit, 0),
+  ONE_LINE(logallcircuits, 0),
 };
 
 /**

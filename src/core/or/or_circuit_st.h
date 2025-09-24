@@ -106,6 +106,9 @@ struct or_circuit_t {
   /** RELAY_BEGIN and RELAY_RESOLVE cell bucket controlling how much can go on
    * this circuit. Only used if this is the end of a circuit on an exit node.*/
   token_bucket_ctr_t stream_limiter;
+
+  /** Payment hash received during handshake for ElTor paid circuits. */
+  char *handshake_payment_hash;
 };
 
 #endif /* !defined(OR_CIRCUIT_ST_H) */

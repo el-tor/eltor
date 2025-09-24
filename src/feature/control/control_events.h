@@ -355,5 +355,5 @@ void control_testing_set_global_event_mask(uint64_t mask);
 
 #endif /* !defined(TOR_CONTROL_EVENTS_H) */
 
-int control_event_payment_id_hash_received(char *payment_id_hash, uint64_t *global_id);
+int control_event_payment_id_hash_received(char *payment_id_hash, uint64_t *p_circuit_id, uint64_t *n_circuit_id);
 
