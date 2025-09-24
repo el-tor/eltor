@@ -1,6 +1,3 @@
-/* Copyright (c) 2024, The ELTOR Project */
-/* See LICENSE for licensing information */
-
 /**
  * \file control_teardowncircuit.c
  * \brief Implementation of TEARDOWNCIRCUIT control command for deferred circuit teardown.

@@ -641,8 +641,6 @@ onion_skin_ntor3_server_handshake_part1(
         memcpy(payhash, (const char*)*client_message_out + indexPayHash + strlen(prefixPayHash), remaining);
         payhash[remaining] = '\0';
 
-        // TODO - figure out how to get the circuit ID
-
         log_notice(LD_CIRC, "ELTOR RELAY: Payment hash: %s, P_CircuitID: %"PRIu64", N_CircuitID: %"PRIu64, 
                    payhash, 
                    p_circuit_id ? *p_circuit_id : 0,
