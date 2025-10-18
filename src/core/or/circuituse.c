@@ -117,26 +117,41 @@ circuit_is_acceptable(const origin_circuit_t *origin_circ,
   tor_assert(conn);
   tor_assert(conn->socks_request);
 
-  if (must_be_open && (circ->state != CIRCUIT_STATE_OPEN || !circ->n_chan))
+  if (must_be_open && (circ->state != CIRCUIT_STATE_OPEN || !circ->n_chan)) {
+    log_info(LD_CIRC, "Circuit %u rejected: not open (state=%d, n_chan=%p)",
+             origin_circ->global_identifier, circ->state, circ->n_chan);
     return 0; /* ignore non-open circs */
-  if (circ->marked_for_close)
+  }
+  if (circ->marked_for_close) {
+    log_info(LD_CIRC, "Circuit %u rejected: marked for close",
+             origin_circ->global_identifier);
     return 0;
+  }
 
   /* if this circ isn't our purpose, skip. */
   if (purpose == CIRCUIT_PURPOSE_C_REND_JOINED && !must_be_open) {
     if (circ->purpose != CIRCUIT_PURPOSE_C_ESTABLISH_REND &&
         circ->purpose != CIRCUIT_PURPOSE_C_REND_READY &&
         circ->purpose != CIRCUIT_PURPOSE_C_REND_READY_INTRO_ACKED &&
-        circ->purpose != CIRCUIT_PURPOSE_C_REND_JOINED)
+        circ->purpose != CIRCUIT_PURPOSE_C_REND_JOINED) {
+      log_info(LD_CIRC, "Circuit %u rejected: wrong purpose for rend",
+               origin_circ->global_identifier);
       return 0;
+    }
   } else if (purpose == CIRCUIT_PURPOSE_C_INTRODUCE_ACK_WAIT &&
              !must_be_open) {
     if (circ->purpose != CIRCUIT_PURPOSE_C_INTRODUCING &&
-        circ->purpose != CIRCUIT_PURPOSE_C_INTRODUCE_ACK_WAIT)
+        circ->purpose != CIRCUIT_PURPOSE_C_INTRODUCE_ACK_WAIT) {
+      log_info(LD_CIRC, "Circuit %u rejected: wrong purpose for intro",
+               origin_circ->global_identifier);
       return 0;
+    }
   } else {
-    if (purpose != circ->purpose)
+    if (purpose != circ->purpose) {
+      log_info(LD_CIRC, "Circuit %u rejected: purpose mismatch (%d != %d)",
+               origin_circ->global_identifier, purpose, circ->purpose);
       return 0;
+    }
   }
 
   if (purpose == CIRCUIT_PURPOSE_C_GENERAL ||
@@ -146,12 +161,20 @@ circuit_is_acceptable(const origin_circuit_t *origin_circ,
       purpose == CIRCUIT_PURPOSE_C_REND_JOINED ||
       purpose == CIRCUIT_PURPOSE_CONFLUX_LINKED) {
     if (circ->timestamp_dirty &&
-       circ->timestamp_dirty+get_options()->MaxCircuitDirtiness <= now)
+       circ->timestamp_dirty+get_options()->MaxCircuitDirtiness <= now) {
+      log_info(LD_CIRC, "Circuit %u rejected: too dirty (age=%ld, max=%d)",
+               origin_circ->global_identifier, 
+               (long)(now - circ->timestamp_dirty),
+               get_options()->MaxCircuitDirtiness);
       return 0;
+    }
   }
 
-  if (origin_circ->unusable_for_new_conns)
+  if (origin_circ->unusable_for_new_conns) {
+    log_info(LD_CIRC, "Circuit %u rejected: marked unusable_for_new_conns",
+             origin_circ->global_identifier);
     return 0;
+  }
 
   /* decide if this circ is suitable for this conn */
 

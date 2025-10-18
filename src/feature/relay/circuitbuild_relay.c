@@ -463,9 +463,9 @@ circuit_extend(struct cell_t *cell, struct circuit_t *circ)
   // Check to to see if a payment id hash was passed
   int has_payment_id_hash = payment_util_has_payment_id_hash(cell->payload, sizeof(cell->payload));
   if (has_payment_id_hash == 0) {
-    log_notice(LD_CIRC, "ELTOR RELAY %s: No payment hash found in extend cell - ALLOWING FOR TESTING",
+    log_notice(LD_CIRC, "ELTOR RELAY %s: No payment hash found in extend cell - rejecting circuit",
               get_options()->Nickname);
-    // TEMPORARILY DISABLED FOR TESTING - return -1;
+    return -1;
   } else {
     log_notice(LD_CIRC, "ELTOR RELAY %s: Successfully found payment hash in extend cell",
               get_options()->Nickname);
