@@ -168,10 +168,10 @@ dos_conn_defense_type_t dos_conn_addr_get_defense_type(const tor_addr_t *addr);
 #define DOS_STREAM_ENABLED_DEFAULT 0
 /* DoSStreamCreationDefenseType maps to the dos_stream_defense_type_t enum */
 #define DOS_STREAM_DEFENSE_TYPE_DEFAULT DOS_STREAM_DEFENSE_REFUSE_STREAM
-/* DosStreamCreationRate is 100 per seconds. */
-#define DOS_STREAM_RATE_DEFAULT 100
-/* DosStreamCreationBurst default. */
-#define DOS_STREAM_BURST_DEFAULT 300
+/* DosStreamCreationRate is 1000 per seconds. ELTOR: Increased for paid circuits */
+#define DOS_STREAM_RATE_DEFAULT 1000
+/* DosStreamCreationBurst default. ELTOR: Increased for paid circuits */
+#define DOS_STREAM_BURST_DEFAULT 5000
 
 /* Type of defense that we can use for the stream creation DoS mitigation. */
 typedef enum dos_stream_defense_type_t {

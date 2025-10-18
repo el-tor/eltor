@@ -866,6 +866,8 @@ dos_stream_new_begin_or_resolve_cell(or_circuit_t *circ)
   /* if defense type is DOS_STREAM_DEFENSE_NONE but DoSStreamEnabled is true,
    * we count offending cells as rejected, despite them being actually
    * accepted. */
+  log_info(LD_DOS, "ELTOR: Stream limit exceeded! bucket=0, defense_type=%d",
+           dos_stream_defense_type);
   ++stream_num_rejected;
   return dos_stream_defense_type;
 }
@@ -874,6 +876,8 @@ dos_stream_new_begin_or_resolve_cell(or_circuit_t *circ)
 void
 dos_stream_init_circ_tbf(or_circuit_t *circ)
 {
+  log_info(LD_DOS, "ELTOR: Initializing stream limiter with rate=%u, burst=%u",
+           dos_stream_rate, dos_stream_burst);
   token_bucket_ctr_init(&circ->stream_limiter, dos_stream_rate,
                         dos_stream_burst,
                         (uint32_t) monotime_coarse_absolute_sec());
