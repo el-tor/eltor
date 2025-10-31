@@ -45,6 +45,8 @@ typedef struct hs_cell_introduce1_data_t {
   unsigned int cc_enabled : 1;
   /** PoW solution (Can be NULL if disabled). */
   const hs_pow_solution_t *pow_solution;
+  /** Payment hash for paid hidden services (Can be NULL if not paid). */
+  const uint8_t *payment_hash;
 } hs_cell_introduce1_data_t;
 
 /** Introduction data needed to launch a rendezvous circuit. This is set after
@@ -62,6 +64,10 @@ typedef struct hs_cell_intro_rdv_data_t {
   unsigned int cc_enabled : 1;
   /** PoW effort. */
   uint32_t pow_effort;
+  /** Payment hash for paid hidden services (32 bytes). */
+  uint8_t payment_hash[32];
+  /** Whether payment_hash is present. */
+  unsigned int has_payment_hash : 1;
 } hs_cell_intro_rdv_data_t;
 
 /** This data structure contains data that we need to parse an INTRODUCE2 cell

@@ -82,6 +82,8 @@ struct trn_cell_introduce_encrypted {
 const TRUNNEL_EXT_TYPE_CC_REQUEST = 0x01;
 /* Cell extension type PoW. */
 const TRUNNEL_EXT_TYPE_POW = 0x02;
+/* Cell extension type Payment Hash. */
+const TRUNNEL_EXT_TYPE_PAYMENT_HASH = 0x03;
 
 /*
  * PoW Solution Extension. Proposal 327.
@@ -109,4 +111,15 @@ struct trn_cell_extension_pow {
 
   /* Solution. */
   u8 pow_solution[TRUNNEL_POW_SOLUTION_LEN];
+};
+
+/*
+ * Payment Hash Extension for Paid Hidden Services.
+ */
+
+const TRUNNEL_PAYMENT_HASH_LEN = 32;
+
+struct trn_cell_extension_payment {
+  /* Payment hash (SHA-256 hash of the Lightning payment preimage) */
+  u8 payment_hash[TRUNNEL_PAYMENT_HASH_LEN];
 };

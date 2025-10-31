@@ -175,6 +175,9 @@ typedef struct hs_desc_encrypted_data_t {
   /** PoW parameters. If NULL, it is not present. */
   hs_pow_desc_params_t *pow_params;
 
+  /** BOLT12 Lightning Network offer for paid access. If NULL, service is free. */
+  char *bolt12_offer;
+
   /** A list of intro points. Contains hs_desc_intro_point_t objects. */
   smartlist_t *intro_points;
 
