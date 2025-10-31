@@ -29,6 +29,7 @@
 #include "feature/hs/hs_ident.h"
 #include "feature/hs/hs_metrics.h"
 #include "feature/hs/hs_service.h"
+#include "feature/payment/payment_util.h"
 #include "feature/nodelist/describe.h"
 #include "feature/nodelist/nodelist.h"
 #include "feature/stats/rephist.h"
@@ -1339,6 +1340,40 @@ hs_circ_handle_introduce2(const hs_service_t *service,
     goto done;
   }
 
+  /* Verify payment if service requires it. */
+  if (service->desc_current && service->desc_current->desc &&
+      service->desc_current->desc->encrypted_data.bolt12_offer &&
+      service->desc_current->desc->encrypted_data.bolt12_offer[0] != '\0') {
+    /* Service requires payment */
+    if (!data.rdv_data.has_payment_hash) {
+      log_warn(LD_REND, "Service requires payment but INTRODUCE2 cell "
+                        "does not contain payment hash. Rejecting.");
+      hs_metrics_reject_intro_req(service,
+                                  HS_METRICS_ERR_INTRO_REQ_INTRODUCE2);
+      goto done;
+    }
+
+    /* Verify the payment hash with the Lightning node.
+     * For now, we'll use a placeholder verification that checks if
+     * payment_util_verify_preimage would work. In a real implementation,
+     * this would query the Lightning node to check if an invoice with
+     * this payment_hash has been paid. */
+    log_info(LD_REND, "Verifying payment hash for paid hidden service");
+
+    /* TODO: Implement actual Lightning invoice verification
+     * This would involve:
+     * 1. Query the Lightning node for invoices matching this payment_hash
+     * 2. Verify the invoice has been paid
+     * 3. Check the payment amount matches the service's requirements
+     * For now, we accept all payment hashes as valid to allow testing.
+     */
+    log_info(LD_REND, "Payment hash verification placeholder - accepting request");
+  } else if (data.rdv_data.has_payment_hash) {
+    /* Client sent payment but service doesn't require it - log it but accept */
+    log_info(LD_REND, "Received payment hash but service does not require "
+                      "payment. Accepting request anyway.");
+  }
+
   /* Check whether we've seen this REND_COOKIE before to detect repeats. */
   if (replaycache_add_test_and_elapsed(
            service->state.replay_cache_rend_cookie,
@@ -1437,7 +1472,8 @@ hs_circ_send_introduce1(origin_circuit_t *intro_circ,
                         origin_circuit_t *rend_circ,
                         const hs_desc_intro_point_t *ip,
                         const hs_subcredential_t *subcredential,
-                        const hs_pow_solution_t *pow_solution)
+                        const hs_pow_solution_t *pow_solution,
+                        const uint8_t *payment_hash)
 {
   int ret = -1;
   ssize_t payload_len;
@@ -1473,6 +1509,9 @@ hs_circ_send_introduce1(origin_circuit_t *intro_circ,
 
   /* Set the PoW solution if any. */
   intro1_data.pow_solution = pow_solution;
+
+  /* Set the payment hash if any (for paid hidden services). */
+  intro1_data.payment_hash = payment_hash;
 
   /* If the rend circ was set up for congestion control, add that to the
    * intro data, to signal it in an extension */

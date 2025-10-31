@@ -98,6 +98,7 @@
 #define str_intro_point_start "\n" str_intro_point " "
 #define str_flow_control "flow-control"
 #define str_pow_params "pow-params"
+#define str_bolt12_offer "bolt12-offer"
 /* Constant string value for the construction to encrypt the encrypted data
  * section. */
 #define str_enc_const_superencryption "hsdir-superencrypted-data"
@@ -156,6 +157,7 @@ static token_rule_t hs_desc_encrypted_v3_token_table[] = {
   T01(str_single_onion, R3_SINGLE_ONION_SERVICE, ARGS, NO_OBJ),
   T01(str_flow_control, R3_FLOW_CONTROL, GE(2), NO_OBJ),
   T01(str_pow_params, R3_POW_PARAMS, GE(4), NO_OBJ),
+  T01(str_bolt12_offer, R3_BOLT12_OFFER, GE(1), NO_OBJ),
   END_OF_TABLE
 };
 
@@ -821,6 +823,12 @@ get_inner_encrypted_layer_plaintext(const hs_descriptor_t *desc)
                 desc->encrypted_data.pow_params->suggested_effort,
                 time_buf);
       tor_free(seed_b64);
+    }
+
+    /* Add BOLT12 offer if present. */
+    if (desc->encrypted_data.bolt12_offer) {
+      smartlist_add_asprintf(lines, "%s %s\n", str_bolt12_offer,
+                             desc->encrypted_data.bolt12_offer);
     }
   }
 
@@ -2485,6 +2493,14 @@ desc_decode_encrypted_v3(const hs_descriptor_t *desc,
     desc_encrypted_out->pow_params = pow_params;
   }
 
+  /* Get BOLT12 offer if any. */
+  tok = find_opt_by_keyword(tokens, R3_BOLT12_OFFER);
+  if (tok) {
+    tor_assert(tok->n_args >= 1);
+    desc_encrypted_out->bolt12_offer = tor_strdup(tok->args[0]);
+    log_info(LD_REND, "Service descriptor contains BOLT12 offer for payment");
+  }
+
   /* Initialize the descriptor's introduction point list before we start
    * decoding. Having 0 intro point is valid. Then decode them all. */
   desc_encrypted_out->intro_points = smartlist_new();
@@ -2904,6 +2920,7 @@ hs_desc_encrypted_data_free_contents(hs_desc_encrypted_data_t *desc)
   }
   tor_free(desc->flow_control_pv);
   tor_free(desc->pow_params);
+  tor_free(desc->bolt12_offer);
   memwipe(desc, 0, sizeof(*desc));
 }
 
