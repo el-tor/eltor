@@ -624,7 +624,8 @@ send_introduce1(origin_circuit_t *intro_circ,
    * 3. Pay the invoice
    * 4. Extract the payment_hash from the paid invoice
    */
-  if (desc && desc->encrypted_data.bolt12_offer) {
+  if (desc && desc->encrypted_data.bolt12_offer && 
+      desc->encrypted_data.bolt12_offer[0] != '\0') {
     log_info(LD_REND, "Service requires payment via BOLT12 offer: %s",
              desc->encrypted_data.bolt12_offer);
     /* TODO: Implement actual Lightning payment flow

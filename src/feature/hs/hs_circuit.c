@@ -1341,8 +1341,9 @@ hs_circ_handle_introduce2(const hs_service_t *service,
   }
 
   /* Verify payment if service requires it. */
-  if (service->desc_current &&
-      service->desc_current->desc->encrypted_data.bolt12_offer) {
+  if (service->desc_current && service->desc_current->desc &&
+      service->desc_current->desc->encrypted_data.bolt12_offer &&
+      service->desc_current->desc->encrypted_data.bolt12_offer[0] != '\0') {
     /* Service requires payment */
     if (!data.rdv_data.has_payment_hash) {
       log_warn(LD_REND, "Service requires payment but INTRODUCE2 cell "
