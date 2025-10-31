@@ -388,9 +388,6 @@ trn_cell_extension_pow_parse(trn_cell_extension_pow_t **output, const uint8_t *i
   }
   return result;
 }
-trn_cell_introduce1_t *
-trn_cell_introduce1_new(void)
-/* Payment extension implementation - insert before line 392 of cell_introduce1.c */
 
 trn_cell_extension_payment_t *
 trn_cell_extension_payment_new(void)
@@ -475,8 +472,6 @@ trn_cell_extension_payment_encoded_len(const trn_cell_extension_payment_t *obj)
   if (NULL != trn_cell_extension_payment_check(obj))
      return -1;
 
-
-  /* Length of u8 payment_hash[TRUNNEL_PAYMENT_HASH_LEN] */
   result += TRUNNEL_PAYMENT_HASH_LEN;
   return result;
 }
@@ -507,13 +502,11 @@ trn_cell_extension_payment_encode(uint8_t *output, const size_t avail, const trn
   trunnel_assert(encoded_len >= 0);
 #endif
 
-  /* Encode u8 payment_hash[TRUNNEL_PAYMENT_HASH_LEN] */
   trunnel_assert(written <= avail);
   if (avail - written < TRUNNEL_PAYMENT_HASH_LEN)
     goto truncated;
   memcpy(ptr, obj->payment_hash, TRUNNEL_PAYMENT_HASH_LEN);
   written += TRUNNEL_PAYMENT_HASH_LEN; ptr += TRUNNEL_PAYMENT_HASH_LEN;
-
 
   trunnel_assert(ptr == output + written);
 #ifdef TRUNNEL_CHECK_ENCODED_LEN
@@ -521,7 +514,6 @@ trn_cell_extension_payment_encode(uint8_t *output, const size_t avail, const trn
     trunnel_assert(encoded_len >= 0);
     trunnel_assert((size_t)encoded_len == written);
   }
-
 #endif
 
   return written;
@@ -550,7 +542,6 @@ trn_cell_extension_payment_parse(trn_cell_extension_payment_t **output, const ui
   if (NULL == obj)
     return -1;
 
-  /* Parse u8 payment_hash[TRUNNEL_PAYMENT_HASH_LEN] */
   if (remaining < TRUNNEL_PAYMENT_HASH_LEN)
     goto truncated;
   memcpy(obj->payment_hash, ptr, TRUNNEL_PAYMENT_HASH_LEN);
@@ -567,6 +558,8 @@ trn_cell_extension_payment_parse(trn_cell_extension_payment_t **output, const ui
   trn_cell_extension_payment_free(obj);
   return -1;
 }
+trn_cell_introduce1_t *
+trn_cell_introduce1_new(void)
 {
   trn_cell_introduce1_t *val = trunnel_calloc(1, sizeof(trn_cell_introduce1_t));
   if (NULL == val)

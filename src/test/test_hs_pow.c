@@ -230,7 +230,8 @@ test_hs_pow_unsolicited(void *arg)
 
     retval = hs_circ_send_introduce1(tsvc->intro_circ, tsvc->rend_circ,
                                      tsvc->desc_ip, &tsvc->subcred,
-                                     test_variant == 0 ? &solution : NULL);
+                                     test_variant == 0 ? &solution : NULL,
+                                     NULL);
 
     tt_int_op(retval, OP_EQ, 0);
     tt_assert(!fast_mem_is_zero((const char*)relay_payload,
@@ -408,7 +409,7 @@ test_hs_pow_vectors(void *arg)
 
     retval = hs_circ_send_introduce1(tsvc->intro_circ, tsvc->rend_circ,
                                      tsvc->desc_ip, &tsvc->subcred,
-                                     &solution);
+                                     &solution, NULL);
 
     tt_int_op(retval, OP_EQ, 0);
     tt_assert(!fast_mem_is_zero((const char*)relay_payload,
