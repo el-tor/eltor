@@ -615,9 +615,30 @@ send_introduce1(origin_circuit_t *intro_circ,
   const ed25519_public_key_t *service_identity_pk =
     &intro_circ->hs_ident->identity_pk;
 
+  const uint8_t *payment_hash = NULL;
+  /* TODO: Check if descriptor has BOLT12 offer and if so, generate payment.
+   * For now, we'll use a placeholder payment hash if the descriptor requires
+   * payment. In a real implementation, this would:
+   * 1. Extract the BOLT12 offer from desc->encrypted_data.bolt12_offer
+   * 2. Request an invoice from the Lightning node
+   * 3. Pay the invoice
+   * 4. Extract the payment_hash from the paid invoice
+   */
+  if (desc && desc->encrypted_data.bolt12_offer) {
+    log_info(LD_REND, "Service requires payment via BOLT12 offer: %s",
+             desc->encrypted_data.bolt12_offer);
+    /* TODO: Implement actual Lightning payment flow
+     * For now, we'll log that payment is required but proceed without
+     * payment. In production, this should block until payment is made.
+     */
+    log_warn(LD_REND, "Payment required but Lightning integration not yet "
+                      "implemented. Connection will likely be rejected.");
+  }
+
   /* Send the INTRODUCE1 cell. */
   if (hs_circ_send_introduce1(intro_circ, rend_circ, ip,
-                              &desc->subcredential, pow_solution) < 0) {
+                              &desc->subcredential, pow_solution,
+                              payment_hash) < 0) {
     if (TO_CIRCUIT(intro_circ)->marked_for_close) {
       /* If the introduction circuit was closed, we were unable to send the
        * cell for some reasons. In any case, the intro circuit has to be

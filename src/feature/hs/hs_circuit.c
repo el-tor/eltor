@@ -1471,7 +1471,8 @@ hs_circ_send_introduce1(origin_circuit_t *intro_circ,
                         origin_circuit_t *rend_circ,
                         const hs_desc_intro_point_t *ip,
                         const hs_subcredential_t *subcredential,
-                        const hs_pow_solution_t *pow_solution)
+                        const hs_pow_solution_t *pow_solution,
+                        const uint8_t *payment_hash)
 {
   int ret = -1;
   ssize_t payload_len;
@@ -1507,6 +1508,9 @@ hs_circ_send_introduce1(origin_circuit_t *intro_circ,
 
   /* Set the PoW solution if any. */
   intro1_data.pow_solution = pow_solution;
+
+  /* Set the payment hash if any (for paid hidden services). */
+  intro1_data.payment_hash = payment_hash;
 
   /* If the rend circ was set up for congestion control, add that to the
    * intro data, to signal it in an extension */
