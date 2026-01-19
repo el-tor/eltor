@@ -517,7 +517,7 @@ build_introduce_payment_extension(const uint8_t *payment_hash,
   /* Finally, encode field into the cell extension. */
   trn_extension_add_fields(extensions, field);
 
-  /* We've just add an extension field to the cell extensions so increment the
+  /* We've just added an extension field to the cell extensions so increment the
    * total number. */
   trn_extension_set_num(extensions, trn_extension_get_num(extensions) + 1);
 

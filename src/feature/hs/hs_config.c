@@ -423,7 +423,15 @@ config_service_v3(const hs_opts_t *hs_opts,
   config->has_payment_enabled = hs_opts->HiddenServicePaymentEnabled;
   if (config->has_payment_enabled) {
     if (hs_opts->HiddenServicePaymentOffer) {
-      config->payment_offer = tor_strdup(hs_opts->HiddenServicePaymentOffer);
+      /* Basic BOLT12 offer format validation - must start with 'lno1' */
+      const char *offer = hs_opts->HiddenServicePaymentOffer;
+      size_t offer_len = strlen(offer);
+      if (offer_len < 4 || strncmp(offer, "lno1", 4) != 0) {
+        log_warn(LD_CONFIG, "HiddenServicePaymentOffer has invalid format "
+                            "(must be a valid BOLT12 offer starting with 'lno1').");
+        goto err;
+      }
+      config->payment_offer = tor_strdup(offer);
     } else {
       log_warn(LD_CONFIG, "HiddenServicePaymentEnabled set but "
                           "HiddenServicePaymentOffer not specified.");

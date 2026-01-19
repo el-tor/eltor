@@ -2506,14 +2506,20 @@ desc_decode_encrypted_v3(const hs_descriptor_t *desc,
   tok = find_opt_by_keyword(tokens, R3_PAYMENT_PARAMS);
   if (tok) {
     /* payment-params format: <bolt12_offer> [amount_sat] */
-    if (tok->n_args < 1) {
+    if (tok->n_args < 1 || tok->args[0] == NULL) {
       log_warn(LD_REND, "Service descriptor payment-params is malformed, "
                         "missing BOLT12 offer.");
       goto err;
     }
 
-    /* Validate BOLT12 offer length */
-    size_t offer_len = strlen(tok->args[0]);
+    /* Validate BOLT12 offer - basic format check for 'lno1' prefix */
+    const char *offer = tok->args[0];
+    size_t offer_len = strlen(offer);
+    if (offer_len < 4 || strncmp(offer, "lno1", 4) != 0) {
+      log_warn(LD_REND, "Service descriptor payment-params BOLT12 offer "
+                        "has invalid format (must start with 'lno1').");
+      goto err;
+    }
     if (offer_len > HS_DESC_PAYMENT_OFFER_MAX_LEN) {
       log_warn(LD_REND, "Service descriptor payment-params BOLT12 offer "
                         "is too long (%zu > %d).",
@@ -2523,7 +2529,7 @@ desc_decode_encrypted_v3(const hs_descriptor_t *desc,
 
     hs_payment_desc_params_t *payment_params =
       tor_malloc_zero(sizeof(hs_payment_desc_params_t));
-    payment_params->bolt12_offer = tor_strdup(tok->args[0]);
+    payment_params->bolt12_offer = tor_strdup(offer);
 
     /* Parse optional amount */
     if (tok->n_args >= 2) {
