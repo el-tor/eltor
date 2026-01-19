@@ -17,6 +17,9 @@
  * 3.2.2 of the specification). Below this value, the cell must be padded. */
 #define HS_CELL_INTRODUCE1_MIN_SIZE 246
 
+/** Length of a payment hash (SHA256). */
+#define HS_PAYMENT_HASH_LEN 32
+
 struct hs_subcredential_t;
 
 /** This data structure contains data that we need to build an INTRODUCE1 cell
@@ -68,7 +71,7 @@ typedef struct hs_cell_intro_rdv_data_t {
   /** Payment hash from the INTRODUCE2 cell, if the client included one.
    * This is a copy of the payment hash sent by the client for payment
    * verification. All zeros if no payment hash was included. */
-  uint8_t payment_hash[32];
+  uint8_t payment_hash[HS_PAYMENT_HASH_LEN];
   /** Whether a payment hash was present in the INTRODUCE2 cell. */
   unsigned int has_payment_hash : 1;
 } hs_cell_intro_rdv_data_t;

@@ -2540,7 +2540,7 @@ update_all_descriptors_payment_params(time_t now)
             tor_strdup(service->config.payment_offer);
         encrypted->payment_params->amount_sat = service->config.payment_amount;
         service_desc_schedule_upload(desc, now, 1);
-      } else {
+      } else if (service->config.payment_offer != NULL) {
         /* Check if we need to update the payment offer or amount. */
         int needs_update = 0;
         if (strcmp(encrypted->payment_params->bolt12_offer,
