@@ -274,6 +274,13 @@ typedef struct hs_service_config_t {
   /** If set, contains the Onion Balance master ed25519 public key (taken from
    * an .onion addresses) that this tor instance serves as backend. */
   smartlist_t *ob_master_pubkeys;
+
+  /** True iff this is a paid hidden service requiring Lightning payment. */
+  unsigned int has_payment_enabled : 1;
+  /** BOLT12 offer string for Lightning payments. */
+  char *payment_offer;
+  /** Payment amount in satoshis (0 means amount in offer or dynamic). */
+  uint64_t payment_amount;
 } hs_service_config_t;
 
 /** Service state. */

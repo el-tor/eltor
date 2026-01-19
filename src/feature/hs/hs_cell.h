@@ -45,6 +45,9 @@ typedef struct hs_cell_introduce1_data_t {
   unsigned int cc_enabled : 1;
   /** PoW solution (Can be NULL if disabled). */
   const hs_pow_solution_t *pow_solution;
+  /** Payment hash from Lightning invoice for paid hidden services.
+   * If non-NULL, must point to a TRUNNEL_PAYMENT_HASH_LEN (32) byte array. */
+  const uint8_t *payment_hash;
 } hs_cell_introduce1_data_t;
 
 /** Introduction data needed to launch a rendezvous circuit. This is set after
@@ -62,6 +65,12 @@ typedef struct hs_cell_intro_rdv_data_t {
   unsigned int cc_enabled : 1;
   /** PoW effort. */
   uint32_t pow_effort;
+  /** Payment hash from the INTRODUCE2 cell, if the client included one.
+   * This is a copy of the payment hash sent by the client for payment
+   * verification. All zeros if no payment hash was included. */
+  uint8_t payment_hash[32];
+  /** Whether a payment hash was present in the INTRODUCE2 cell. */
+  unsigned int has_payment_hash : 1;
 } hs_cell_intro_rdv_data_t;
 
 /** This data structure contains data that we need to parse an INTRODUCE2 cell

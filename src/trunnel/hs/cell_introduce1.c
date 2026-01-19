@@ -388,6 +388,184 @@ trn_cell_extension_pow_parse(trn_cell_extension_pow_t **output, const uint8_t *i
   }
   return result;
 }
+
+/* Payment extension functions */
+trn_cell_extension_payment_t *
+trn_cell_extension_payment_new(void)
+{
+  trn_cell_extension_payment_t *val = trunnel_calloc(1, sizeof(trn_cell_extension_payment_t));
+  if (NULL == val)
+    return NULL;
+  return val;
+}
+
+/** Release all storage held inside 'obj', but do not free 'obj'.
+ */
+static void
+trn_cell_extension_payment_clear(trn_cell_extension_payment_t *obj)
+{
+  (void) obj;
+}
+
+void
+trn_cell_extension_payment_free(trn_cell_extension_payment_t *obj)
+{
+  if (obj == NULL)
+    return;
+  trn_cell_extension_payment_clear(obj);
+  trunnel_memwipe(obj, sizeof(trn_cell_extension_payment_t));
+  trunnel_free_(obj);
+}
+
+size_t
+trn_cell_extension_payment_getlen_payment_hash(const trn_cell_extension_payment_t *inp)
+{
+  (void)inp;  return TRUNNEL_PAYMENT_HASH_LEN;
+}
+
+uint8_t
+trn_cell_extension_payment_get_payment_hash(trn_cell_extension_payment_t *inp, size_t idx)
+{
+  trunnel_assert(idx < TRUNNEL_PAYMENT_HASH_LEN);
+  return inp->payment_hash[idx];
+}
+
+uint8_t
+trn_cell_extension_payment_getconst_payment_hash(const trn_cell_extension_payment_t *inp, size_t idx)
+{
+  return trn_cell_extension_payment_get_payment_hash((trn_cell_extension_payment_t*)inp, idx);
+}
+int
+trn_cell_extension_payment_set_payment_hash(trn_cell_extension_payment_t *inp, size_t idx, uint8_t elt)
+{
+  trunnel_assert(idx < TRUNNEL_PAYMENT_HASH_LEN);
+  inp->payment_hash[idx] = elt;
+  return 0;
+}
+
+uint8_t *
+trn_cell_extension_payment_getarray_payment_hash(trn_cell_extension_payment_t *inp)
+{
+  return inp->payment_hash;
+}
+const uint8_t  *
+trn_cell_extension_payment_getconstarray_payment_hash(const trn_cell_extension_payment_t *inp)
+{
+  return (const uint8_t  *)trn_cell_extension_payment_getarray_payment_hash((trn_cell_extension_payment_t*)inp);
+}
+const char *
+trn_cell_extension_payment_check(const trn_cell_extension_payment_t *obj)
+{
+  if (obj == NULL)
+    return "Object was NULL";
+  if (obj->trunnel_error_code_)
+    return "A set function failed on this object";
+  return NULL;
+}
+
+int
+trn_cell_extension_payment_clear_errors(trn_cell_extension_payment_t *obj)
+{
+  int r = obj->trunnel_error_code_;
+  obj->trunnel_error_code_ = 0;
+  return r;
+}
+
+ssize_t
+trn_cell_extension_payment_encoded_len(const trn_cell_extension_payment_t *obj)
+{
+  ssize_t result = 0;
+
+  if (NULL != trn_cell_extension_payment_check(obj))
+     return -1;
+
+
+  /* Length of u8 payment_hash[TRUNNEL_PAYMENT_HASH_LEN] */
+  result += TRUNNEL_PAYMENT_HASH_LEN;
+  return result;
+}
+ssize_t
+trn_cell_extension_payment_encode(uint8_t *output, const size_t avail, const trn_cell_extension_payment_t *obj)
+{
+  ssize_t result = 0;
+  size_t written = 0;
+  uint8_t *ptr = output;
+  const char *msg;
+#ifdef TRUNNEL_CHECK_ENCODED_LEN
+  const ssize_t encoded_len = trn_cell_extension_payment_encoded_len(obj);
+#endif
+
+  if (NULL != (msg = trn_cell_extension_payment_check(obj)))
+    goto check_failed;
+
+#ifdef TRUNNEL_CHECK_ENCODED_LEN
+  trunnel_assert(encoded_len >= 0);
+#endif
+
+  /* Encode u8 payment_hash[TRUNNEL_PAYMENT_HASH_LEN] */
+  if (avail - written < TRUNNEL_PAYMENT_HASH_LEN)
+    goto truncated;
+  memcpy(ptr, obj->payment_hash, TRUNNEL_PAYMENT_HASH_LEN);
+  written += TRUNNEL_PAYMENT_HASH_LEN; ptr += TRUNNEL_PAYMENT_HASH_LEN;
+
+
+#ifdef TRUNNEL_CHECK_ENCODED_LEN
+  {
+    trunnel_assert((ssize_t)written == encoded_len);
+  }
+
+#endif
+
+  return written;
+
+ truncated:
+  result = -2;
+  goto fail;
+ check_failed:
+  (void)msg;
+  result = -1;
+  goto fail;
+ fail:
+  trunnel_assert(result < 0);
+  return result;
+}
+
+/** As trn_cell_extension_payment_parse(), but do not allocate the
+ * output object.
+ */
+static ssize_t
+trn_cell_extension_payment_parse_into(trn_cell_extension_payment_t *obj, const uint8_t *input, const size_t len_in)
+{
+  const uint8_t *ptr = input;
+  size_t remaining = len_in;
+  ssize_t result = 0;
+  (void)result;
+
+  /* Parse u8 payment_hash[TRUNNEL_PAYMENT_HASH_LEN] */
+  CHECK_REMAINING(TRUNNEL_PAYMENT_HASH_LEN, truncated);
+  memcpy(obj->payment_hash, ptr, TRUNNEL_PAYMENT_HASH_LEN);
+  remaining -= TRUNNEL_PAYMENT_HASH_LEN; ptr += TRUNNEL_PAYMENT_HASH_LEN;
+  return len_in - remaining;
+
+ truncated:
+  return -2;
+}
+
+ssize_t
+trn_cell_extension_payment_parse(trn_cell_extension_payment_t **output, const uint8_t *input, const size_t len_in)
+{
+  ssize_t result;
+  *output = trn_cell_extension_payment_new();
+  if (NULL == *output)
+    return -1;
+  result = trn_cell_extension_payment_parse_into(*output, input, len_in);
+  if (result < 0) {
+    trn_cell_extension_payment_free(*output);
+    *output = NULL;
+  }
+  return result;
+}
+
 trn_cell_introduce1_t *
 trn_cell_introduce1_new(void)
 {
