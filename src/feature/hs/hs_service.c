@@ -344,6 +344,7 @@ service_clear_config(hs_service_config_t *config)
                       tor_free(k));
     smartlist_free(config->ob_master_pubkeys);
   }
+  tor_free(config->payment_offer);
   memset(config, 0, sizeof(*config));
 }
 
@@ -2503,6 +2504,65 @@ update_all_descriptors_pow_params(time_t now)
   } FOR_EACH_SERVICE_END;
 }
 
+/** Update or initialise payment parameters in the descriptors if they do not
+ * reflect the current service configuration. */
+static void
+update_all_descriptors_payment_params(time_t now)
+{
+  FOR_EACH_SERVICE_BEGIN(service) {
+    hs_desc_encrypted_data_t *encrypted;
+
+    /* If payment is disabled but params exist, remove them. */
+    FOR_EACH_DESCRIPTOR_BEGIN(service, desc) {
+      if (!service->config.has_payment_enabled &&
+          desc->desc->encrypted_data.payment_params) {
+        log_info(LD_REND, "Payment has been disabled, clearing "
+                         "payment_params from a descriptor.");
+        tor_free(desc->desc->encrypted_data.payment_params->bolt12_offer);
+        tor_free(desc->desc->encrypted_data.payment_params);
+        service_desc_schedule_upload(desc, now, 1);
+      }
+    } FOR_EACH_DESCRIPTOR_END;
+
+    /* Skip remaining checks if this service does not have payment enabled. */
+    if (!service->config.has_payment_enabled) {
+      continue;
+    }
+
+    FOR_EACH_DESCRIPTOR_BEGIN(service, desc) {
+      encrypted = &desc->desc->encrypted_data;
+      /* If payment params don't exist, create them. */
+      if (!encrypted->payment_params) {
+        log_info(LD_REND, "Initializing payment_params in descriptor...");
+        encrypted->payment_params =
+            tor_malloc_zero(sizeof(hs_payment_desc_params_t));
+        encrypted->payment_params->bolt12_offer =
+            tor_strdup(service->config.payment_offer);
+        encrypted->payment_params->amount_sat = service->config.payment_amount;
+        service_desc_schedule_upload(desc, now, 1);
+      } else if (service->config.payment_offer != NULL) {
+        /* Check if we need to update the payment offer or amount. */
+        int needs_update = 0;
+        if (strcmp(encrypted->payment_params->bolt12_offer,
+                   service->config.payment_offer) != 0) {
+          tor_free(encrypted->payment_params->bolt12_offer);
+          encrypted->payment_params->bolt12_offer =
+              tor_strdup(service->config.payment_offer);
+          needs_update = 1;
+        }
+        if (encrypted->payment_params->amount_sat !=
+            service->config.payment_amount) {
+          encrypted->payment_params->amount_sat = service->config.payment_amount;
+          needs_update = 1;
+        }
+        if (needs_update) {
+          service_desc_schedule_upload(desc, now, 1);
+        }
+      }
+    } FOR_EACH_DESCRIPTOR_END;
+  } FOR_EACH_SERVICE_END;
+}
+
 /** Return true iff the given intro point has expired that is it has been used
  * for too long or we've reached our max seen INTRODUCE2 cell. */
 STATIC int
@@ -2957,6 +3017,9 @@ run_build_descriptor_event(time_t now)
     /* Update the PoW params if needed. */
     update_all_descriptors_pow_params(now);
   }
+
+  /* Update the payment params if needed. */
+  update_all_descriptors_payment_params(now);
 }
 
 /** For the given service, launch any intro point circuits that could be

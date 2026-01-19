@@ -468,6 +468,70 @@ build_introduce_cc_extension(trn_extension_t *extensions)
   trn_extension_set_num(extensions, trn_extension_get_num(extensions) + 1);
 }
 
+/** Build the payment extension and put it in the given extensions object.
+ * The payment_hash should be a TRUNNEL_PAYMENT_HASH_LEN byte array.
+ * Return 0 on success, -1 on failure. */
+static int
+build_introduce_payment_extension(const uint8_t *payment_hash,
+                                  trn_extension_t *extensions)
+{
+  ssize_t ret;
+  size_t payment_ext_encoded_len;
+  uint8_t *field_array;
+  trn_extension_field_t *field = NULL;
+  trn_cell_extension_payment_t *payment_ext = NULL;
+
+  tor_assert(payment_hash);
+  tor_assert(extensions);
+
+  /* We are creating a cell extension field of type payment. */
+  field = trn_extension_field_new();
+  trn_extension_field_set_field_type(field, TRUNNEL_EXT_TYPE_PAYMENT);
+
+  /* Build payment extension field. */
+  payment_ext = trn_cell_extension_payment_new();
+
+  /* Copy payment hash into extension. */
+  memcpy(trn_cell_extension_payment_getarray_payment_hash(payment_ext),
+         payment_hash, TRUNNEL_PAYMENT_HASH_LEN);
+
+  /* Set the field with the encoded payment extension. */
+  ret = trn_cell_extension_payment_encoded_len(payment_ext);
+  if (BUG(ret <= 0)) {
+    goto err;
+  }
+  payment_ext_encoded_len = ret;
+
+  /* Set length field and the field array size length. */
+  trn_extension_field_set_field_len(field, payment_ext_encoded_len);
+  trn_extension_field_setlen_field(field, payment_ext_encoded_len);
+  /* Encode the payment extension into the cell extension field. */
+  field_array = trn_extension_field_getarray_field(field);
+  ret = trn_cell_extension_payment_encode(field_array,
+                 trn_extension_field_getlen_field(field), payment_ext);
+  if (BUG(ret <= 0)) {
+    goto err;
+  }
+  tor_assert(ret == (ssize_t)payment_ext_encoded_len);
+
+  /* Finally, encode field into the cell extension. */
+  trn_extension_add_fields(extensions, field);
+
+  /* We've just added an extension field to the cell extensions so increment the
+   * total number. */
+  trn_extension_set_num(extensions, trn_extension_get_num(extensions) + 1);
+
+  /* Cleanup. Payment extension has been encoded at this point. */
+  trn_cell_extension_payment_free(payment_ext);
+
+  return 0;
+
+err:
+  trn_extension_field_free(field);
+  trn_cell_extension_payment_free(payment_ext);
+  return -1;
+}
+
 /** Using the INTRODUCE1 data, setup the ENCRYPTED section in cell. This means
  * set it, encrypt it and encode it. */
 static void
@@ -493,6 +557,10 @@ introduce1_set_encrypted(trn_cell_introduce1_t *cell,
   /* Build PoW extension if present. */
   if (data->pow_solution) {
     build_introduce_pow_extension(data->pow_solution, ext);
+  }
+  /* Build payment extension if present. */
+  if (data->payment_hash) {
+    build_introduce_payment_extension(data->payment_hash, ext);
   }
   trn_cell_introduce_encrypted_set_extensions(enc_cell, ext);
 
@@ -955,6 +1023,31 @@ parse_introduce_cell_extension(const hs_service_t *service,
                                                        field, data) < 0) {
       log_fn(LOG_PROTOCOL_WARN, LD_REND, "Invalid PoW cell extension.");
       ret = -1;
+    }
+    break;
+  case TRUNNEL_EXT_TYPE_PAYMENT:
+    {
+      /* Payment hash extension for paid hidden services. */
+      const uint8_t *field_data = trn_extension_field_getconstarray_field(field);
+      size_t field_len = trn_extension_field_getlen_field(field);
+      if (field_len >= TRUNNEL_PAYMENT_HASH_LEN) {
+        trn_cell_extension_payment_t *payment_ext = NULL;
+        if (trn_cell_extension_payment_parse(&payment_ext, field_data,
+                                             field_len) > 0) {
+          memcpy(data->rdv_data.payment_hash,
+                 trn_cell_extension_payment_getconstarray_payment_hash(payment_ext),
+                 TRUNNEL_PAYMENT_HASH_LEN);
+          data->rdv_data.has_payment_hash = 1;
+          log_info(LD_REND, "Received payment hash extension in INTRODUCE2 cell");
+          trn_cell_extension_payment_free(payment_ext);
+        } else {
+          log_fn(LOG_PROTOCOL_WARN, LD_REND,
+                 "Failed to parse payment extension in INTRODUCE2 cell.");
+        }
+      } else {
+        log_fn(LOG_PROTOCOL_WARN, LD_REND,
+               "Payment extension too short in INTRODUCE2 cell.");
+      }
     }
     break;
   default:

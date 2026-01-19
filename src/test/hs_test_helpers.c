@@ -366,6 +366,17 @@ hs_helper_desc_equal(const hs_descriptor_t *desc1,
     tt_int_op(params1->expiration_time, OP_EQ, params2->expiration_time);
   }
 
+  /* Payment params for paid hidden services */
+  tt_int_op(!!desc1->encrypted_data.payment_params, OP_EQ,
+            !!desc2->encrypted_data.payment_params);
+  if (desc1->encrypted_data.payment_params &&
+      desc2->encrypted_data.payment_params) {
+    hs_payment_desc_params_t *params1 = desc1->encrypted_data.payment_params;
+    hs_payment_desc_params_t *params2 = desc2->encrypted_data.payment_params;
+    tt_str_op(params1->bolt12_offer, OP_EQ, params2->bolt12_offer);
+    tt_u64_op(params1->amount_sat, OP_EQ, params2->amount_sat);
+  }
+
   /* Introduction points. */
   {
     tt_assert(desc1->encrypted_data.intro_points);

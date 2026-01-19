@@ -419,6 +419,29 @@ config_service_v3(const hs_opts_t *hs_opts,
              config->pow_queue_burst);
   }
 
+  /* Are payment requirements enabled for this service? */
+  config->has_payment_enabled = hs_opts->HiddenServicePaymentEnabled;
+  if (config->has_payment_enabled) {
+    if (hs_opts->HiddenServicePaymentOffer) {
+      /* Basic BOLT12 offer format validation - must start with 'lno1' */
+      const char *offer = hs_opts->HiddenServicePaymentOffer;
+      size_t offer_len = strlen(offer);
+      if (offer_len < 4 || strncmp(offer, "lno1", 4) != 0) {
+        log_warn(LD_CONFIG, "HiddenServicePaymentOffer has invalid format "
+                            "(must be a valid BOLT12 offer starting with 'lno1').");
+        goto err;
+      }
+      config->payment_offer = tor_strdup(offer);
+    } else {
+      log_warn(LD_CONFIG, "HiddenServicePaymentEnabled set but "
+                          "HiddenServicePaymentOffer not specified.");
+      goto err;
+    }
+    config->payment_amount = hs_opts->HiddenServicePaymentAmount;
+    log_info(LD_REND, "Service payment enabled with offer: %.20s...",
+             config->payment_offer);
+  }
+
   /* We do not load the key material for the service at this stage. This is
    * done later once tor can confirm that it is in a running state. */
 

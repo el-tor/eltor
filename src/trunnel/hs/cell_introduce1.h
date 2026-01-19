@@ -21,10 +21,12 @@ struct link_specifier_st;
 #define TRUNNEL_HS_INTRO_ONION_KEY_TYPE_NTOR 1
 #define TRUNNEL_EXT_TYPE_CC_REQUEST 1
 #define TRUNNEL_EXT_TYPE_POW 2
+#define TRUNNEL_EXT_TYPE_PAYMENT 3
 #define TRUNNEL_POW_NONCE_LEN 16
 #define TRUNNEL_POW_SOLUTION_LEN 16
 #define TRUNNEL_POW_SEED_HEAD_LEN 4
 #define TRUNNEL_POW_VERSION_EQUIX 1
+#define TRUNNEL_PAYMENT_HASH_LEN 32
 #if !defined(TRUNNEL_OPAQUE) && !defined(TRUNNEL_OPAQUE_TRN_CELL_EXTENSION_POW)
 struct trn_cell_extension_pow_st {
   uint8_t pow_version;
@@ -36,6 +38,13 @@ struct trn_cell_extension_pow_st {
 };
 #endif
 typedef struct trn_cell_extension_pow_st trn_cell_extension_pow_t;
+#if !defined(TRUNNEL_OPAQUE) && !defined(TRUNNEL_OPAQUE_TRN_CELL_EXTENSION_PAYMENT)
+struct trn_cell_extension_payment_st {
+  uint8_t payment_hash[TRUNNEL_PAYMENT_HASH_LEN];
+  uint8_t trunnel_error_code_;
+};
+#endif
+typedef struct trn_cell_extension_payment_st trn_cell_extension_payment_t;
 #if !defined(TRUNNEL_OPAQUE) && !defined(TRUNNEL_OPAQUE_TRN_CELL_INTRODUCE1)
 struct trn_cell_introduce1_st {
   uint8_t legacy_key_id[TRUNNEL_SHA1_LEN];
@@ -199,6 +208,67 @@ uint8_t * trn_cell_extension_pow_getarray_pow_solution(trn_cell_extension_pow_t 
  * const pointer
  */
 const uint8_t  * trn_cell_extension_pow_getconstarray_pow_solution(const trn_cell_extension_pow_t *inp);
+/** Return a newly allocated trn_cell_extension_payment with all elements
+ * set to zero.
+ */
+trn_cell_extension_payment_t *trn_cell_extension_payment_new(void);
+/** Release all storage held by the trn_cell_extension_payment in
+ * 'victim'. (Do nothing if 'victim' is NULL.)
+ */
+void trn_cell_extension_payment_free(trn_cell_extension_payment_t *victim);
+/** Try to parse a trn_cell_extension_payment from the buffer in 'input',
+ * using up to 'len_in' bytes from the input buffer. On success,
+ * return the number of bytes consumed and set *output to the newly
+ * allocated trn_cell_extension_payment_t. On failure, return -2 if the
+ * input appears truncated, and -1 if the input is otherwise invalid.
+ */
+ssize_t trn_cell_extension_payment_parse(trn_cell_extension_payment_t **output, const uint8_t *input, const size_t len_in);
+/** Return the number of bytes we expect to need to encode the
+ * trn_cell_extension_payment in 'obj'. On failure, return a negative
+ * value. Note that this value may be an overestimate, and can even be
+ * an underestimate for certain unencodeable objects.
+ */
+ssize_t trn_cell_extension_payment_encoded_len(const trn_cell_extension_payment_t *obj);
+/** Try to encode the trn_cell_extension_payment from 'input' into the
+ * buffer at 'output', using up to 'avail' bytes of the output buffer.
+ * On success, return the number of bytes used. On failure, return -2
+ * if the buffer was not long enough, and -1 if the input was invalid.
+ */
+ssize_t trn_cell_extension_payment_encode(uint8_t *output, size_t avail, const trn_cell_extension_payment_t *input);
+/** Check whether the internal state of the trn_cell_extension_payment in
+ * 'obj' is consistent. Return NULL if it is, and a short message if
+ * it is not.
+ */
+const char *trn_cell_extension_payment_check(const trn_cell_extension_payment_t *obj);
+/** Clear any errors that were set on the object 'obj' by its setter
+ * functions. Return true iff errors were cleared.
+ */
+int trn_cell_extension_payment_clear_errors(trn_cell_extension_payment_t *obj);
+/** Return the (constant) length of the array holding the payment_hash
+ * field of the trn_cell_extension_payment_t in 'inp'.
+ */
+size_t trn_cell_extension_payment_getlen_payment_hash(const trn_cell_extension_payment_t *inp);
+/** Return the element at position 'idx' of the fixed array field
+ * payment_hash of the trn_cell_extension_payment_t in 'inp'.
+ */
+uint8_t trn_cell_extension_payment_get_payment_hash(trn_cell_extension_payment_t *inp, size_t idx);
+/** As trn_cell_extension_payment_get_payment_hash, but take and return a
+ * const pointer
+ */
+uint8_t trn_cell_extension_payment_getconst_payment_hash(const trn_cell_extension_payment_t *inp, size_t idx);
+/** Change the element at position 'idx' of the fixed array field
+ * payment_hash of the trn_cell_extension_payment_t in 'inp', so that it will
+ * hold the value 'elt'.
+ */
+int trn_cell_extension_payment_set_payment_hash(trn_cell_extension_payment_t *inp, size_t idx, uint8_t elt);
+/** Return a pointer to the TRUNNEL_PAYMENT_HASH_LEN-element array field
+ * payment_hash of 'inp'.
+ */
+uint8_t * trn_cell_extension_payment_getarray_payment_hash(trn_cell_extension_payment_t *inp);
+/** As trn_cell_extension_payment_get_payment_hash, but take and return a
+ * const pointer
+ */
+const uint8_t  * trn_cell_extension_payment_getconstarray_payment_hash(const trn_cell_extension_payment_t *inp);
 /** Return a newly allocated trn_cell_introduce1 with all elements set
  * to zero.
  */

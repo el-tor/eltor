@@ -66,6 +66,20 @@ struct link_specifier_t;
  * of this constant. */
 #define HS_DESC_AUTH_CLIENT_MULTIPLE 16
 
+/** Maximum length of a BOLT12 offer string in the descriptor. */
+#define HS_DESC_PAYMENT_OFFER_MAX_LEN 1024
+
+/** Payment parameters for paid hidden services in a descriptor. */
+typedef struct hs_payment_desc_params_t {
+  /** BOLT12 offer string that clients can use to request an invoice from
+   * the hidden service's Lightning node. */
+  char *bolt12_offer;
+
+  /** Payment amount in satoshis (or millisatoshis). If 0, amount is specified
+   * in the BOLT12 offer itself or determined dynamically. */
+  uint64_t amount_sat;
+} hs_payment_desc_params_t;
+
 /** Type of authentication in the descriptor. */
 typedef enum {
   HS_DESC_AUTH_ED25519 = 1
@@ -174,6 +188,10 @@ typedef struct hs_desc_encrypted_data_t {
 
   /** PoW parameters. If NULL, it is not present. */
   hs_pow_desc_params_t *pow_params;
+
+  /** Payment parameters for paid hidden services. If NULL, the service is
+   * free to access. Contains BOLT12 offer for Lightning payment. */
+  hs_payment_desc_params_t *payment_params;
 
   /** A list of intro points. Contains hs_desc_intro_point_t objects. */
   smartlist_t *intro_points;

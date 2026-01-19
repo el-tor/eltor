@@ -98,6 +98,7 @@
 #define str_intro_point_start "\n" str_intro_point " "
 #define str_flow_control "flow-control"
 #define str_pow_params "pow-params"
+#define str_payment_params "payment-params"
 /* Constant string value for the construction to encrypt the encrypted data
  * section. */
 #define str_enc_const_superencryption "hsdir-superencrypted-data"
@@ -156,6 +157,7 @@ static token_rule_t hs_desc_encrypted_v3_token_table[] = {
   T01(str_single_onion, R3_SINGLE_ONION_SERVICE, ARGS, NO_OBJ),
   T01(str_flow_control, R3_FLOW_CONTROL, GE(2), NO_OBJ),
   T01(str_pow_params, R3_POW_PARAMS, GE(4), NO_OBJ),
+  T01(str_payment_params, R3_PAYMENT_PARAMS, GE(1), NO_OBJ),
   END_OF_TABLE
 };
 
@@ -821,6 +823,21 @@ get_inner_encrypted_layer_plaintext(const hs_descriptor_t *desc)
                 desc->encrypted_data.pow_params->suggested_effort,
                 time_buf);
       tor_free(seed_b64);
+    }
+
+    /* Add payment parameters if present. */
+    if (desc->encrypted_data.payment_params) {
+      /* Add "payment-params" line to descriptor encoding.
+       * Format: payment-params <bolt12_offer> [amount_sat]
+       */
+      if (desc->encrypted_data.payment_params->amount_sat > 0) {
+        smartlist_add_asprintf(lines, "%s %s %"PRIu64"\n", str_payment_params,
+                  desc->encrypted_data.payment_params->bolt12_offer,
+                  desc->encrypted_data.payment_params->amount_sat);
+      } else {
+        smartlist_add_asprintf(lines, "%s %s\n", str_payment_params,
+                  desc->encrypted_data.payment_params->bolt12_offer);
+      }
     }
   }
 
@@ -2485,6 +2502,52 @@ desc_decode_encrypted_v3(const hs_descriptor_t *desc,
     desc_encrypted_out->pow_params = pow_params;
   }
 
+  /* Get payment params if any. */
+  tok = find_opt_by_keyword(tokens, R3_PAYMENT_PARAMS);
+  if (tok) {
+    /* payment-params format: <bolt12_offer> [amount_sat] */
+    if (tok->n_args < 1 || tok->args[0] == NULL) {
+      log_warn(LD_REND, "Service descriptor payment-params is malformed, "
+                        "missing BOLT12 offer.");
+      goto err;
+    }
+
+    /* Validate BOLT12 offer - basic format check for 'lno1' prefix */
+    const char *offer = tok->args[0];
+    size_t offer_len = strlen(offer);
+    if (offer_len < 4 || strncmp(offer, "lno1", 4) != 0) {
+      log_warn(LD_REND, "Service descriptor payment-params BOLT12 offer "
+                        "has invalid format (must start with 'lno1').");
+      goto err;
+    }
+    if (offer_len > HS_DESC_PAYMENT_OFFER_MAX_LEN) {
+      log_warn(LD_REND, "Service descriptor payment-params BOLT12 offer "
+                        "is too long (%zu > %d).",
+               offer_len, HS_DESC_PAYMENT_OFFER_MAX_LEN);
+      goto err;
+    }
+
+    hs_payment_desc_params_t *payment_params =
+      tor_malloc_zero(sizeof(hs_payment_desc_params_t));
+    payment_params->bolt12_offer = tor_strdup(offer);
+
+    /* Parse optional amount */
+    if (tok->n_args >= 2) {
+      int ok = 0;
+      payment_params->amount_sat =
+        tor_parse_uint64(tok->args[1], 10, 0, UINT64_MAX, &ok, NULL);
+      if (!ok) {
+        log_warn(LD_REND, "Service descriptor payment-params amount "
+                          "is invalid");
+        tor_free(payment_params->bolt12_offer);
+        tor_free(payment_params);
+        goto err;
+      }
+    }
+
+    desc_encrypted_out->payment_params = payment_params;
+  }
+
   /* Initialize the descriptor's introduction point list before we start
    * decoding. Having 0 intro point is valid. Then decode them all. */
   desc_encrypted_out->intro_points = smartlist_new();
@@ -2904,6 +2967,10 @@ hs_desc_encrypted_data_free_contents(hs_desc_encrypted_data_t *desc)
   }
   tor_free(desc->flow_control_pv);
   tor_free(desc->pow_params);
+  if (desc->payment_params) {
+    tor_free(desc->payment_params->bolt12_offer);
+    tor_free(desc->payment_params);
+  }
   memwipe(desc, 0, sizeof(*desc));
 }
 
