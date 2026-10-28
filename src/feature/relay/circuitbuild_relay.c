@@ -465,7 +465,10 @@ circuit_extend(struct cell_t *cell, struct circuit_t *circ)
   if (has_payment_id_hash == 0) {
     log_notice(LD_CIRC, "ELTOR RELAY %s: No payment hash found in extend cell",
               get_options()->Nickname);
-    return -1;
+    /* Chutney builds ordinary circuits during bootstrap and verification.
+     * Permit these only on an explicitly configured testing network. */
+    if (!get_options()->TestingTorNetwork)
+      return -1;
   } else {
     log_notice(LD_CIRC, "ELTOR RELAY %s: Successfully found payment hash in extend cell",
               get_options()->Nickname);
