@@ -11,18 +11,25 @@
 #define DIRCLIENT_PRIVATE
 #define HS_CACHE_PRIVATE
 #define CHANNEL_OBJECT_PRIVATE
+#define CIRCUITLIST_PRIVATE
 
+#include "app/config/config.h"
+#include "app/config/or_options_st.h"
 #include "trunnel/ed25519_cert.h"
 #include "feature/hs/hs_cache.h"
 #include "feature/dircache/dircache.h"
 #include "feature/dirclient/dirclient.h"
+#include "feature/dircommon/directory.h"
 #include "feature/nodelist/networkstatus.h"
 #include "core/mainloop/connection.h"
 #include "core/proto/proto_http.h"
 #include "core/or/circuitlist.h"
 #include "core/or/channel.h"
+#include "core/or/dos.h"
+#include "feature/relay/relay_metrics.h"
 #include "lib/crypt_ops/crypto_format.h"
 #include "lib/crypt_ops/crypto_rand.h"
+#include "lib/metrics/metrics_store.h"
 
 #include "core/or/edge_connection_st.h"
 #include "core/or/or_circuit_st.h"
@@ -31,6 +38,7 @@
 #include "feature/nodelist/networkstatus_st.h"
 
 #include "test/hs_test_helpers.h"
+#include "test/log_test_helpers.h"
 #include "test/test_helpers.h"
 #include "test/test.h"
 
@@ -50,6 +58,195 @@ init_test(void)
 {
   /* Always needed. Initialize the subsystem. */
   hs_cache_init();
+}
+
+static int
+mock_channel_get_addr_if_possible(const channel_t *chan, tor_addr_t *addr_out)
+{
+  (void) chan;
+  (void) addr_out;
+  return 0;
+}
+
+/* Issue a request on a new stream, then close that stream. Keep the circuit
+ * alive so the next request tests its lifetime allowance, not concurrency.
+ * Return the HTTP status, or 0 if no response was written. */
+static int
+hsdir_request_on_circuit(or_circuit_t *circ, const char *headers,
+                         const char *body)
+{
+  int status = -1;
+  char *response = NULL;
+  size_t response_len;
+  dir_connection_t *conn = dir_connection_new(AF_INET);
+  edge_connection_t *edge = edge_connection_new(CONN_TYPE_EXIT, AF_INET);
+
+  tor_addr_from_ipv4h(&conn->base_.addr, 0x7f000001);
+  conn->base_.address = tor_strdup("127.0.0.1");
+  connection_link_connections(TO_CONN(conn), TO_CONN(edge));
+  edge->on_circuit = circ ? TO_CIRCUIT(circ) : NULL;
+
+  if (body) {
+    tt_int_op(directory_handle_command_post(conn, headers, body, strlen(body)),
+              OP_EQ, 0);
+  } else {
+    tt_int_op(directory_handle_command_get(conn, headers, NULL, 0), OP_EQ, 0);
+  }
+  response = buf_get_contents(TO_CONN(conn)->outbuf, &response_len);
+  tt_assert(response);
+  if (response_len == 0) {
+    /* No response was written. */
+    status = 0;
+    goto done;
+  }
+  tt_int_op(parse_http_response(response, &status, NULL, NULL, NULL),
+            OP_EQ, 0);
+
+ done:
+  tor_free(response);
+  connection_free_minimal(TO_CONN(edge));
+  connection_free_minimal(TO_CONN(conn));
+  return status;
+}
+
+/* Fetches and uploads share one allowance, independent of descriptor key,
+ * stream lifetime, or whether we are a directory authority. */
+static void
+test_hsdir_request_limit(void *arg)
+{
+  const char *mode = arg;
+  const bool post_first = !strcmp(mode, "post");
+  const char *post_headers = "POST /tor/hs/3/publish HTTP/1.0\r\n\r\n";
+  const char *missing_get = GET("/tor/hs/3/"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+  char *get_headers = NULL, *encoded = NULL;
+  hs_descriptor_t *desc = NULL;
+  ed25519_keypair_t signing_kp;
+  channel_t chan = {0};
+  or_circuit_t *circ = NULL, *fresh = NULL, *missing = NULL, *invalid = NULL;
+  or_circuit_t *client = NULL;
+  or_options_t *options = get_options_mutable();
+  buf_t *metrics = buf_new();
+  char *metrics_output = NULL;
+  size_t metrics_len;
+
+  init_test();
+  options->ORPort_set = 1;
+  options->BridgeRelay = 0;
+  options->AuthoritativeDir = !strcmp(mode, "authority");
+  options->V3AuthoritativeDir = options->AuthoritativeDir;
+  MOCK(connection_write_to_buf_impl_, connection_write_to_buf_mock);
+  /* Closing a circuit looks up the fake channel's address. */
+  MOCK(channel_get_addr_if_possible, mock_channel_get_addr_if_possible);
+
+  circ = or_circuit_new(0, NULL);
+  fresh = or_circuit_new(0, NULL);
+  missing = or_circuit_new(0, NULL);
+  invalid = or_circuit_new(0, NULL);
+  client = or_circuit_new(0, NULL);
+  circ->p_chan = fresh->p_chan = missing->p_chan = invalid->p_chan =
+    client->p_chan = &chan;
+  /* Closing a circuit checks its invariants, which need a valid purpose. */
+  circ->base_.purpose = fresh->base_.purpose = missing->base_.purpose =
+    invalid->base_.purpose = client->base_.purpose = CIRCUIT_PURPOSE_OR;
+
+  tt_int_op(ed25519_keypair_generate(&signing_kp, 0), OP_EQ, 0);
+  desc = hs_helper_build_hs_desc_with_ip(&signing_kp);
+  tt_assert(desc);
+  tt_int_op(hs_desc_encode_descriptor(desc, &signing_kp, NULL, &encoded),
+            OP_EQ, 0);
+  tor_asprintf(&get_headers, GET("/tor/hs/3/%s"),
+               helper_get_hsdir_query(desc));
+
+  /* Ordinary directory requests do not consume the allowance. */
+  tt_int_op(hsdir_request_on_circuit(circ, GET("/tor/robots.txt"), NULL),
+            OP_EQ, 200);
+  tt_int_op(circ->already_received_hsdir_request, OP_EQ, 0);
+
+  if (post_first) {
+    tt_int_op(hsdir_request_on_circuit(circ, post_headers, encoded),
+              OP_EQ, 200);
+  } else {
+    tt_int_op(hs_cache_store_as_dir(encoded), OP_EQ, 0);
+    tt_int_op(hsdir_request_on_circuit(circ, get_headers, NULL), OP_EQ, 200);
+  }
+  tt_int_op(circ->already_received_hsdir_request, OP_EQ, 1);
+  tt_u64_op(dos_get_num_begindir_hsdir_rejected(), OP_EQ, 0);
+  /* A second HSDir request is rejected and closes the circuit. */
+  if (post_first) {
+    tt_int_op(hsdir_request_on_circuit(circ, get_headers, NULL), OP_EQ, 0);
+  } else {
+    tt_int_op(hsdir_request_on_circuit(circ, post_headers, encoded), OP_EQ, 0);
+  }
+  tt_assert(TO_CIRCUIT(circ)->marked_for_close);
+  tt_u64_op(dos_get_num_begindir_hsdir_rejected(), OP_EQ, 1);
+
+  /* Queued requests on a closing or detached circuit get no HTTP response,
+   * and do not count as additional lifetime-limit rejections. */
+  tt_int_op(hsdir_request_on_circuit(circ, get_headers, NULL), OP_EQ, 0);
+  tt_int_op(hsdir_request_on_circuit(circ, post_headers, encoded), OP_EQ, 0);
+  tt_int_op(hsdir_request_on_circuit(NULL, get_headers, NULL), OP_EQ, 0);
+  tt_int_op(hsdir_request_on_circuit(NULL, post_headers, encoded), OP_EQ, 0);
+  tt_u64_op(dos_get_num_begindir_hsdir_rejected(), OP_EQ, 1);
+
+  /* The allowance is per circuit, not per channel or blinded key. */
+  tt_int_op(hsdir_request_on_circuit(fresh, get_headers, NULL), OP_EQ, 200);
+  tt_u64_op(dos_get_num_begindir_hsdir_rejected(), OP_EQ, 1);
+
+  /* Missing descriptors and malformed uploads also consume the allowance. */
+  tt_int_op(hsdir_request_on_circuit(missing, missing_get, NULL), OP_EQ, 404);
+  tt_u64_op(dos_get_num_begindir_hsdir_rejected(), OP_EQ, 1);
+  tt_int_op(hsdir_request_on_circuit(missing, get_headers, NULL), OP_EQ, 0);
+  tt_u64_op(dos_get_num_begindir_hsdir_rejected(), OP_EQ, 2);
+  tt_int_op(hsdir_request_on_circuit(invalid, post_headers, ""), OP_EQ, 400);
+  tt_u64_op(dos_get_num_begindir_hsdir_rejected(), OP_EQ, 2);
+  tt_int_op(hsdir_request_on_circuit(invalid, get_headers, NULL), OP_EQ, 0);
+  tt_u64_op(dos_get_num_begindir_hsdir_rejected(), OP_EQ, 3);
+
+  /* Unauthenticated clients/bridges still cannot fetch or upload at all. */
+  channel_mark_client(&chan);
+  tt_int_op(hsdir_request_on_circuit(client, get_headers, NULL), OP_EQ, 503);
+  tt_int_op(hsdir_request_on_circuit(client, post_headers, encoded),
+            OP_EQ, 503);
+  tt_int_op(client->already_received_hsdir_request, OP_EQ, 0);
+  tt_int_op(hsdir_request_on_circuit(client, GET("/tor/robots.txt"), NULL),
+            OP_EQ, 200);
+  tt_u64_op(dos_get_num_begindir_hsdir_rejected(), OP_EQ, 3);
+
+  /* HSDir rejections are reported independently of the BEGIN_DIR defenses. */
+  tt_u64_op(dos_get_num_begindir_rejected(), OP_EQ, 0);
+  tt_u64_op(dos_get_num_begindir_rate_rejected(), OP_EQ, 0);
+  setup_capture_of_logs(LOG_NOTICE);
+  dos_log_heartbeat();
+  expect_log_msg_containing("3 BEGIN_DIR HSDir requests rejected");
+
+  const smartlist_t *stores = relay_metrics_get_stores();
+  tt_int_op(smartlist_len(stores), OP_EQ, 1);
+  metrics_store_get_output(METRICS_FORMAT_PROMETHEUS,
+                           smartlist_get(stores, 0), metrics);
+  metrics_output = buf_get_contents(metrics, &metrics_len);
+  tt_assert(metrics_output);
+  tt_assert(strstr(metrics_output,
+                  "tor_relay_dos_total{"
+                  "type=\"begindir_hsdir_rejected\"} 3\n"));
+
+ done:
+  teardown_capture_of_logs();
+  buf_free(metrics);
+  tor_free(metrics_output);
+  UNMOCK(connection_write_to_buf_impl_);
+  UNMOCK(channel_get_addr_if_possible);
+  or_circuit_t *circs[] = { circ, fresh, missing, invalid, client };
+  for (unsigned i = 0; i < ARRAY_LENGTH(circs); ++i) {
+    if (circs[i]) {
+      circs[i]->p_chan = NULL;
+      circuit_free_(TO_CIRCUIT(circs[i]));
+    }
+  }
+  hs_descriptor_free(desc);
+  tor_free(encoded);
+  tor_free(get_headers);
+  hs_cache_free_all();
 }
 
 static void
@@ -90,7 +287,7 @@ test_directory(void *arg)
     tt_str_op(desc_out, OP_EQ, desc1_str);
     /* Tell our OOM to run and to at least remove a byte which will result in
      * removing the descriptor from our cache. */
-    oom_size = hs_cache_handle_oom(time(NULL), 1);
+    oom_size = hs_cache_handle_oom(1);
     tt_int_op(oom_size, OP_GE, 1);
     ret = hs_cache_lookup_as_dir(3, helper_get_hsdir_query(desc1), NULL);
     tt_int_op(ret, OP_EQ, 0);
@@ -127,7 +324,7 @@ test_directory(void *arg)
                                  NULL);
     tt_int_op(ret, OP_EQ, 0);
     /* Cleanup our entire cache. */
-    oom_size = hs_cache_handle_oom(time(NULL), 1);
+    oom_size = hs_cache_handle_oom(1);
     tt_int_op(oom_size, OP_GE, 1);
     hs_descriptor_free(desc_zero_lifetime);
     tor_free(desc_zero_lifetime_str);
@@ -222,6 +419,61 @@ test_clean_as_dir(void *arg)
  done:
   hs_descriptor_free(desc1);
   tor_free(desc1_str);
+}
+
+static void
+test_clean_oom_as_dir(void *arg)
+{
+  size_t ret;
+  char *desc1_str = NULL, *desc2_str = NULL;
+  hs_descriptor_t *desc1 = NULL, *desc2 = NULL;
+  ed25519_keypair_t signing_kp1, signing_kp2;
+
+  (void) arg;
+
+  init_test();
+
+  /* Generate two valid descriptors. */
+  ret = ed25519_keypair_generate(&signing_kp1, 0);
+  tt_int_op(ret, OP_EQ, 0);
+  ret = ed25519_keypair_generate(&signing_kp2, 0);
+  tt_int_op(ret, OP_EQ, 0);
+  desc1 = hs_helper_build_hs_desc_with_ip(&signing_kp1);
+  tt_assert(desc1);
+  desc2 = hs_helper_build_hs_desc_with_ip(&signing_kp2);
+  tt_assert(desc2);
+  ret = hs_desc_encode_descriptor(desc1, &signing_kp1, NULL, &desc1_str);
+  tt_int_op(ret, OP_EQ, 0);
+  ret = hs_cache_store_as_dir(desc1_str);
+  tt_int_op(ret, OP_EQ, 0);
+  ret = hs_desc_encode_descriptor(desc2, &signing_kp2, NULL, &desc2_str);
+  tt_int_op(ret, OP_EQ, 0);
+  ret = hs_cache_store_as_dir(desc2_str);
+  tt_int_op(ret, OP_EQ, 0);
+
+  /* Set the downloaded count to 42 for the second one. */
+  dir_set_downloaded(&desc2->plaintext_data.blinded_pubkey, 42);
+  const hs_cache_dir_descriptor_t *entry =
+    lookup_v3_desc_as_dir(desc2->plaintext_data.blinded_pubkey.pubkey);
+  tt_u64_op(entry->n_downloaded, OP_EQ, 42);
+
+  /* Spin the OOM cleanup for only 1 descriptor (very low amount of bytes). We
+   * expect desc1 to be cleaned up because its downloaded counter is 0. */
+  size_t removed = hs_cache_handle_oom(1);
+  tt_size_op(removed, OP_GT, 0);
+
+  /* Desc1 is gone. */
+  entry = lookup_v3_desc_as_dir(desc1->plaintext_data.blinded_pubkey.pubkey);
+  tt_assert(!entry);
+  /* Desc2 is still there. */
+  entry = lookup_v3_desc_as_dir(desc2->plaintext_data.blinded_pubkey.pubkey);
+  tt_assert(entry);
+
+ done:
+  hs_descriptor_free(desc1);
+  hs_descriptor_free(desc2);
+  tor_free(desc1_str);
+  tor_free(desc2_str);
 }
 
 /* Test helper: Fetch an HS descriptor from an HSDir (for the hidden service
@@ -700,10 +952,18 @@ test_client_cache_remove(void *arg)
 }
 
 struct testcase_t hs_cache[] = {
+  { "hsdir_request_limit_get", test_hsdir_request_limit, TT_FORK,
+    &passthrough_setup, (void *) "get" },
+  { "hsdir_request_limit_post", test_hsdir_request_limit, TT_FORK,
+    &passthrough_setup, (void *) "post" },
+  { "hsdir_request_limit_authority", test_hsdir_request_limit, TT_FORK,
+    &passthrough_setup, (void *) "authority" },
   /* Encoding tests. */
   { "directory", test_directory, TT_FORK,
     NULL, NULL },
   { "clean_as_dir", test_clean_as_dir, TT_FORK,
+    NULL, NULL },
+  { "clean_oom_as_dir", test_clean_oom_as_dir, TT_FORK,
     NULL, NULL },
   { "hsdir_revision_counter_check", test_hsdir_revision_counter_check, TT_FORK,
     NULL, NULL },

@@ -562,7 +562,7 @@ dirserv_set_routerstatus_flags(routerstatus_t *rs)
 
   tor_assert(rs);
 
-  /* Assign Guard flag to relays that can get it unconditionnaly. */
+  /* Assign Guard flag to relays that get it unconditionally. */
   if (routerset_contains_routerstatus(options->AuthDirVoteGuard, rs, 0)) {
     rs->is_possible_guard = 1;
   }
@@ -624,6 +624,17 @@ dirauth_set_routerstatus_from_routerinfo(routerstatus_t *rs,
     if (listbadexits)
       rs->is_bad_exit = 1;
     rs->is_exit = rs->is_possible_guard = rs->is_hs_dir = rs->is_v2_dir = 0;
+  }
+
+  /* Strip rs flags based on node flags. */
+  if (node->strip_guard) {
+    rs->is_possible_guard = 0;
+  }
+  if (node->strip_hsdir) {
+    rs->is_hs_dir = 0;
+  }
+  if (node->strip_v2dir) {
+    rs->is_v2_dir = 0;
   }
 
   /* Set rs->is_staledesc. */

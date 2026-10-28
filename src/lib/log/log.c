@@ -707,7 +707,7 @@ log_fn_(int severity, log_domain_mask_t domain, const char *fn,
         const char *format, ...)
 {
   va_list ap;
-  if (domain & LD_BUG)
+  if ((domain & LD_BUG) && (severity >= LOG_WARN))
     tor_bug_increment_count_();
   if (severity > log_global_min_severity_)
     return;
@@ -721,7 +721,7 @@ log_fn_ratelim_(ratelim_t *ratelim, int severity, log_domain_mask_t domain,
 {
   va_list ap;
   char *m;
-  if (domain & LD_BUG)
+  if ((domain & LD_BUG) && (severity >= LOG_WARN))
     tor_bug_increment_count_();
   if (severity > log_global_min_severity_)
     return;

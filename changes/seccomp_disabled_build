@@ -1,0 +1,4 @@
+  o Minor bugfixes (compilation):
+    - Only define the SYS_SECCOMP fallback when using libseccomp. This avoids
+      redefining a system provided macro in builds with --disable-seccomp.
+      Bugfix on 0.4.9.4-rc.

@@ -1,0 +1,4 @@
+  o Minor bugfixes (client):
+    - Stop logging a misleading backtrace when the user uses
+      AutomapHostsOnResolve combined with a MapAddress line that maps
+      to a .exit address. Fixes bug 41418; bugfix on 0.3.2.1-alpha.

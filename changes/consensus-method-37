@@ -1,0 +1,5 @@
+  o Major features (directory authority):
+    - Directory authorities provide a new consensus method that
+      omits _all_ TAP keys and family lists from microdescriptors.
+      This change is not compatible with 0.4.8, but 0.4.8 is no longer
+      supported.  It will save a great deal of directory bandwidth.

@@ -1,0 +1,5 @@
+  o Minor bugfixes (conflux, control port):
+    - Refuse ATTACHSTREAM onto a conflux circuit that has not finished
+      linking. Such a leg is open but a stream that you attach to it
+      will be silently dropped from the circuit (with a BUG() warning)
+      when the set linked. Fixes bug 41454; bugfix on 0.4.8.1-alpha.

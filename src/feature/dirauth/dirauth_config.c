@@ -440,7 +440,7 @@ dirauth_options_validate(const void *arg, char **msg)
 
   if (options->AuthDirVoteGuardBwThresholdFraction > 1.0 ||
       options->AuthDirVoteGuardBwThresholdFraction < 0.0) {
-    REJECT("Guard bandwdith threshold fraction is invalid.");
+    REJECT("Guard bandwidth threshold fraction is invalid.");
   }
 
   if (tor_version_parse(options->MinimalAcceptedServerVersion,

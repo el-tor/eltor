@@ -18,6 +18,7 @@
 #include "lib/encoding/keyval.h"
 
 #include "lib/container/smartlist.h"
+#include "lib/string/util_string.h"
 
 /* Required for dirinfo_type_t in or_options_t */
 #include "core/or/or.h"
@@ -60,6 +61,23 @@ get_bindaddr_from_transport_listen_line(const char *line,
 
   parsed_transport = smartlist_get(items, 0);
   addrport = tor_strdup(smartlist_get(items, 1));
+
+  /* A malformed transport name silently fails the comparison below, so the
+   * line is skipped as though it named some other transport, and tor listens
+   * on a port the operator did not choose with nothing in the logs to say so.
+   * The usual way to write one is by analogy with ServerTransportPlugin,
+   * which does accept a comma-separated list.
+   *
+   * Warn only from the validation pass, where 'transport' is NULL. This
+   * function is also called once per transport while looking up a bind
+   * address, and warning there would repeat the message for every configured
+   * transport. */
+  if (!transport && !string_is_C_identifier(parsed_transport)) {
+    log_warn(LD_CONFIG, "%s is not a valid transport name on a "
+             "ServerTransportListenAddr line, so the line will be ignored. "
+             "Note that this option takes exactly one transport per line, "
+             "unlike ServerTransportPlugin.", escaped(parsed_transport));
+  }
 
   /* If 'transport' is given, check if it matches the one on the line */
   if (transport && strcmp(transport, parsed_transport))
@@ -130,6 +148,15 @@ get_options_from_transport_options_line(const char *line,
   }
 
   parsed_transport = smartlist_get(items, 0);
+
+  /* Same as on a ServerTransportListenAddr line, and for the same reason: a
+   * malformed name here is silently skipped rather than reported. */
+  if (!transport && !string_is_C_identifier(parsed_transport)) {
+    log_warn(LD_CONFIG, "%s is not a valid transport name on a "
+             "ServerTransportOptions line, so the line will be ignored.",
+             escaped(parsed_transport));
+  }
+
   /* If 'transport' is given, check if it matches the one on the line */
   if (transport && strcmp(transport, parsed_transport))
     goto err;

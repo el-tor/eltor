@@ -1,0 +1,4 @@
+  o Minor bugfixes (fuzzing):
+    - Fix a false positive from fuzzing code caused by an earlier
+      security fix for consensus-diff application.
+      Fixes bug 41385; bugfix on 0.4.9.12.

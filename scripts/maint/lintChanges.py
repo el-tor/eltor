@@ -102,21 +102,13 @@ def lintfile(fname):
     elif (m.group(1) in NEEDS_SUBCATEGORIES and '(' not in m.group(2)):
         warn("Missing subcategory on %r" % m.group(1))
 
-    if m:
-        isBug = ("bug" in m.group(1).lower() or "fix" in m.group(1).lower())
-    else:
-        isBug = False
-
     contents = " ".join(contents.split())
 
     if re.search(r'\#\d{2,}', contents):
         warn("Don't use a # before ticket numbers. ('bug 1234' not '#1234')")
 
-    if isBug and not re.search(r'(\d+)', contents):
-        warn("Ticket marked as bugfix, but does not mention a number.")
-    elif isBug and not re.search(r'Fixes ([a-z ]*)bugs? (\d+)', contents):
-        warn("Ticket marked as bugfix, but does not say 'Fixes bug XXX'")
-
+    # Ticket references are optional, including for bugfix entries. When a
+    # bug is referenced, keep checking its attribution and affected version.
     if re.search(r'[bB]ug (\d+)', contents):
         if not re.search(r'[Bb]ugfix on ', contents):
             warn("Bugfix does not say 'bugfix on X.Y.Z'")

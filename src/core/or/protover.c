@@ -95,6 +95,9 @@ proto_entry_free_(proto_entry_t *entry)
   tor_free(entry);
 }
 
+/** The smallest possible protocol version. */
+#define MIN_PROTOCOL_VERSION (1)
+
 /** The largest possible protocol version. */
 #define MAX_PROTOCOL_VERSION (63)
 
@@ -125,7 +128,9 @@ parse_version_range(const char *s, const char *end_of_range,
 
   /* Note that this wouldn't be safe if we didn't know that eventually,
    * we'd hit a NUL */
-  low = (uint32_t) tor_parse_ulong(s, 10, 0, MAX_PROTOCOL_VERSION, &ok, &next);
+  low = (uint32_t) tor_parse_ulong(s, 10,
+                                   MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION,
+                                   &ok, &next);
   if (!ok)
     goto error;
   if (next > end_of_range)
@@ -143,8 +148,9 @@ parse_version_range(const char *s, const char *end_of_range,
   if (!TOR_ISDIGIT(*s)) {
     goto error;
   }
-  high = (uint32_t) tor_parse_ulong(s, 10, 0,
-                                    MAX_PROTOCOL_VERSION, &ok, &next);
+  high = (uint32_t) tor_parse_ulong(s, 10,
+                                    MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION,
+                                    &ok, &next);
   if (!ok)
     goto error;
   if (next != end_of_range)
@@ -344,66 +350,27 @@ protocol_list_supports_protocol(const char *list, protocol_type_t tp,
   return contains;
 }
 
-/**
- * Return true iff "list" encodes a protocol list that includes support for
- * the indicated protocol and version, or some later version.
- *
- * If the protocol list is unparseable, treat it as if it defines no
- * protocols, and return 0.
- */
-int
-protocol_list_supports_protocol_or_later(const char *list,
-                                         protocol_type_t tp,
-                                         uint32_t version)
-{
-  /* NOTE: This is a pretty inefficient implementation. If it ever shows
-   * up in profiles, we should memoize it.
-   */
-  smartlist_t *protocols = parse_protocol_list(list);
-  if (!protocols) {
-    return 0;
-  }
-  const char *pr_name = protocol_type_to_str(tp);
-
-  int contains = 0;
-  const uint64_t mask = bitmask_for_range(version, 63);
-
-  SMARTLIST_FOREACH_BEGIN(protocols, proto_entry_t *, proto) {
-    if (strcasecmp(proto->name, pr_name))
-      continue;
-    if (0 != (proto->bitmask & mask)) {
-      contains = 1;
-      goto found;
-    }
-  } SMARTLIST_FOREACH_END(proto);
-
- found:
-  SMARTLIST_FOREACH(protocols, proto_entry_t *, ent, proto_entry_free(ent));
-  smartlist_free(protocols);
-  return contains;
-}
-
 /*
  * XXX START OF HAZARDOUS ZONE XXX
  */
-/* All protocol version that this relay version supports. */
+/* All protocol version that this version of tor supports. */
 #define PR_CONFLUX_V   "1"
 #define PR_CONS_V      "1-2"
-#define PR_DESC_V      "1-2"
+#define PR_DESC_V      "1-4"
 #define PR_DIRCACHE_V  "2"
 #define PR_FLOWCTRL_V  "1-2"
 #define PR_HSDIR_V     "2"
 #define PR_HSINTRO_V   "4-5"
 #define PR_HSREND_V    "1-2"
-#define PR_LINK_V      "1-5"
-#ifdef HAVE_WORKING_TOR_TLS_GET_TLSSECRETS
-#define PR_LINKAUTH_V  "1,3"
-#else
+#define PR_LINK_V      "3-5"
 #define PR_LINKAUTH_V  "3"
-#endif
-#define PR_MICRODESC_V "1-2"
+#define PR_MICRODESC_V "1-3"
 #define PR_PADDING_V   "2"
-#define PR_RELAY_V     "1-4"
+#if ELTOR_CGO_SUPPORTED
+#define PR_RELAY_V     "2-6"
+#else
+#define PR_RELAY_V     "2-5"
+#endif
 
 /** Return the string containing the supported version for the given protocol
  * type. */
@@ -521,8 +488,17 @@ protover_get_supported_protocols(void)
 const char *
 protover_get_recommended_client_protocols(void)
 {
-  return "Cons=2 Desc=2 DirCache=2 HSDir=2 HSIntro=4 HSRend=2 "
-         "Link=4-5 Microdesc=2 Relay=2";
+  return
+    "Cons=2 "
+    "Desc=2-4 "
+    "DirCache=2 "
+    "FlowCtrl=1-2 "
+    "HSDir=2 "
+    "HSIntro=4 "
+    "HSRend=2 "
+    "Link=4-5 "
+    "Microdesc=2-3 "
+    "Relay=" PR_RELAY_V;
 }
 
 /** Return the recommended relay protocols list that directory authorities
@@ -530,8 +506,18 @@ protover_get_recommended_client_protocols(void)
 const char *
 protover_get_recommended_relay_protocols(void)
 {
-  return "Cons=2 Desc=2 DirCache=2 HSDir=2 HSIntro=4 HSRend=2 "
-         "Link=4-5 LinkAuth=3 Microdesc=2 Relay=2";
+  return
+    "Cons=2 "
+    "Desc=2-4 "
+    "DirCache=2 "
+    "FlowCtrl=1-2 "
+    "HSDir=2 "
+    "HSIntro=4-5 "
+    "HSRend=2 "
+    "Link=4-5 "
+    "LinkAuth=3 "
+    "Microdesc=2-3 "
+    "Relay=" PR_RELAY_V;
 }
 
 /** Return the required client protocols list that directory authorities
@@ -539,7 +525,13 @@ protover_get_recommended_relay_protocols(void)
 const char *
 protover_get_required_client_protocols(void)
 {
-  return "Cons=2 Desc=2 Link=4 Microdesc=2 Relay=2";
+  return
+    "Cons=2 "
+    "Desc=2-3 "
+    "FlowCtrl=1 "
+    "Link=4 "
+    "Microdesc=2-3 "
+    "Relay=2";
 }
 
 /** Return the required relay protocols list that directory authorities
@@ -547,8 +539,18 @@ protover_get_required_client_protocols(void)
 const char *
 protover_get_required_relay_protocols(void)
 {
-  return "Cons=2 Desc=2 DirCache=2 HSDir=2 HSIntro=4 HSRend=2 "
-         "Link=4-5 LinkAuth=3 Microdesc=2 Relay=2";
+  return
+    "Cons=2 "
+    "Desc=2-3 "
+    "DirCache=2 "
+    "FlowCtrl=1-2 "
+    "HSDir=2 "
+    "HSIntro=4-5 "
+    "HSRend=2 "
+    "Link=4-5 "
+    "LinkAuth=3 "
+    "Microdesc=2-3 "
+    "Relay=" PR_RELAY_V;
 }
 
 /*

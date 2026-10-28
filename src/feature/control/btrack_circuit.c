@@ -50,7 +50,7 @@ btc_state_better(int state, const btc_best_t *best)
 }
 
 /**
- * Definine an ordering on circuit status events
+ * Define an ordering on circuit status events.
  *
  * The CIRC_EVENT_ constants aren't sorted in a useful order, so this
  * array helps to decode them.  This approach depends on the statuses

@@ -134,7 +134,7 @@ tor_bug_occurred_(const char *fname, unsigned int line,
     " (Future instances of this warning will be silenced.)": "";
   if (! once) {
     // _once assertions count from the macro directly so we count them as many
-    // time as they are reached, and not just once.
+    // times as they are reached, and not just once.
     tor_bug_increment_count_();
   }
   if (! expr) {

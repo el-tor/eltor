@@ -1,0 +1,4 @@
+  o Minor features (directory performance):
+    - Filter malformed directory request digests in linear time, avoiding
+      repeated list shifting when rejecting invalid entries. Preserve digest
+      ordering and the existing sorting and deduplication behavior.

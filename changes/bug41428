@@ -1,0 +1,7 @@
+  o Minor bugfixes (scheduling):
+    - Fix a bug in smartlist_pqueue_remove that could schedulers
+      (for circuits within a channel, and for channels on the
+      internet connection) to serve items in the wrong order,
+      leading to temporary starvation for higher-priority
+      circuits.
+      Fixes bug 41428; bugfix on 0.2.2.7-alpha.

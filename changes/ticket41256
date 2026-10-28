@@ -1,0 +1,3 @@
+  o Major bugfixes (onion service):
+    - Rotate intro point at the service if the INTRODUCE2 replay cache is at
+      capacity. TROVE-2026-012. Fixes bug 41256; bugfix on 0.3.2.1-alpha.

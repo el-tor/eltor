@@ -105,8 +105,8 @@ setup_sandbox(const struct testcase_t *testcase)
                                   tor_strdup(data->dir_ops_allowed));
 
   /* Activate the sandbox, which will remain in effect until the process
-   * terminates. */
-  sandbox_init(data->cfg);
+   * terminates.  Do not run these tests without an active sandbox. */
+  tor_assert(sandbox_init(data->cfg) == 0);
 
   return data;
 }
@@ -142,7 +142,7 @@ test_sandbox_is_active(void *ignored)
 
   tt_assert(!sandbox_is_active());
 
-  sandbox_init(sandbox_cfg_new());
+  tt_int_op(sandbox_init(sandbox_cfg_new()), OP_EQ, 0);
   tt_assert(sandbox_is_active());
 
  done:

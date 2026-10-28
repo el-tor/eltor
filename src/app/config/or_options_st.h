@@ -89,6 +89,10 @@ struct or_options_t {
   char *KeyDirectory; /**< Where to store keys data, as modified. */
   int KeyDirectoryGroupReadable; /**< Boolean: Is the KeyDirectory g+r? */
 
+  char *FamilyKeyDirectory_option; /**< Where to look for family ID keys,
+                                    * as configured by the user. */
+  char *FamilyKeyDirectory; /**< Where to look for family ID keys. */
+
   char *CacheDirectory_option; /**< Where to store cached data, as
                                * configured by the user. */
   char *CacheDirectory; /**< Where to store cached data, as modified. */
@@ -204,6 +208,10 @@ struct or_options_t {
                             * for queues and buffers, run the OOM handler */
   /** Above this value, consider ourselves low on RAM. */
   uint64_t MaxMemInQueues_low_threshold;
+
+  uint64_t MaxHSDirCacheBytes;/**< If we have more memory than this allocated
+                                * for the hidden service directory cache,
+                                * run the HS cache OOM handler */
 
   /** @name port booleans
    *
@@ -493,6 +501,13 @@ struct or_options_t {
   struct config_line_t *MyFamily_lines; /**< Declared family for this OR. */
   struct config_line_t *MyFamily; /**< Declared family for this OR,
                                      normalized */
+  struct config_line_t *FamilyId_lines; /**< If set, IDs for family keys to use
+                      * to certify this OR's membership. */
+  struct smartlist_t *FamilyIds; /**< FamilyIds, parsed and converted
+                                  * to a list of ed25519_public_key_t */
+  bool AllFamilyIdsExpected; /**< If true, we should accept all the
+                              * FamilyIds in the FamilyKeyDirectory. */
+
   struct config_line_t *NodeFamilies; /**< List of config lines for
                                 * node families */
   /** List of parsed NodeFamilies values. */
@@ -518,6 +533,10 @@ struct or_options_t {
   struct smartlist_t *AuthDirMiddleOnlyCCs;
   struct smartlist_t *AuthDirRejectCCs;
   /**@}*/
+
+  /** If true, we do not allow relays or consensus methods
+   * that would degrade support for clients running 0.4.8 or earlier. */
+  int AuthDirSupport048Clients;
 
   char *AccountingStart; /**< How long is the accounting interval, and when
                           * does it start? */
@@ -608,6 +627,10 @@ struct or_options_t {
   int SbwsExit;
 
   int RephistTrackTime; /**< How many seconds do we keep rephist info? */
+
+  /** Boolean: Does the operator want to manually rotate their Onion Keys? */
+  int ManualOnionKeyRotation;
+
   /** Should we always fetch our dir info on the mirror schedule (which
    * means directly from the authorities) no matter our other config? */
   int FetchDirInfoEarly;
@@ -727,7 +750,7 @@ struct or_options_t {
 
   /** If true, always use the compiled hash implementation. If false, always
    * the interpreter. Default of "auto" allows a dynamic fallback from
-   * copmiler to interpreter. */
+   * compiler to interpreter. */
   int CompiledProofOfWorkHash;
 
   /** If true, the tor client will use conflux for its general purpose
@@ -1110,7 +1133,7 @@ struct or_options_t {
    */ 
   int AllowAnyRelay;
   char *ElTorBolt12Offer;
-  int *ElTorSatsRate;
+  int ElTorSatsRate;
 
   /**
    * To be set by the El Tor app (client)

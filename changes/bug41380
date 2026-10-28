@@ -1,0 +1,6 @@
+  o Major bugfixes (security):
+    - Avoid cacheing DNS PTR responses when DNS caching is disabled.
+      Previous code to prevent this caching parsed the response addresses
+      incorrectly, and defaulted to caching when the address could not be parsed.
+      Fixes bug 41380; bugfix on 0.2.4.7-alpha.
+      Tracked as TROVE-2026-050.

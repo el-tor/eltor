@@ -1,0 +1,5 @@
+  o Minor bugfixes (configuration, pluggable transports):
+    - Warn when a ServerTransportListenAddr line names a transport that
+      does not parse as a single valid identifier (for example, a
+      comma-separated list), instead of silently ignoring the line.
+      Fixes bug 8727; bugfix on 0.2.4.7-alpha.

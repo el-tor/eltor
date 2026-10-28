@@ -196,7 +196,8 @@ run_full_handshake(circuit_params_t *serv_params_in,
   uint8_t client_keys[CELL_PAYLOAD_SIZE];
   uint8_t rend_auth[DIGEST_LEN];
 
-  info.exit_supports_congestion_control = 1;
+  info.supports_ntor_v3 = true;
+  info.use_congestion_control = congestion_control_enabled();
 
   unhex(relay_onion_key.seckey.secret_key,
         "4051daa5921cfa2a1c27b08451324919538e79e788a81b38cbed097a5dff454a");
@@ -225,19 +226,21 @@ run_full_handshake(circuit_params_t *serv_params_in,
 
   uint64_t test_p_circ = 999;
   uint64_t test_n_circ = 888;
+  size_t serv_keylen = sizeof(serv_keys);
+  size_t client_keylen = sizeof(serv_keys);
   reply_len = onion_skin_server_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,
                               onionskin, onionskin_len,
                               &server_keys, serv_params_in,
                               serv_reply, sizeof(serv_reply),
-                              serv_keys, sizeof(serv_keys),
-                              rend_nonce, serv_params_out, 
+                              serv_keys, &serv_keylen,
+                              rend_nonce, serv_params_out,
                               &test_p_circ, &test_n_circ);
   tt_int_op(reply_len, OP_NE, -1);
 
   tt_int_op(onion_skin_client_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,
                               &handshake_state,
                               serv_reply, reply_len,
-                              client_keys, sizeof(client_keys),
+                              client_keys, &client_keylen,
                               rend_auth, client_params_out,
                               NULL), OP_EQ, 0);
 
@@ -266,6 +269,7 @@ test_ntor3_handshake(void *arg)
   serv_ns_params.sendme_inc_cells = congestion_control_sendme_inc();
 
   /* client off, serv off -> off */
+  congestion_control_set_cc_disabled();
   serv_ns_params.cc_enabled = 0;
   run_full_handshake(&serv_ns_params, &client_params, &serv_params);
   tt_int_op(client_params.cc_enabled, OP_EQ, 0);
@@ -285,12 +289,17 @@ test_ntor3_handshake(void *arg)
   tt_int_op(client_params.cc_enabled, OP_EQ, 1);
   tt_int_op(serv_params.cc_enabled, OP_EQ, 1);
 
+#if 0
+  // No longer supported: If the client asks for CC,
+  // the server may not decline.
+
   /* client on, serv off -> off */
   serv_ns_params.cc_enabled = 0;
   congestion_control_set_cc_enabled();
   run_full_handshake(&serv_ns_params, &client_params, &serv_params);
   tt_int_op(client_params.cc_enabled, OP_EQ, 0);
   tt_int_op(serv_params.cc_enabled, OP_EQ, 0);
+#endif
 
   /* client on, serv on -> on */
   serv_ns_params.cc_enabled = 1;

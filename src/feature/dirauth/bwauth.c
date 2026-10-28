@@ -239,7 +239,7 @@ dirserv_read_measured_bandwidths(const char *from_file,
   time_t file_time, now;
   int ok;
    /* This flag will be 1 only when the first successful bw measurement line
-   * has been encountered, so that measured_bw_line_parse don't give warnings
+   * has been encountered, so that measured_bw_line_parse doesn't give warnings
    * if there are additional header lines, as introduced in Bandwidth List spec
    * version 1.1.0 */
   int line_is_after_headers = 0;

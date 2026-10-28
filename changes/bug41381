@@ -1,0 +1,6 @@
+  o Major bugfixes (security):
+    - Avoid a set of possible memory corruption, double-free, and null pointer
+      dereference bugs that could occur with some reverse DNS virtual
+      address configurations.
+      Fixes bug 41381; bugfix on 0.1.0.1-rc.
+      Tracked as TROVE-2026-051.

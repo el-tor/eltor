@@ -1,0 +1,6 @@
+  o Documentation:
+    - Move the licenses of third-party components from LICENSE into
+      LICENSES/third-party.txt, leaving only Tor's own 3-clause BSD license
+      in LICENSE. The license texts are unchanged. This lets GitLab's
+      license detection report Tor as BSD-3-Clause; it was reporting
+      CC-BY-SA-4.0 because of the GeoIP data notice.

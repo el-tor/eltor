@@ -21,6 +21,7 @@
 #include "lib/meminfo/meminfo.h"
 #include "lib/osinfo/uname.h"
 #include "lib/process/setuid.h"
+#include "lib/crypt_ops/crypto_format.h"
 
 /* Required for dirinfo_type_t in or_options_t */
 #include "core/or/or.h"
@@ -518,7 +519,7 @@ port_parse_ports_relay(or_options_t *options,
   retval = 0;
 
  err:
-  if (*have_low_ports_out < 0)
+  if (have_low_ports_out && *have_low_ports_out < 0)
     *have_low_ports_out = (n_low_ports > 0);
   if (ports) {
     SMARTLIST_FOREACH(ports, port_cfg_t *, p, port_cfg_free(p));
@@ -693,7 +694,7 @@ compute_publishserverdescriptor(or_options_t *options)
  * - "any"
  * - "https"
  * - "email"
- * - "moat"
+ * - "settings"
  *
  * If the option string is unrecognised, a warning will be logged and 0 is
  * returned.  If the option string contains an invalid character, -1 is
@@ -706,7 +707,7 @@ check_bridge_distribution_setting(const char *bd)
     return 0;
 
   const char *RECOGNIZED[] = {
-    "none", "any", "https", "email", "moat"
+    "none", "any", "https", "email", "settings"
   };
   unsigned i;
   for (i = 0; i < ARRAY_LENGTH(RECOGNIZED); ++i) {
@@ -1180,6 +1181,24 @@ options_validate_relay_mode(const or_options_t *old_options,
                               options->MyFamily_lines, "MyFamily", msg))
     return -1;
 
+  if (options->FamilyId_lines) {
+    options->FamilyIds = smartlist_new();
+    config_line_t *line;
+    for (line = options->FamilyId_lines; line; line = line->next) {
+      if (!strcmp(line->value, "*")) {
+        options->AllFamilyIdsExpected = true;
+        continue;
+      }
+
+      ed25519_public_key_t pk;
+      if (ed25519_public_from_base64(&pk, line->value) < 0) {
+        tor_asprintf(msg, "Invalid FamilyId %s", line->value);
+        return -1;
+      }
+      smartlist_add(options->FamilyIds, tor_memdup(&pk, sizeof(pk)));
+    }
+  }
+
   if (options->ConstrainedSockets) {
     if (options->DirPort_set) {
       /* Providing cached directory entries while system TCP buffers are scarce
@@ -1274,6 +1293,7 @@ options_transition_affects_descriptor(const or_options_t *old_options,
   YES_IF_CHANGED_STRING(ContactInfo);
   YES_IF_CHANGED_STRING(BridgeDistribution);
   YES_IF_CHANGED_LINELIST(MyFamily);
+  YES_IF_CHANGED_LINELIST(FamilyId_lines);
   YES_IF_CHANGED_STRING(AccountingStart);
   YES_IF_CHANGED_INT(AccountingMax);
   YES_IF_CHANGED_INT(AccountingRule);
@@ -1621,9 +1641,15 @@ options_act_relay_dos(const or_options_t *old_options)
      * this is safe to call as it will load data from the current options
      * or/and the consensus. */
     dos_init();
-  } else if (old_options && public_server_mode(old_options)) {
-    /* Going from relay to non relay, clean it up. */
-    dos_free_all();
+  } else {
+    if (old_options && public_server_mode(old_options)) {
+      /* Going from relay to non relay, clean it up. */
+      dos_free_all();
+    }
+    if (server_mode(options)) {
+      /* Bridges serve directory requests, so the BEGIN_DIR limits apply. */
+      dos_bridge_init();
+    }
   }
 
   return 0;

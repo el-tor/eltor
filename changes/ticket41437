@@ -1,0 +1,4 @@
+  o Major bugfixes (onion service client):
+    - When an introduction point NACKs our INTRODUCE1 and we re-extend the same
+      circuit to another introduction point, update the circuit's introduction
+      point authentication key. Fixes bug 41437; bugfix on 0.3.2.1-alpha.

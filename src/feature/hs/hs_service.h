@@ -389,6 +389,9 @@ hs_service_add_ephemeral_status_t
 hs_service_add_ephemeral(ed25519_secret_key_t *sk, smartlist_t *ports,
                          int max_streams_per_rdv_circuit,
                          int max_streams_close_circuit,
+                         int pow_defenses_enabled,
+                         uint32_t pow_queue_rate,
+                         uint32_t pow_queue_burst,
                          smartlist_t *auth_clients_v3, char **address_out);
 int hs_service_del_ephemeral(const char *address);
 

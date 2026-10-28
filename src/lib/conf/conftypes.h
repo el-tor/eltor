@@ -89,7 +89,7 @@ typedef enum config_type_t {
   CONFIG_TYPE_EXTENDED,
 } config_type_t;
 
-/* Forward delcaration for var_type_def_t, for extended types. */
+/* Forward declaration for var_type_def_t, for extended types. */
 struct var_type_def_t;
 
 /** Structure to specify a named, typed member within a structure. */

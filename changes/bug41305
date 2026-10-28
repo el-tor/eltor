@@ -1,0 +1,4 @@
+  o Minor bugfixes (spec conformance):
+    - Reject zero-valued protocol capabilities (such as "Relay=0").
+      These have never been valid according, to the spec.
+      Fixes bug 41305; bugfix on 0.2.9.4-alpha.

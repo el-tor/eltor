@@ -1,0 +1,5 @@
+  o Removed features:
+    - Tor clients no longer accept consensus instructions
+      to downgrade the congestion control algorithm.
+      This is defense-in-depth for issues like 41345.
+      Implements ticket 41361.

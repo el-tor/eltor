@@ -1,0 +1,6 @@
+  o Minor bugfixes (directory authority):
+    - When the votes select an unsupported consensus method, fall back to the
+      newest method supported by the current configuration. This fixes the
+      issue that authorities with AuthDirSupport048Clients enabled could still
+      pick consensus method 36 if the method in the votes was below.
+      Bugfix on 0.4.9.12.

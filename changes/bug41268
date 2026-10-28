@@ -1,0 +1,5 @@
+  o Minor bugfixes (onion circuit rendezvous):
+    - When linking two circuits together at the rendezvous point, remove
+      the correct circuit from the internal hs_circuitmap. We had
+      previously been removing the wrong one, which was mostly
+      harmless. Fixes bug 41268; bugfix on 0.2.5.4-alpha.

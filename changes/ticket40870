@@ -1,4 +1,0 @@
-  o Minor bugfixes (conflux, client):
-    - Avoid a non fatal assert caused by data coming in on a conflux set that is
-      being freed during shutdown. Fixes bug 40870; bugfix on 0.4.8.1-alpha.
-

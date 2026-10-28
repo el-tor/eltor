@@ -286,7 +286,7 @@ tor_version_parse(const char *s, tor_version_t *out)
     cp += 2;
     out->svn_revision = (int) strtol(cp,&eos,10);
   } else if (!strcmpstart(cp, "(git-")) {
-    char *close_paren = strchr(cp, ')');
+    const char *close_paren = strchr(cp, ')');
     int hexlen;
     char digest[DIGEST_LEN];
     if (! close_paren)
@@ -442,11 +442,6 @@ memoize_protover_summary(protover_summary_flags_t *out,
   out->supports_ed25519_link_handshake_compat =
     protocol_list_supports_protocol(protocols, PRT_LINKAUTH,
                                     PROTOVER_LINKAUTH_ED25519_HANDSHAKE);
-  out->supports_ed25519_link_handshake_any =
-    protocol_list_supports_protocol_or_later(
-                                     protocols,
-                                     PRT_LINKAUTH,
-                                     PROTOVER_LINKAUTH_ED25519_HANDSHAKE);
 
   out->supports_extend2_cells =
     protocol_list_supports_protocol(protocols, PRT_RELAY,
@@ -494,6 +489,19 @@ memoize_protover_summary(protover_summary_flags_t *out,
                                     PROTOVER_FLOWCTRL_CC) &&
     protocol_list_supports_protocol(protocols, PRT_CONFLUX,
                                     PROTOVER_CONFLUX_V1);
+
+  out->supports_ntor_v3 =
+    protocol_list_supports_protocol(protocols, PRT_RELAY,
+                                    PROTOVER_RELAY_NTOR_V3);
+
+  /* CGO requires congestion control and subproto negotiation. */
+  out->supports_cgo =
+    protocol_list_supports_protocol(protocols, PRT_FLOWCTRL,
+                                    PROTOVER_FLOWCTRL_CC) &&
+    protocol_list_supports_protocol(protocols, PRT_RELAY,
+                                    PROTOVER_RELAY_NEGOTIATE_SUBPROTO) &&
+    protocol_list_supports_protocol(protocols, PRT_RELAY,
+                                    PROTOVER_RELAY_CRYPT_CGO);
 
   protover_summary_flags_t *new_cached = tor_memdup(out, sizeof(*out));
   cached = strmap_set(protover_summary_map, protocols, new_cached);

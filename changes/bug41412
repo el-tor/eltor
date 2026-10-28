@@ -1,0 +1,14 @@
+  o Major bugfixes (circuit, channel):
+    - Cancelling a circuit before its first hop completed would cause
+      Tor to stop using a working guard connection for new circuits
+      and abort unrelated pending directory requests. These cancellations
+      could also be triggered remotely, causing additional TLS connections
+      to the same guard that could aid traffic analysis. DoS conditions and/or
+      overly short circuit build timeouts could also cause unnecessary
+      connection replacement, at the exact time when additional connection
+      load would be most harmful. We've restricted this recovery behavior
+      to actual first-hop timeouts, allowing at least the longer of the
+      measurement timeout and the initial timeout before replacing a stalled
+      connection. These changes preserve recovery from stalled connections
+      without changing guard reachability. Fixes bug 41412; bugfix on
+      0.1.1.10-alpha.

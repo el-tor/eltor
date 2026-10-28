@@ -1,0 +1,8 @@
+  o Major bugfixes (security):
+    - Negotiate CGO cryptography with every hop that supports it.
+      Previously, we failed to negotiate CGO with hops other
+      than the final hop of a circuit, since we did not enable
+      congestion-control with those hops.  Now, we negotiate
+      congestion-control _and_ CGO whenever we can.
+      Fixes bug 41348; bugfix on 0.4.9.3-alpha.
+      Tracked as TROVE-2026-033.

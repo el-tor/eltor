@@ -25,7 +25,7 @@ struct link_specifier_t;
 /** The latest descriptor format version we support. */
 #define HS_DESC_SUPPORTED_FORMAT_VERSION_MAX 3
 
-/** Default lifetime of a descriptor in seconds. The valus is set at 3 hours
+/** Default lifetime of a descriptor in seconds. The value is set at 3 hours
  * which is 180 minutes or 10800 seconds. */
 #define HS_DESC_DEFAULT_LIFETIME (3 * 60 * 60)
 /** Maximum lifetime of a descriptor in seconds. The value is set at 12 hours

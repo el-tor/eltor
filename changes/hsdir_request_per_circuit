@@ -1,0 +1,5 @@
+  o Minor features (denial of service mitigation):
+    - Onion service directories now accept at most one descriptor fetch
+      or upload per circuit from an authenticated relay, and close the
+      circuit on any later one. This holds even when the BEGIN_DIR
+      per-circuit limit is disabled.

@@ -1,0 +1,14 @@
+  o Major bugfixes (circuit build timeout):
+    - Under certain conditions, the circuit build timeout history
+      could become filled with "abandoned" entries, which would block
+      updating the timeout as network conditions change. This could
+      cause connectivity failure if the timeout value became stuck
+      at a sufficiently low value. Missing first-hop timeout accounting
+      could also prevent the timeout from being reset, when these failures
+      happen at the first hop of the circuit. We've corrected the first-hop
+      accounting, and have fixed two sources of excessive abandoned
+      timeout entries, and added additional reset handling when the timeout
+      history becomes full of abandoned timeout measurements. We've also
+      added diagnostic log messages to help detect any potential
+      remaining cases of timeout miscounting and abandonment accumulation.
+      Fixes bug 41420; bugfix on 0.2.2.14-alpha.

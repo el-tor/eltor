@@ -1,0 +1,13 @@
+  o Major bugfixes (security):
+    - Do not purge memory for OOM from within low-level code.
+      Previously,
+      we would handle OOM conditions from within
+      append_cell_to_circuit_queue, which could appear at various
+      places within our call stack, and lead to objects being
+      freed at surprising points in the code,
+      with attendent risk of use-after-free errors.
+      Now we only check for OOM conditions there, and handle
+      them from much higher in the stack.
+      Fixes bugs 41341, 41336, 41326, and 41363;
+      bugfix on 0.2.4.14-alpha.
+      Root-cause fix for TROVE-2026-043.

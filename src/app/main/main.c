@@ -62,6 +62,7 @@
 #include "lib/crypt_ops/crypto_format.h"
 #include "lib/crypt_ops/crypto_rand.h"
 #include "lib/crypt_ops/crypto_s2k.h"
+#include "lib/crypt_ops/crypto_util.h"
 #include "lib/net/resolve.h"
 #include "lib/trace/trace.h"
 
@@ -164,6 +165,10 @@ do_hup(void)
     }
   }
 
+  /* Check if onion keys were manually rotated? */
+  if (options->ManualOnionKeyRotation)
+    router_reload_manual_onion_keys();
+
   /* Rotate away from the old dirty circuits. This has to be done
    * after we've read the new options, but before we start using
    * circuits for directory fetches. */
@@ -186,6 +191,11 @@ do_hup(void)
     if (new_signing_key < 0 ||
         generate_ed_link_cert(options, now, new_signing_key > 0)) {
       log_warn(LD_OR, "Problem reloading Ed25519 keys; still using old keys.");
+    }
+    if (load_family_id_keys(options,
+                            networkstatus_get_latest_consensus())) {
+      log_warn(LD_OR, "Problem reloading family ID keys; "
+               "still using old keys.");
     }
 
     /* Update cpuworker and dnsworker processes, so they get up-to-date
@@ -372,6 +382,7 @@ dumpstats(int severity)
   channel_dumpstats(severity);
   channel_listener_dumpstats(severity);
 
+  // TODO CGO: Use of RELAY_PAYLOAD_SIZE_MAX may make this a bit wrong.
   tor_log(severity, LD_NET,
       "Cells processed: %"PRIu64" padding\n"
       "                 %"PRIu64" create\n"
@@ -390,11 +401,11 @@ dumpstats(int severity)
   if (stats_n_data_cells_packaged)
     tor_log(severity,LD_NET,"Average packaged cell fullness: %2.3f%%",
         100*(((double)stats_n_data_bytes_packaged) /
-             ((double)stats_n_data_cells_packaged*RELAY_PAYLOAD_SIZE)) );
+             ((double)stats_n_data_cells_packaged*RELAY_PAYLOAD_SIZE_MAX)) );
   if (stats_n_data_cells_received)
     tor_log(severity,LD_NET,"Average delivered cell fullness: %2.3f%%",
         100*(((double)stats_n_data_bytes_received) /
-             ((double)stats_n_data_cells_received*RELAY_PAYLOAD_SIZE)) );
+             ((double)stats_n_data_cells_received*RELAY_PAYLOAD_SIZE_MAX)) );
 
   cpuworker_log_onionskin_overhead(severity, ONION_HANDSHAKE_TYPE_TAP, "TAP");
   cpuworker_log_onionskin_overhead(severity, ONION_HANDSHAKE_TYPE_NTOR,"ntor");
@@ -825,6 +836,68 @@ do_dump_config(void)
   return 0;
 }
 
+/** Implement --keygen-family; create a family ID key and write it to a file.
+ */
+static int
+do_keygen_family(const char *fname_base)
+{
+  ed25519_public_key_t pk;
+  char *fname_key = NULL, *fname_id = NULL, *id_contents = NULL;
+  int r = -1;
+
+  if (BUG(!fname_base))
+    goto done;
+
+  tor_asprintf(&fname_key, "%s.secret_family_key", fname_base);
+  tor_asprintf(&fname_id, "%s.public_family_id", fname_base);
+
+  if (create_family_id_key(fname_key, &pk) < 0)
+    goto done;
+  tor_asprintf(&id_contents, "%s\n", ed25519_fmt(&pk));
+  if (write_str_to_file(fname_id, id_contents, 0) < 0)
+    goto done;
+
+  printf("# Generated %s\n", fname_key);
+  printf("FamilyId %s\n", ed25519_fmt(&pk));
+
+  r = 0;
+
+ done:
+  tor_free(fname_key);
+  tor_free(fname_id);
+  tor_free(id_contents);
+  return r;
+}
+
+/** Implement --keygen-onion; create an onion key and write it to a file.
+ */
+static int
+do_keygen_onion_key(const char *fname)
+{
+  int result = -1;
+  curve25519_keypair_t keys;
+
+  if (BUG(! fname))
+    goto done;
+
+  /* Generate new onion key. */
+  if (curve25519_keypair_generate(&keys, /* extra strong */ 1) < 0)
+    goto done;
+
+  /* Save it to disk. */
+  if (curve25519_keypair_write_to_file(&keys, fname, "onion") < 0)
+    goto done;
+
+  printf("Saved new Onion Key in file: %s\n", fname);
+
+  /* All good. */
+  result = 0;
+
+ done:
+  memwipe(&keys, 0, sizeof(keys));
+  return result;
+}
+
 static void
 init_addrinfo(void)
 {
@@ -919,6 +992,19 @@ sandbox_init_filter(void)
   OPEN("/etc/hosts");
   OPEN("/proc/meminfo");
 
+#ifdef HAVE_MODULE_RELAY
+  {
+    smartlist_t *family_id_files =
+      list_family_key_files(options, options->FamilyKeyDirectory);
+
+    SMARTLIST_FOREACH(family_id_files, const char *, fn,
+                      OPEN(fn));
+
+    SMARTLIST_FOREACH(family_id_files, char *, cp, tor_free(cp));
+    smartlist_free(family_id_files);
+  }
+#endif
+
   if (options->BridgeAuthoritativeDir)
     OPEN_DATADIR_SUFFIX("networkstatus-bridges", ".tmp");
 
@@ -926,6 +1012,11 @@ sandbox_init_filter(void)
     OPEN_DATADIR("approved-routers");
     OPEN_DATADIR_SUFFIX("my-consensus-microdesc", ".tmp");
     OPEN_DATADIR_SUFFIX("my-consensus-ns", ".tmp");
+    if (options->V3BandwidthsFile) {
+      log_notice(LD_GENERAL, "Adding V3BandwidthsFile %s to sandboxing set.",
+                 options->V3BandwidthsFile);
+      OPEN(options->V3BandwidthsFile);
+    }
   }
 
   if (options->ServerDNSResolvConfFile)
@@ -1007,6 +1098,13 @@ sandbox_init_filter(void)
   if (authdir_mode(options)) {
     RENAME_SUFFIX("my-consensus-microdesc", ".tmp");
     RENAME_SUFFIX("my-consensus-ns", ".tmp");
+
+    sandbox_cfg_allow_rename(&cfg,
+      get_datadir_fname("my-consensus-microdesc"),
+      get_datadir_fname("consensus-transparency-microdesc"));
+    sandbox_cfg_allow_rename(&cfg,
+      get_datadir_fname("my-consensus-ns"),
+      get_datadir_fname("consensus-transparency-ns"));
   }
 
 #define STAT_DATADIR(name)                      \
@@ -1239,7 +1337,8 @@ run_tor_main_loop(void)
 
   /* launch cpuworkers. Need to do this *after* we've read the onion key. */
   /* launch them always for all tors, now that clients can solve onion PoWs. */
-  cpuworker_init();
+  if (cpuworker_init() == -1)
+    return -1;
 
   consdiffmgr_enable_background_compression();
 
@@ -1376,6 +1475,12 @@ tor_run_main(const tor_main_configuration_t *tor_cfg)
     break;
   case CMD_KEYGEN:
     result = load_ed_keys(get_options(), time(NULL)) < 0;
+    break;
+  case CMD_KEYGEN_FAMILY:
+    result = do_keygen_family(get_options()->command_arg);
+    break;
+  case CMD_KEYGEN_ONION:
+    result = do_keygen_onion_key(get_options()->command_arg);
     break;
   case CMD_KEY_EXPIRATION:
     init_keys();

@@ -202,7 +202,7 @@ tor_zlib_compress_new(int compress_,
  *
  * Return TOR_COMPRESS_DONE if we've finished the entire
  * compression/decompression.
- * Return TOR_COMPRESS_OK if we're processed everything from the input.
+ * Return TOR_COMPRESS_OK if we've processed everything from the input.
  * Return TOR_COMPRESS_BUFFER_FULL if we're out of space on <b>out</b>.
  * Return TOR_COMPRESS_ERROR if the stream is corrupt.
  */
@@ -252,6 +252,11 @@ tor_zlib_compress_process(tor_zlib_compress_state_t *state,
     case Z_BUF_ERROR:
       if (state->stream.avail_in == 0 && !finish)
         return TOR_COMPRESS_OK;
+      /* avail_in==0 with finish==1 means the input stream was truncated and
+       * will never reach Z_STREAM_END; treat as an error to avoid an infinite
+       * loop in buf_add_compress() where no progress can ever be made. */
+      if (state->stream.avail_in == 0)
+        return TOR_COMPRESS_ERROR;
       return TOR_COMPRESS_BUFFER_FULL;
     case Z_OK:
       if (state->stream.avail_out == 0 || finish)

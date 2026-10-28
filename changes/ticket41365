@@ -1,0 +1,15 @@
+  o Major bugfixes (client, guard):
+    - Stop blaming guards for circuit, stream, directory-request, and generic
+      channel-close failures, and instead only record guard failure once per
+      unsuccessful outgoing connection establishment. This also covers directory
+      guards, synchronous failures, and proxy or pluggable transport paths.
+      This fixes TROVE-2026-030, TROVE-2026-038, TROVE-2026-041.
+      Fixes bug 41360; bugfix on 0.3.0.1-alpha, bug 41365; bugfix on
+      0.3.0.1-alpha, and bug 41366; bugfix on 0.3.0.1-alpha.
+
+  o Major bugfixes (connection handling):
+    - Fix a use-after-free when a TCP connection succeeds immediately but
+      starting its TLS handshake fails. Fixed by detaching the OR connection
+      from its channel before freeing the channel, so deferred connection
+      cleanup cannot access freed memory.
+      This fixes TROVE-2026-056. Fixes bug 41398; bugfix on 0.2.4.4-alpha.

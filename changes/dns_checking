@@ -1,0 +1,6 @@
+  o Major bugfixes (security):
+    - Validate DNS names for complience whenever providing or receiving them
+      from evdns, to limit exposure to a class of application and
+      library bugs.
+      Fixes bug 41320; bugfix on 0.1.1.23.
+      Resolves TROVE-2026-035.

@@ -219,15 +219,15 @@ test_protover_all_supported(void *arg)
   tt_str_op(msg, OP_EQ, "Link=6-60");
   tor_free(msg);
   tt_assert(! protover_all_supported("Link=1-3,50-63", &msg));
-  tt_str_op(msg, OP_EQ, "Link=50-63");
+  tt_str_op(msg, OP_EQ, "Link=1-2,50-63");
   tor_free(msg);
   tt_assert(! protover_all_supported("Link=1-3,5-12", &msg));
-  tt_str_op(msg, OP_EQ, "Link=6-12");
+  tt_str_op(msg, OP_EQ, "Link=1-2,6-12");
   tor_free(msg);
 
   /* Mix of protocols we do support and some we don't, where the protocols
    * we do support have some versions we don't support. */
-  tt_assert(! protover_all_supported("Link=1-3,5-12 Quokka=40-41", &msg));
+  tt_assert(! protover_all_supported("Link=3,5-12 Quokka=40-41", &msg));
   tt_str_op(msg, OP_EQ, "Link=6-12 Quokka=40-41");
   tor_free(msg);
 
@@ -308,15 +308,6 @@ test_protover_supports_version(void *arg)
                                             PRT_LINKAUTH, 3));
   tt_assert(!protocol_list_supports_protocol("Link=4-6 LinkAuth=3",
                                              PRT_LINKAUTH, 4));
-  tt_assert(!protocol_list_supports_protocol_or_later("Link=4-6 LinkAuth=3",
-                                             PRT_LINKAUTH, 4));
-  tt_assert(protocol_list_supports_protocol_or_later("Link=4-6 LinkAuth=3",
-                                             PRT_LINKAUTH, 3));
-  tt_assert(protocol_list_supports_protocol_or_later("Link=4-6 LinkAuth=3",
-                                             PRT_LINKAUTH, 2));
-
-  tt_assert(!protocol_list_supports_protocol_or_later("Link=4-6 LinkAuth=3",
-                                                      PRT_DESC, 2));
  done:
  ;
 }
@@ -329,7 +320,7 @@ test_protover_supports_version(void *arg)
  * headers. */
 #define PROTOVER_LINKAUTH_V1 1
 #define PROTOVER_LINKAUTH_V2 2
-#define PROTOVER_RELAY_V1 1
+#define PROTOVER_RELAY_V2 2
 
 /* Deprecated HSIntro versions */
 #define PROTOVER_HS_INTRO_DEPRECATED_1 1
@@ -397,7 +388,7 @@ test_protover_supported_protocols(void *arg)
   /* Relay protovers do not appear anywhere in the code. */
   tt_assert(protocol_list_supports_protocol(supported_protocols,
                                             PRT_RELAY,
-                                            PROTOVER_RELAY_V1));
+                                            PROTOVER_RELAY_V2));
   tt_assert(protocol_list_supports_protocol(supported_protocols,
                                             PRT_RELAY,
                                             PROTOVER_RELAY_EXTEND2));
@@ -410,6 +401,17 @@ test_protover_supported_protocols(void *arg)
   tt_assert(protocol_list_supports_protocol(supported_protocols,
                                             PRT_RELAY,
                                             PROTOVER_RELAY_CANONICAL_IPV6));
+
+  /* Enlarged El Tor cells cannot use the upstream 509-byte CGO profile. */
+  tt_int_op(protocol_list_supports_protocol(supported_protocols,
+                                           PRT_RELAY, 6),
+            OP_EQ, ELTOR_CGO_SUPPORTED);
+  tt_assert(protover_all_supported(
+      protover_get_required_relay_protocols(), NULL));
+  tt_assert(protover_all_supported(
+      protover_get_recommended_relay_protocols(), NULL));
+  tt_assert(protover_all_supported(
+      protover_get_recommended_client_protocols(), NULL));
 
   /* These HSIntro versions are deprecated */
   tt_assert(!protocol_list_supports_protocol(supported_protocols,
@@ -641,7 +643,6 @@ test_protover_vote_roundtrip_ours(void *args)
             "supports_initiating_ipv6_extends: %d,\n" \
             "supports_canonical_ipv6_conns: %d,\n" \
             "supports_ed25519_link_handshake_compat: %d,\n" \
-            "supports_ed25519_link_handshake_any: %d,\n" \
             "supports_ed25519_hs_intro: %d,\n" \
             "supports_establish_intro_dos_extension: %d,\n" \
             "supports_v3_hsdir: %d,\n" \
@@ -654,7 +655,6 @@ test_protover_vote_roundtrip_ours(void *args)
             (flags).supports_initiating_ipv6_extends, \
             (flags).supports_canonical_ipv6_conns, \
             (flags).supports_ed25519_link_handshake_compat, \
-            (flags).supports_ed25519_link_handshake_any, \
             (flags).supports_ed25519_hs_intro, \
             (flags).supports_establish_intro_dos_extension, \
             (flags).supports_v3_hsdir, \
@@ -748,11 +748,9 @@ test_protover_summarize_flags(void *args)
   DEBUG_PROTOVER(flags);
   tt_int_op(flags.protocols_known, OP_EQ, 1);
   tt_int_op(flags.supports_ed25519_link_handshake_compat, OP_EQ, 1);
-  tt_int_op(flags.supports_ed25519_link_handshake_any, OP_EQ, 1);
   /* Now clear those flags, and check the rest are zero */
   flags.protocols_known = 0;
   flags.supports_ed25519_link_handshake_compat = 0;
-  flags.supports_ed25519_link_handshake_any = 0;
   tt_mem_op(&flags, OP_EQ, &zero_flags, sizeof(flags));
 
   /* Test one greater */
@@ -763,11 +761,9 @@ test_protover_summarize_flags(void *args)
   DEBUG_PROTOVER(flags);
   tt_int_op(flags.protocols_known, OP_EQ, 1);
   tt_int_op(flags.supports_ed25519_link_handshake_compat, OP_EQ, 0);
-  tt_int_op(flags.supports_ed25519_link_handshake_any, OP_EQ, 1);
   /* Now clear those flags, and check the rest are zero */
   flags.protocols_known = 0;
   flags.supports_ed25519_link_handshake_compat = 0;
-  flags.supports_ed25519_link_handshake_any = 0;
   tt_mem_op(&flags, OP_EQ, &zero_flags, sizeof(flags));
 
   /* Test one less */
@@ -778,11 +774,9 @@ test_protover_summarize_flags(void *args)
   DEBUG_PROTOVER(flags);
   tt_int_op(flags.protocols_known, OP_EQ, 1);
   tt_int_op(flags.supports_ed25519_link_handshake_compat, OP_EQ, 0);
-  tt_int_op(flags.supports_ed25519_link_handshake_any, OP_EQ, 0);
   /* Now clear those flags, and check the rest are zero */
   flags.protocols_known = 0;
   flags.supports_ed25519_link_handshake_compat = 0;
-  flags.supports_ed25519_link_handshake_any = 0;
   tt_mem_op(&flags, OP_EQ, &zero_flags, sizeof(flags));
 
   /* We don't test "one more" and "one less" for each protocol version.

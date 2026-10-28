@@ -32,6 +32,7 @@
 #include "feature/nodelist/routerset.h"
 #include "feature/rend/rendcommon.h"
 #include "feature/relay/routermode.h"
+#include "lib/crypt_ops/crypto_curve25519.h"
 #include "lib/crypt_ops/crypto_rand.h"
 #include "lib/crypt_ops/crypto_util.h"
 #include "lib/net/resolve.h"
@@ -83,6 +84,8 @@ set_unix_port(edge_connection_t *conn, hs_port_config_t *p)
   conn->base_.socket_family = AF_UNIX;
   tor_addr_make_unspec(&conn->base_.addr);
   conn->base_.port = 1;
+  /* address is currently "(rendezvous)"; free it before we replace it */
+  tor_free(conn->base_.address);
   conn->base_.address = tor_strdup(p->unix_addr);
   return 0;
 }
@@ -423,7 +426,7 @@ get_second_cached_disaster_srv(void)
 #endif /* defined(TOR_UNIT_TESTS) */
 
 /** When creating a blinded key, we need a parameter which construction is as
- * follow: H(pubkey | [secret] | ed25519-basepoint | nonce).
+ * follows: H(pubkey | [secret] | ed25519-basepoint | nonce).
  *
  * The nonce has a pre-defined format which uses the time period number
  * period_num and the start of the period in second start_time_period.
@@ -446,7 +449,7 @@ build_blinded_key_param(const ed25519_public_key_t *pubkey,
   tor_assert(pubkey);
   tor_assert(param_out);
 
-  /* Create the nonce N. The construction is as follow:
+  /* Create the nonce N. The construction is as follows:
    *    N = "key-blind" || INT_8(period_num) || INT_8(period_length) */
   memcpy(nonce, HS_KEYBLIND_NONCE_PREFIX, HS_KEYBLIND_NONCE_PREFIX_LEN);
   offset += HS_KEYBLIND_NONCE_PREFIX_LEN;
@@ -456,8 +459,13 @@ build_blinded_key_param(const ed25519_public_key_t *pubkey,
   offset += sizeof(uint64_t);
   tor_assert(offset == HS_KEYBLIND_NONCE_LEN);
 
-  /* Generate the parameter h and the construction is as follow:
-   *    h = H(BLIND_STRING | pubkey | [secret] | ed25519-basepoint | N) */
+  /* Generate the parameter h. The construction is as follows:
+   *    h = H(BLIND_STRING | pubkey | [secret] | ed25519-basepoint | N)
+   *
+   * Note that below we have a surprise where we use sizeof(blind_str)
+   * not strlen(blind_str), i.e. we include the nul byte at the end in
+   * our hashed info. We ended up specifying that nul byte in the spec
+   * rather than fixing it here in the code. */
   digest = crypto_digest256_new(DIGEST_SHA3_256);
   crypto_digest_add_bytes(digest, blind_str, sizeof(blind_str));
   crypto_digest_add_bytes(digest, (char *) pubkey, ED25519_PUBKEY_LEN);
@@ -1589,6 +1597,7 @@ hs_pick_hsdir(smartlist_t *responsible_dirs, const char *req_key_str,
  * ORPort, or NULL. If direct_conn is false, the IP address is always IPv4.
  *
  * It performs the following checks:
+ *  if the onion key is unusable, return NULL.
  *  if there is no usable IP address, or legacy ID is missing, return NULL.
  *  if direct_conn, and we can't reach any IP address, return NULL.
  */
@@ -1613,6 +1622,11 @@ hs_get_extend_info_from_lspecs(const smartlist_t *lspecs,
 
   if (onion_key == NULL) {
     log_warn(LD_BUG, "Specified onion key is null");
+    goto done;
+  }
+
+  if (!curve25519_public_key_is_ok(onion_key)) {
+    log_debug(LD_REND, "Invalid ntor onion key");
     goto done;
   }
 
@@ -1686,7 +1700,7 @@ hs_get_extend_info_from_lspecs(const smartlist_t *lspecs,
 
   /* We do have everything for which we think we can connect successfully. */
   info = extend_info_new(NULL, legacy_id,
-                         (have_ed25519_id) ? &ed25519_pk : NULL, NULL,
+                         (have_ed25519_id) ? &ed25519_pk : NULL,
                          onion_key, &ap.addr, ap.port, NULL, false);
  done:
   return info;

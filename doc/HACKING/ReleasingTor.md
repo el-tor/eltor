@@ -159,21 +159,3 @@ do the following:
    3. In `main`, bump version to the next series: `tor-x.y.0-alpha-dev` and
       then tag it: `git tag -s tor-x.y.0-alpha-dev`
 
-## Appendix: An alternative means to notify packagers
-
-If for some reason you need to contact a bunch of packagers without
-using the publicly archived tor-packagers list, you can try these
-people:
-
-       - {weasel,sysrqb,mikeperry} at torproject dot org
-       - {blueness} at gentoo dot org
-       - {paul} at invizbox dot io
-       - {vincent} at invizbox dot com
-       - {lfleischer} at archlinux dot org
-       - {Nathan} at freitas dot net
-       - {mike} at tig dot as
-       - {tails-rm} at boum dot org
-       - {simon} at sdeziel.info
-       - {yuri} at freebsd.org
-       - {mh+tor} at scrit.ch
-       - {security} at brave.com

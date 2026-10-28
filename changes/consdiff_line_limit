@@ -1,0 +1,4 @@
+  o Minor bugfixes (consensus diff):
+    - Reject consensus diffs at exactly the line-count threshold and above.
+      Previously, a diff with exactly the threshold number of lines passed the
+      limit check. Bugfix on 0.4.9.12.

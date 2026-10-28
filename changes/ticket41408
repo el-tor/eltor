@@ -1,0 +1,8 @@
+  o Major bugfixes (onion service):
+    - A service-side rendezvous circuit that failed before reaching the
+      rendezvous point was relaunched twice (once when marked for close and
+      once more when freed), producing two concurrent circuits that carried the
+      same rendezvous cookie and key material and, with repeated failures,
+      2^(N+1)-1 circuit builds per INTRODUCE2 instead of N+1. It is now
+      relaunched exactly once. TROVE-2026-058.
+      Fixes bug 41408; bugfix on 0.4.7.11.

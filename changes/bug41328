@@ -1,0 +1,9 @@
+  o Major bugfixes (conflux, relay, security):
+    - Only accept a CONFLUX_LINK cell on a plain OR circuit, and refuse to
+      turn a (pending) conflux leg into an introduction or rendezvous point.
+      Previously a client could link a rendezvous-point circuit into a
+      conflux set and then, with a forged sequence number in the LINK cell,
+      make the relay tear the set down from inside the rendezvous splice,
+      triggering a fatal assertion in assert_circuit_ok(). Also reject a
+      LINK/LINKED cell whose last_seqno_recv is above what we ever sent on
+      the set. Fixes bug 41328; bugfix on 0.4.8.1-alpha.
