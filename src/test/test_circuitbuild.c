@@ -1345,14 +1345,18 @@ test_circuit_extend(void *arg)
 
   /* The following cases exercise upstream extension validation, independent
    * of El Tor's payment gate. First confirm the production gate rejects a
-   * missing proof; then use the explicitly testing-only bypass. */
+   * missing metadata; then supply metadata for the mocked parser. */
   MOCK(extend_cell_parse, mock_extend_cell_parse);
   mock_extend_cell_parse_result = 0;
   get_options_mutable()->TestingTorNetwork = 0;
   tt_int_op(circuit_extend(msg, circ), OP_EQ, -1);
   expect_log_msg_containing("No payment hash found in extend cell");
   mock_clean_saved_logs();
-  get_options_mutable()->TestingTorNetwork = 1;
+  static const char payment_metadata[] =
+    "eltor_payhash00000000000000000000000000000000"
+    "00000000000000000000000000000000";
+  msg->body = (uint8_t *)payment_metadata;
+  msg->length = sizeof(payment_metadata) - 1;
 
   /* And make parsing succeed, but fail on adding ed25519 */
   memset(&mock_extend_cell_parse_cell_out, 0,
