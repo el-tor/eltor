@@ -235,10 +235,10 @@ free_capacity_send(free_capacity_circuit_t *circ, free_capacity_conn_t *conn,
   return circuit_charge(circ, conn, cells, bytes, now_ms, false);
 }
 
-free_capacity_result_t
-free_capacity_queue_push(free_capacity_circuit_t *circ, uint32_t bytes,
-                         uint64_t now_ms,
-                         free_capacity_queue_ticket_t *ticket_out)
+static free_capacity_result_t
+queue_push(free_capacity_circuit_t *circ, uint32_t bytes,
+           uint64_t queued_ms, uint64_t now_ms,
+           free_capacity_queue_ticket_t *ticket_out, bool hold)
 {
   free_capacity_result_t r;
   free_capacity_t *owner;
@@ -246,9 +246,22 @@ free_capacity_queue_push(free_capacity_circuit_t *circ, uint32_t bytes,
   if (!ticket_out)
     return FREE_CAPACITY_BAD_STATE;
   memset(ticket_out, 0, sizeof(*ticket_out));
-  r = free_capacity_check(circ, now_ms);
-  if (r != FREE_CAPACITY_OK)
-    return r;
+  if (hold) {
+    if (!circ || !circ->active) return FREE_CAPACITY_BAD_STATE;
+    if (queued_ms > now_ms) return FREE_CAPACITY_CLOCK_ERROR;
+    r = advance_owner(circ->owner, now_ms);
+    if (r != FREE_CAPACITY_OK) return r;
+    if (now_ms - queued_ms >= FREE_CAPACITY_QUEUE_AGE_MS)
+      circ->closing = true;
+    for (unsigned i = 0; i < FREE_CAPACITY_QUEUE_CELLS; ++i)
+      if (circ->queue_ticket[i] &&
+          now_ms - circ->queue_time[i] >= FREE_CAPACITY_QUEUE_AGE_MS)
+        circ->closing = true;
+    if (circ->closing) return FREE_CAPACITY_CLOSE;
+  } else {
+    r = free_capacity_check(circ, now_ms);
+    if (r != FREE_CAPACITY_OK) return r;
+  }
   if (!bytes)
     return FREE_CAPACITY_BAD_STATE;
   owner = circ->owner;
@@ -264,7 +277,7 @@ free_capacity_queue_push(free_capacity_circuit_t *circ, uint32_t bytes,
   /* The fixed count and slots are changed together under the caller's lock. */
   if (index == FREE_CAPACITY_QUEUE_CELLS)
     return FREE_CAPACITY_BAD_STATE;
-  circ->queue_time[index] = now_ms;
+  circ->queue_time[index] = queued_ms;
   circ->queue_size[index] = bytes;
   circ->queue_ticket[index] = ++owner->last_queue_ticket;
   ++circ->queue_count;
@@ -273,6 +286,22 @@ free_capacity_queue_push(free_capacity_circuit_t *circ, uint32_t bytes,
   ticket_out->owner = owner;
   ticket_out->serial = circ->queue_ticket[index];
   return FREE_CAPACITY_OK;
+}
+
+free_capacity_result_t
+free_capacity_queue_push(free_capacity_circuit_t *circ, uint32_t bytes,
+                         uint64_t now_ms,
+                         free_capacity_queue_ticket_t *ticket_out)
+{
+  return queue_push(circ, bytes, now_ms, now_ms, ticket_out, false);
+}
+
+free_capacity_result_t
+free_capacity_queue_hold(free_capacity_circuit_t *circ, uint32_t bytes,
+                         uint64_t queued_ms, uint64_t now_ms,
+                         free_capacity_queue_ticket_t *ticket_out)
+{
+  return queue_push(circ, bytes, queued_ms, now_ms, ticket_out, true);
 }
 
 free_capacity_result_t
@@ -304,6 +333,28 @@ free_capacity_queue_remove(free_capacity_circuit_t *circ,
   circ->queue_time[index] = 0;
   --circ->queue_count;
   return FREE_CAPACITY_OK;
+}
+
+free_capacity_result_t
+free_capacity_queue_discard(free_capacity_circuit_t *circ,
+                            const free_capacity_queue_ticket_t *ticket)
+{
+  if (!circ || !circ->active || !ticket || !ticket->serial ||
+      ticket->owner != circ->owner)
+    return FREE_CAPACITY_BAD_STATE;
+  for (unsigned i = 0; i < FREE_CAPACITY_QUEUE_CELLS; ++i) {
+    if (circ->queue_ticket[i] != ticket->serial)
+      continue;
+    uint32_t bytes = circ->queue_size[i];
+    circ->owner->queued_bytes -= bytes;
+    circ->queued_bytes -= bytes;
+    circ->queue_ticket[i] = 0;
+    circ->queue_size[i] = 0;
+    circ->queue_time[i] = 0;
+    --circ->queue_count;
+    return FREE_CAPACITY_OK;
+  }
+  return FREE_CAPACITY_BAD_STATE;
 }
 
 void

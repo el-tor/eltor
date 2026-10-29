@@ -4,6 +4,7 @@
 #include "orconfig.h"
 #include "core/or/or.h"
 #include "feature/control/control_payment.h"
+#include "feature/payment/payment_resources.h"
 #include "core/mainloop/connection.h"
 #include "lib/buf/buffers.h"
 #include "feature/control/control.h"
@@ -346,7 +347,9 @@ test_control_payment_event_bound(void *arg)
  done:
   UNMOCK(connection_write_to_buf_impl_);
   UNMOCK(connection_mark_for_close_internal_);
+  control_payment_connection_closed(&conn);
   buf_free(conn.base_.outbuf);
+  (void)payment_resources_free_all();
 }
 
 static unsigned payment_wire_replies;
@@ -449,6 +452,7 @@ test_control_payment_relay_bridge(void *arg)
   tt_assert(strstr(reply, "250-ELTOR_ADMISSION 1 "));
   tt_assert(strstr(reply, "250-BINDING "));
   tt_assert(strstr(reply, "250-STATE ADMISSION_PENDING "));
+  tt_assert(strstr(reply, "250-CLOCK 0 -\r\n"));
   tt_u64_op(payment_circuit_revision(circ), OP_EQ, revision);
   tt_uint_op(payment_wire_replies, OP_EQ, 0);
   tor_free(command);
@@ -519,6 +523,174 @@ test_control_payment_relay_bridge(void *arg)
   }
 }
 
+/* Operator-lowered arena ceilings must fail before allocating inventory rows,
+ * preserve the existing immutable registry, and release every reservation. */
+static void
+test_control_payment_resource_bounds(void *arg)
+{
+  protocol_budget_limits_t limits;
+  protocol_budget_memory_t blocker = {0};
+  protocol_budget_t *budget = NULL;
+  control_connection_t conn;
+  origin_circuit_t circ;
+  const char *command = "ELTOR_PAYMENT_LIST 1 - -\r\n";
+  char *reply = NULL;
+  uint32_t registry_bytes, baseline;
+  (void)arg;
+  local_controller(&conn);
+  memset(&circ, 0, sizeof(circ));
+  circ.base_.magic = ORIGIN_CIRCUIT_MAGIC;
+  payment_replies = smartlist_new();
+  MOCK(control_write_reply, capture_payment_reply);
+  monotime_enable_test_mocking();
+  monotime_set_mock_time_nsec(INT64_C(1000000000));
+  protocol_budget_default_limits(&limits);
+  limits.arena_bytes = 1024;
+  limits.max_slot_bytes = 512;
+  tt_int_op(payment_resources_configure(&limits), OP_EQ, 0);
+  control_payment_init();
+  budget = payment_resources_protocol();
+  baseline = budget->arena_used;
+  tt_uint_op(baseline, OP_GT, 0);
+  tt_int_op(control_payment_register(&circ.base_, CONTROL_PAYMENT_ORIGIN,
+                                     1, true), OP_EQ, -1);
+  control_payment_handle_command(&conn, command, strlen(command));
+  reply = collect_payment_replies();
+  tt_str_op(reply, OP_EQ, "451 CAPACITY\r\n");
+  tor_free(reply);
+  control_payment_free_all();
+  tt_int_op(payment_resources_free_all(), OP_EQ, 0);
+
+  budget = payment_resources_protocol();
+  baseline = budget->arena_used;
+  control_payment_init();
+  registry_bytes = budget->arena_used;
+  tt_uint_op(registry_bytes, OP_GT, 1024);
+  tt_int_op(control_payment_register(&circ.base_, CONTROL_PAYMENT_ORIGIN,
+                                     1, true), OP_EQ, 0);
+  /* Leave less than one inventory row free. A failed query reserves nothing. */
+  tt_int_op(payment_resources_reserve(&blocker,
+      budget->limits.arena_bytes - registry_bytes - 1), OP_EQ,
+      PROTOCOL_BUDGET_OK);
+  control_payment_handle_command(&conn, command, strlen(command));
+  reply = collect_payment_replies();
+  tt_str_op(reply, OP_EQ, "451 CAPACITY\r\n");
+  tor_free(reply);
+  tt_uint_op(budget->arena_used, OP_EQ, budget->limits.arena_bytes - 1);
+  tt_int_op(payment_resources_release(&blocker), OP_EQ, PROTOCOL_BUDGET_OK);
+  control_payment_handle_command(&conn, command, strlen(command));
+  reply = collect_payment_replies();
+  tt_assert(strstr(reply, "250-CIRCUIT "));
+  tt_uint_op(budget->arena_used, OP_GT, registry_bytes);
+  tor_free(reply);
+  control_payment_connection_closed(&conn);
+  tt_uint_op(budget->arena_used, OP_EQ, registry_bytes);
+  /* Releasing a snapshot twice cannot release the registry lease. */
+  control_payment_connection_closed(&conn);
+  tt_uint_op(budget->arena_used, OP_EQ, registry_bytes);
+  control_payment_free_all();
+  tt_uint_op(budget->arena_used, OP_EQ, baseline);
+  tt_int_op(payment_resources_free_all(), OP_EQ, 0);
+ done:
+  (void)payment_resources_release(&blocker);
+  control_payment_free_all();
+  (void)payment_resources_free_all();
+  monotime_disable_test_mocking();
+  UNMOCK(control_write_reply);
+  tor_free(reply);
+  if (payment_replies) {
+    SMARTLIST_FOREACH(payment_replies, char *, item, tor_free(item));
+    smartlist_free(payment_replies);
+  }
+}
+
+static void
+test_control_payment_output_backpressure(void *arg)
+{
+  control_connection_t conn, other;
+  origin_circuit_t *circuits = NULL;
+  protocol_budget_memory_t blocker = {0};
+  protocol_budget_t *owner;
+  uint32_t registry, with_output;
+  size_t before;
+  const char *command = "ELTOR_PAYMENT_LIST 1 - -\r\n";
+  (void)arg;
+  local_controller(&conn); local_controller(&other);
+  conn.base_.outbuf = buf_new(); other.base_.outbuf = buf_new();
+  MOCK(connection_write_to_buf_impl_, capture_payment_output);
+  MOCK(connection_mark_for_close_internal_, capture_payment_disconnect);
+  monotime_enable_test_mocking();
+  monotime_set_mock_time_nsec(INT64_C(1000000000));
+  control_payment_init();
+  owner = payment_resources_protocol();
+  registry = owner->arena_used;
+  /* Leave room for exactly one bounded output owner plus a 128-row snapshot.
+   * A nonreading controller cannot multiply this with another connection. */
+  tt_int_op(payment_resources_reserve(&blocker,
+      owner->limits.arena_bytes - registry -
+      CONTROL_PAYMENT_OUTPUT_RESERVATION_BYTES -
+      CONTROL_PAYMENT_RESPONSE_BYTES - 16384), OP_EQ, PROTOCOL_BUDGET_OK);
+  circuits = tor_calloc(128, sizeof(*circuits));
+  for (unsigned i = 0; i < 128; ++i) {
+    circuits[i].base_.magic = ORIGIN_CIRCUIT_MAGIC;
+    tt_int_op(control_payment_register(&circuits[i].base_,
+        CONTROL_PAYMENT_ORIGIN, 1, true), OP_EQ, 0);
+  }
+  control_payment_handle_command(&conn, command, strlen(command));
+  tt_uint_op(buf_datalen(conn.base_.outbuf), OP_GT, 0);
+  tt_assert(conn.payment_output);
+  with_output = owner->arena_used;
+  control_payment_handle_command(&other, command, strlen(command));
+  tt_assert(other.base_.marked_for_close);
+  tt_uint_op(buf_datalen(other.base_.outbuf), OP_EQ, 0);
+  tt_ptr_op(other.payment_output, OP_EQ, NULL);
+  tt_uint_op(owner->arena_used, OP_EQ, with_output);
+  /* Before formatting each response, reserve its entire bounded capacity.
+   * At the backlog ceiling close without appending a partial response. */
+  before = buf_datalen(conn.base_.outbuf);
+  for (unsigned i = 1; i < 64 && !conn.base_.marked_for_close; ++i) {
+    monotime_set_mock_time_nsec((int64_t)(i+1) * INT64_C(1000000000));
+    before = buf_datalen(conn.base_.outbuf);
+    control_payment_handle_command(&conn, command, strlen(command));
+  }
+  tt_assert(conn.base_.marked_for_close);
+  tt_uint_op(buf_datalen(conn.base_.outbuf), OP_EQ, before);
+  tt_uint_op(before, OP_LE, CONTROL_PAYMENT_OUTPUT_BYTES);
+  tt_uint_op(buf_allocation(conn.base_.outbuf), OP_LE,
+              CONTROL_PAYMENT_OUTPUT_RESERVATION_BYTES);
+  /* Retain output accounting through partial drainage, then release only
+   * after actual native chunks are gone. Repeated cleanup is idempotent. */
+  uint32_t retained = owner->arena_used;
+  buf_drain(conn.base_.outbuf, before / 2);
+  control_payment_finished_flushing(&conn);
+  tt_uint_op(owner->arena_used, OP_EQ, retained);
+  buf_clear(conn.base_.outbuf);
+  control_payment_finished_flushing(&conn);
+  tt_ptr_op(conn.payment_output, OP_EQ, NULL);
+  tt_uint_op(owner->arena_used, OP_LT, retained);
+  control_payment_connection_closed(&conn);
+  control_payment_connection_closed(&conn);
+  tt_int_op(payment_resources_release(&blocker), OP_EQ, PROTOCOL_BUDGET_OK);
+  tt_uint_op(owner->arena_used, OP_EQ, registry);
+  /* Legacy control output is not subjected to the new payment render scope. */
+  conn.base_.marked_for_close = 0;
+  control_write_endreply(&conn, 250, "LEGACY");
+  tt_uint_op(buf_datalen(conn.base_.outbuf), OP_GT, 0);
+  tt_ptr_op(conn.payment_output, OP_EQ, NULL);
+  tt_uint_op(owner->arena_used, OP_EQ, registry);
+ done:
+  control_payment_connection_closed(&conn);
+  control_payment_connection_closed(&other);
+  (void)payment_resources_release(&blocker);
+  control_payment_free_all();
+  (void)payment_resources_free_all();
+  monotime_disable_test_mocking();
+  UNMOCK(connection_write_to_buf_impl_);
+  UNMOCK(connection_mark_for_close_internal_);
+  buf_free(conn.base_.outbuf); buf_free(other.base_.outbuf);
+  tor_free(circuits);
+}
+
 #define CONTROL_PAYMENT_TEST(name) \
   { #name, test_control_payment_##name, TT_FORK, NULL, NULL }
 struct testcase_t control_payment_tests[] = {
@@ -529,5 +701,7 @@ struct testcase_t control_payment_tests[] = {
   CONTROL_PAYMENT_TEST(query_and_snapshot_bounds),
   CONTROL_PAYMENT_TEST(event_bound),
   CONTROL_PAYMENT_TEST(relay_bridge),
+  CONTROL_PAYMENT_TEST(resource_bounds),
+  CONTROL_PAYMENT_TEST(output_backpressure),
   END_OF_TESTCASES
 };

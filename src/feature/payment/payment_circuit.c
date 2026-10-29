@@ -2,6 +2,8 @@
 #include "orconfig.h"
 #include "core/or/or.h"
 #include "feature/payment/payment_circuit.h"
+#include "feature/payment/free_capacity_hooks.h"
+#include "feature/payment/payment_resources.h"
 #include "feature/control/control_payment.h"
 #include "core/or/or_circuit_st.h"
 #include "core/or/relay_msg_st.h"
@@ -16,9 +18,7 @@
 /* One event-loop owner. Financial uniqueness/retention belongs to the durable
  * daemon ledger; these limits bound only live protocol/cache allocations. */
 #define PAYMENT_CIRCUIT_MAX 4096u
-#define PAYMENT_CIRCUIT_MEMORY (64u * 1024u * 1024u)
 #define PAYMENT_CIRCUIT_SLOT (16u * 1024u)
-#define PAYMENT_CIRCUIT_OPERATIONS 4096u
 
 typedef struct payment_allocation_t {
   uint64_t period, first_round, deadline_ms;
@@ -34,6 +34,7 @@ struct payment_circuit_t {
   struct or_circuit_t *circ;
   struct payment_circuit_t *next;
   payment_schedule_t schedule;
+  protocol_budget_memory_t memory;
   uint64_t revision, commit_ms, query_last_ms;
   uint8_t terms[32], initial_digest[32], binding[32];
   payment_circuit_charge_t fee;
@@ -45,9 +46,43 @@ struct payment_circuit_t {
 
 static payment_circuit_t *profiles;
 static tor_timer_t *profile_timer;
-static uint32_t profile_count, operation_count;
+static uint32_t profile_count;
+static protocol_budget_memory_t timer_memory;
 static payment_circuit_event_cb_t event_callback;
 static bool timer_dispatching;
+static bool construction_enabled, construction_paid;
+static payment_profile_policy_t construction_policy;
+
+int
+payment_circuit_configure_construction(bool enabled,
+                          const payment_profile_policy_t *policy)
+{
+  uint8_t encoded[PAYMENT_PROFILE_TERMS_LEN];
+  if (policy && payment_profile_policy_encode(encoded,sizeof(encoded),policy))
+    return -1;
+  construction_enabled=enabled;
+  construction_paid=enabled && policy;
+  memset(&construction_policy,0,sizeof(construction_policy));
+  if (policy) construction_policy=*policy;
+  return 0;
+}
+
+bool
+payment_circuit_construction_policy(payment_profile_policy_t *out,
+                                     bool *paid_candidate)
+{
+  if (!out || !paid_candidate) return false;
+  *out=construction_policy;
+  *paid_candidate=construction_paid;
+  return construction_enabled;
+}
+
+bool
+payment_circuit_requires_payment(const or_circuit_t *circ)
+{
+  return circ && circ->payment_profile &&
+         circ->payment_profile->schedule.committed;
+}
 
 static void schedule_timer(uint64_t now_ms);
 static int send_allocation_reply(payment_circuit_t *pc,
@@ -107,17 +142,13 @@ payment_circuit_revision(const or_circuit_t *circ)
 static bool
 reserve_operation(payment_allocation_t *a)
 {
-  if (a->operation) return true;
-  if (operation_count >= PAYMENT_CIRCUIT_OPERATIONS) return false;
-  a->operation = true;
-  ++operation_count;
-  return true;
+  return payment_resources_operation_reserve(&a->operation);
 }
 
 static void
 clear_allocation(payment_allocation_t *a)
 {
-  if (a->operation) --operation_count;
+  payment_resources_operation_release(&a->operation);
   memwipe(a, 0, sizeof(*a));
 }
 
@@ -156,6 +187,8 @@ observe_schedule(payment_circuit_t *pc, payment_schedule_phase_t old_phase,
                  uint64_t old_round, uint64_t old_period)
 {
   consume_charges(pc);
+  if (pc->schedule.phase == PAYMENT_SCHEDULE_ACTIVE)
+    free_capacity_circuit_paid(TO_CIRCUIT(pc->circ));
   if (pc->schedule.active_period != old_period) {
     clear_allocation(&pc->active);
     pc->active = pc->next_allocation;
@@ -203,13 +236,17 @@ payment_circuit_free(or_circuit_t *circ)
   clear_allocation(&pc->initial);
   clear_allocation(&pc->active);
   clear_allocation(&pc->next_allocation);
-  if (pc->start_operation) --operation_count;
+  payment_resources_operation_release(&pc->start_operation);
   --profile_count;
+  protocol_budget_memory_t memory = pc->memory;
   memwipe(pc, 0, sizeof(*pc));
   tor_free(pc);
+  (void)payment_resources_release(&memory);
   circ->payment_profile = NULL;
-  if (!profiles) timer_free(profile_timer);
-  else schedule_timer(monotime_absolute_msec());
+  if (!profiles) {
+    timer_free(profile_timer);
+    (void)payment_resources_release(&timer_memory);
+  } else schedule_timer(monotime_absolute_msec());
 }
 
 payment_circuit_result_t
@@ -227,20 +264,35 @@ payment_circuit_attach(or_circuit_t *circ,
       (policy->initial_handshake_fee_msat && zero_bytes(fee_hash, 32)))
     return PAYMENT_CIRCUIT_INVALID;
   if (profile_count >= PAYMENT_CIRCUIT_MAX ||
-      sizeof(payment_circuit_t) > PAYMENT_CIRCUIT_SLOT ||
-      sizeof(payment_circuit_t) > PAYMENT_CIRCUIT_MEMORY/(profile_count+1))
+      sizeof(payment_circuit_t) > PAYMENT_CIRCUIT_SLOT)
     return PAYMENT_CIRCUIT_CAPACITY;
   payment_schedule_t schedule;
   if (payment_schedule_init(&schedule, policy, constructed_ms) < 0)
     return PAYMENT_CIRCUIT_INVALID;
   payment_schedule_tick(&schedule, now_ms);
-  if (schedule.phase == PAYMENT_SCHEDULE_EXPIRED)
+  if (schedule.phase == PAYMENT_SCHEDULE_EXPIRED && !circ->base_.free_capacity)
     return PAYMENT_CIRCUIT_EXPIRED;
   control_payment_init();
-  if (control_payment_register(TO_CIRCUIT(circ), CONTROL_PAYMENT_RELAY,
-                                1, false) < 0)
+  protocol_budget_memory_t memory = {0};
+  if (payment_resources_reserve(&memory, sizeof(payment_circuit_t)) !=
+      PROTOCOL_BUDGET_OK)
     return PAYMENT_CIRCUIT_CAPACITY;
+  if (!profile_timer && !timer_memory.active &&
+      payment_resources_reserve(&timer_memory,
+        timer_memory_cost() + sizeof(timer_memory)) != PROTOCOL_BUDGET_OK) {
+    (void)payment_resources_release(&memory);
+    return PAYMENT_CIRCUIT_CAPACITY;
+  }
+  if (control_payment_register(TO_CIRCUIT(circ), CONTROL_PAYMENT_RELAY,
+                                1, false) < 0) {
+    (void)payment_resources_release(&memory);
+    if (!profiles)
+      (void)payment_resources_release(&timer_memory);
+    return PAYMENT_CIRCUIT_CAPACITY;
+  }
   payment_circuit_t *pc = tor_malloc_zero(sizeof(*pc));
+  pc->memory = memory;
+  memset(&memory, 0, sizeof(memory));
   pc->circ = circ;
   pc->schedule = schedule;
   pc->revision = 1;
@@ -339,7 +391,8 @@ payment_circuit_tick(or_circuit_t *circ, uint64_t now_ms)
     send_allocation_reply(pc, a, now_ms);
     notify(pc, PAYMENT_CIRCUIT_EVENT_RENEW_REFUSED);
   }
-  if (terminal(pc) && !circ->base_.marked_for_close)
+  if (terminal(pc) && (pc->schedule.committed || !circ->base_.free_capacity) &&
+      !circ->base_.marked_for_close)
     circuit_mark_for_close(TO_CIRCUIT(circ), END_CIRC_REASON_TIMEOUT);
   schedule_timer(now_ms);
 }
@@ -349,6 +402,22 @@ payment_circuit_paid_active(const or_circuit_t *circ)
 {
   return payment_circuit_present(circ) &&
          circ->payment_profile->schedule.phase == PAYMENT_SCHEDULE_ACTIVE;
+}
+
+bool
+payment_circuit_data_active(const or_circuit_t *circ, uint64_t now_ms)
+{
+  if (!payment_circuit_present(circ)) return false;
+  const payment_circuit_t *pc=circ->payment_profile;
+  if (!pc->schedule.committed || now_ms<pc->schedule.last_ms) return false;
+  payment_schedule_t projected=pc->schedule;
+  payment_schedule_tick(&projected,now_ms);
+  /* Projection may revoke traffic permission, but must never grant a due
+   * activation before the real timer consumes/announces the authorization. */
+  return pc->schedule.phase==PAYMENT_SCHEDULE_ACTIVE &&
+         projected.phase==PAYMENT_SCHEDULE_ACTIVE &&
+         projected.current_round==pc->schedule.current_round &&
+         projected.active_period==pc->schedule.active_period;
 }
 
 static int
@@ -580,8 +649,8 @@ handle_start(payment_circuit_t *pc, const payment_profile_start_t *request,
       else if (pc->start_transmissions >= 4) return 0;
       else ++pc->start_transmissions;
     } else if (!conflict) {
-      if (operation_count >= PAYMENT_CIRCUIT_OPERATIONS) return 0;
-      pc->start_operation = true; ++operation_count;
+      if (!payment_resources_operation_reserve(&pc->start_operation))
+        return 0;
       pc->start_transmissions = 1;
       memcpy(pc->start_digest, digest, 32);
       memcpy(pc->start_nonce, request->nonce, 16);
@@ -627,7 +696,6 @@ payment_circuit_handle_relay(or_circuit_t *circ, const relay_msg_t *msg,
   if (!payment_circuit_present(circ) || !msg || msg->stream_id ||
       msg->is_relay_early || !circ->payment_keys) return 0;
   payment_circuit_t *pc = circ->payment_profile;
-  if (terminal(pc)) return 0;
   payment_profile_command_t command = (payment_profile_command_t)msg->command;
   if (command != PAYMENT_PROFILE_COMMIT && command != PAYMENT_PROFILE_RENEW &&
       command != PAYMENT_PROFILE_START_STATUS) return 0;
@@ -643,7 +711,15 @@ payment_circuit_handle_relay(or_circuit_t *circ, const relay_msg_t *msg,
     if (observation_status(pc, now_ms) != PAYMENT_CIRCUIT_OK) return 0;
   } else {
     payment_circuit_tick(circ, now_ms);
-    if (terminal(pc)) return 0;
+    if (terminal(pc)) {
+      if (!decoded && !pc->closed && !pc->schedule.committed &&
+          command == PAYMENT_PROFILE_COMMIT) {
+        uint8_t expired_digest[32];
+        payment_profile_request_digest(expired_digest,command,msg->body,msg->length);
+        return send_commit_reply(pc,request.u.commit.nonce,expired_digest,4,now_ms);
+      }
+      return 0;
+    }
   }
   uint8_t digest[32];
   if (decoded == PAYMENT_PROFILE_ERR_SEQUENCE &&
@@ -710,6 +786,9 @@ snapshot(const or_circuit_t *circ, uint64_t period, uint64_t now_ms,
   out->first_round = a->first_round;
   out->current_round = pc->schedule.current_round;
   out->elapsed_ms = elapsed_ms(pc, now_ms);
+  out->constructed_elapsed_ms=now_ms-pc->schedule.constructed_ms;
+  out->commit_clock_available=pc->schedule.committed;
+  if (out->commit_clock_available) out->commit_elapsed_ms=now_ms-pc->commit_ms;
   out->phase = pc->schedule.phase; out->pending = admission;
   if (!pc->schedule.started && !terminal(pc))
     out->setup_remaining_ms = remaining(pc->initial.deadline_ms, now_ms);

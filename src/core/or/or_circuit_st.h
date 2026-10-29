@@ -26,6 +26,12 @@ struct or_circuit_t {
   /** Circuit-local paid-hop keys; never daemon/control/wallet material. */
   payment_profile_keys_t *payment_keys;
   struct payment_circuit_t *payment_profile;
+  /* Main-loop snapshot, taken before worker queueing. No reload can change
+   * the policy or construction clock frozen for a pending authenticated job. */
+  bool payment_construction_prepared, payment_policy_available;
+  payment_profile_policy_t payment_construction_policy;
+  uint64_t payment_constructed_ms;
+  struct payment_work_t *payment_native_work;
 
   /** Pointer to an entry on the onion queue, if this circuit is waiting for a
    * chance to give an onionskin to a cpuworker. Used only in onion.c */

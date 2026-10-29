@@ -67,7 +67,7 @@ typedef enum protocol_budget_work_t {
  * Caller must free buffers before acknowledging release; no callback may use
  * freed/reused memory, even when the generation can reject its stale result.
  * The owner outlives all handles and actual workers. The fixed budget owner
- * itself is baseline process memory, not arena memory. */
+ * itself must be charged once as baseline process arena memory. */
 struct protocol_budget_t {
   protocol_budget_limits_t limits;
   uint64_t last_ms;
@@ -102,6 +102,7 @@ struct protocol_budget_slot_t {
   uint32_t job_bytes;
   uint32_t jobs;
   protocol_budget_slot_state_t state;
+  bool native_only;
 };
 
 struct protocol_budget_job_t {
@@ -138,6 +139,15 @@ protocol_budget_result_t protocol_budget_memory_release(
 protocol_budget_result_t protocol_budget_slot_reserve(protocol_budget_t *owner,
     protocol_budget_slot_t *slot, uint32_t allocation_bytes,
     uint64_t expires_ms, uint64_t now_ms);
+/* Native Tor setup carries no financial replay authority. These slots share
+ * the same count/arena ceilings but accept only NATIVE_SETUP work. Retire after
+ * all real jobs end, without waiting for the setup deadline. Other slots can
+ * never use early retirement. Cancellation cannot retire a RUNNING worker. */
+protocol_budget_result_t protocol_budget_native_slot_reserve(
+    protocol_budget_t *owner, protocol_budget_slot_t *slot,
+    uint32_t allocation_bytes, uint64_t expires_ms, uint64_t now_ms);
+protocol_budget_result_t protocol_budget_native_slot_retire(
+    protocol_budget_slot_t *slot, uint64_t generation, uint64_t now_ms);
 /* Terminal slots retain count and memory until original expiry. Shrink to
  * actual retained tombstone allocation only after freeing payload storage.
  * No active job may refer to the slot at terminal transition. */

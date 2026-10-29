@@ -2211,6 +2211,12 @@ router_build_fresh_unsigned_routerinfo,(routerinfo_t **ri_out))
   router_check_descriptor_address_consistency(&ipv4_addr);
 
   ri = tor_malloc_zero(sizeof(routerinfo_t));
+  if (options->ElTorFoundation && options->TestingTorNetwork) {
+    payment_profile_policy_t policy=payment_profile_testing_policy();
+    if (payment_profile_policy_encode(ri->payment_profile_terms,
+                    sizeof(ri->payment_profile_terms),&policy)) goto err;
+    ri->payment_start_v1=ri->payment_renew_v1=ri->payment_free_v1=true;
+  }
   tor_addr_copy(&ri->ipv4_addr, &ipv4_addr);
   ri->cache_info.routerlist_index = -1;
   ri->nickname = tor_strdup(options->Nickname);

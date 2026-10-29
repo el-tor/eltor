@@ -13,9 +13,15 @@
 #define PACKED_CELL_ST_H
 
 #include "tor_queue.h"
+#include "feature/payment/free_capacity.h"
 
 /** A cell as packed for writing to the network. */
 struct packed_cell_t {
+  circuit_t *free_capacity_circuit;
+  free_capacity_queue_ticket_t free_capacity_ticket;
+  bool free_capacity_charged;
+  bool payment_control;
+  uint64_t free_queue_inserted_ms;
   /** Next cell queued on this circuit. */
   TOR_SIMPLEQ_ENTRY(packed_cell_t) next;
   char body[CELL_MAX_NETWORK_SIZE]; /**< Cell as packed for network. */

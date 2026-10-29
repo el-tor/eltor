@@ -72,10 +72,11 @@ typedef struct payment_circuit_snapshot_t {
   uint8_t terms[32], initial_allocation[32], allocation[32];
   uint8_t circuit_binding[32], request_digest[32];
   uint64_t revision, period, first_round, current_round, elapsed_ms;
+  uint64_t constructed_elapsed_ms, commit_elapsed_ms;
   uint64_t setup_remaining_ms, enforcement_remaining_ms;
   uint64_t admission_remaining_ms;
   payment_schedule_phase_t phase;
-  bool pending;
+  bool pending, commit_clock_available;
   payment_circuit_charge_t fee;
   payment_circuit_round_t rounds[10];
 } payment_circuit_snapshot_t;
@@ -85,6 +86,14 @@ typedef void (*payment_circuit_event_cb_t)(struct or_circuit_t *circ,
 /* Set once by the privileged control subsystem. Callback must not call wallets
  * or reenter mutations. It assigns local handles and emits revisioned hints. */
 void payment_circuit_set_event_callback(payment_circuit_event_cb_t callback);
+/* Inactive until final operator integration. Snapshot these exact accepted
+ * terms before queuing work; NULL policy allows base free admission only.
+ * This never resets any process resource owner or existing circuit policy. */
+int payment_circuit_configure_construction(bool enabled,
+                           const payment_profile_policy_t *policy);
+bool payment_circuit_construction_policy(payment_profile_policy_t *out,
+                                          bool *paid_candidate);
+bool payment_circuit_requires_payment(const struct or_circuit_t *circ);
 
 /* The sole construction entry point. Requires an explicitly enabled profile,
  * authenticated circuit-local keys, immutable accepted local policy and exact
@@ -148,5 +157,8 @@ payment_circuit_result_t payment_circuit_authorize(
 void payment_circuit_tick(struct or_circuit_t *circ, uint64_t now_ms);
 /* False before verified START + fee/round authorization and during grace. */
 bool payment_circuit_paid_active(const struct or_circuit_t *circ);
+/* Read-only time-aware gate; due timer transitions may revoke permission but
+ * cannot grant a new funded activation before the real timer advances. */
+bool payment_circuit_data_active(const struct or_circuit_t *, uint64_t now_ms);
 
 #endif /* !defined(TOR_PAYMENT_CIRCUIT_H) */

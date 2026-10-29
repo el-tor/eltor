@@ -23,6 +23,7 @@ struct control_connection_t {
   bool payment_local_fd;
   /* Conservative unsent payment-event bound, cleared only on full drain. */
   uint16_t payment_events_queued;
+  struct payment_control_output_t *payment_output;
 
   uint64_t event_mask; /**< Bitfield: which events does this controller
                         * care about?

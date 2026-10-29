@@ -6,9 +6,15 @@
 #include "orconfig.h"
 #define ONION_NTOR_V3_PRIVATE
 #include "core/or/or.h"
+#include "core/or/or_connection_st.h"
+#include "feature/payment/free_capacity_hooks.h"
+#include "feature/payment/payment_resources.h"
+#include "feature/payment/payment_initial.h"
+#include "lib/evloop/timers.h"
 #include "test/test.h"
 #include "test/test_helpers.h"
 #include "lib/crypt_ops/crypto_curve25519.h"
+#include "lib/crypt_ops/crypto_util.h"
 #include "lib/crypt_ops/crypto_ed25519.h"
 #include "core/crypto/onion_ntor_v3.h"
 #include "core/crypto/onion_crypto.h"
@@ -234,6 +240,18 @@ test_ntor3_testvecs_payment(void *arg)
   test_ntor3_testvecs((void *)"payment");
 }
 
+static const char *
+ntor_test_initial_payload(void)
+{
+  static char payload[782];
+  uint8_t bytes[384]={0};
+  for (size_t i=0;i<10;++i) bytes[64+i*32]=(uint8_t)(i+1);
+  memcpy(payload,"eltor_payhash",13);
+  base16_encode(payload+13,sizeof(payload)-13,(const char *)bytes,sizeof(bytes));
+  for (char *p=payload+13;*p;++p) *p=TOR_TOLOWER(*p);
+  return payload;
+}
+
 static void
 run_full_handshake(circuit_params_t *serv_params_in,
                    circuit_params_t *client_params_out,
@@ -255,7 +273,9 @@ run_full_handshake(circuit_params_t *serv_params_in,
   payment_profile_export_t client_export = {0}, server_export = {0};
 
   info.supports_ntor_v3 = true;
+  info.payment_free_v1 = true;
   info.use_congestion_control = congestion_control_enabled();
+  serv_params_in->eltor_resource_eligible=payment_requested;
 
   unhex(relay_onion_key.seckey.secret_key,
         "4051daa5921cfa2a1c27b08451324919538e79e788a81b38cbed097a5dff454a");
@@ -277,7 +297,8 @@ run_full_handshake(circuit_params_t *serv_params_in,
   onionskin_len = onion_skin_create(ONION_HANDSHAKE_TYPE_NTOR_V3, &info,
                     &handshake_state, onionskin,
                     sizeof(onionskin),
-                    NULL, payment_requested); // TODO Pass payhash
+                    payment_requested ? ntor_test_initial_payload() : NULL,
+                    payment_requested);
   tt_int_op(onionskin_len, OP_NE, -1);
 
   server_keys.junk_keypair = &handshake_state.u.ntor3->client_keypair;
@@ -293,7 +314,7 @@ run_full_handshake(circuit_params_t *serv_params_in,
                               serv_keys, &serv_keylen,
                               rend_nonce, serv_params_out,
                               &test_p_circ, &test_n_circ,
-                              payment_requested, &server_export);
+                              payment_requested, &server_export, NULL);
   tt_int_op(reply_len, OP_NE, -1);
 
   tt_int_op(onion_skin_client_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,
@@ -416,6 +437,7 @@ test_ntor3_payment_negotiation_failure(void *arg)
   extend_info_t info = {0};
   server_onion_keys_t server = {0};
   circuit_params_t ns_params = {0}, negotiated;
+  ns_params.eltor_resource_eligible=true;
   curve25519_keypair_t relay_key;
   uint8_t keys[100], nonce[DIGEST_LEN], reply_buffer[CELL_PAYLOAD_SIZE];
   uint8_t skin_buffer[CELL_PAYLOAD_SIZE], malformed = 255;
@@ -426,6 +448,7 @@ test_ntor3_payment_negotiation_failure(void *arg)
   memset(info.ed_identity.pubkey, 0x4a, 32);
   info.curve25519_onion_key = relay_key.pubkey;
   info.supports_ntor_v3 = true;
+  info.payment_free_v1 = true;
   server.my_ed_identity = info.ed_identity;
   server.junk_keypair = &relay_key;
   dimap_add_entry(&server.curve25519_key_map,
@@ -439,12 +462,12 @@ test_ntor3_payment_negotiation_failure(void *arg)
   tt_int_op(onion_skin_server_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,
                skin, skin_len, &server, &ns_params, reply_buffer,
                sizeof(reply_buffer), keys, &keylen, nonce, &negotiated,
-               NULL, NULL, true, &result), OP_EQ, -1);
+               NULL, NULL, true, &result, NULL), OP_EQ, -1);
   tt_mem_op(&result, OP_EQ, &zero, sizeof(zero));
 
   int len = onion_skin_create(ONION_HANDSHAKE_TYPE_NTOR_V3, &info,
                     &client_state, skin_buffer, sizeof(skin_buffer),
-                    NULL, true);
+                    ntor_test_initial_payload(), true);
   tt_int_op(len, OP_GT, 0);
   tt_int_op(onion_skin_ntor3_server_handshake_part1(
                  server.curve25519_key_map, &relay_key, &info.ed_identity,
@@ -481,11 +504,14 @@ test_ntor3_payment_origin_install(void *arg)
 {
   (void)arg;
   origin_circuit_t *origin = NULL;
+  or_connection_t resource_conn={0};
+  timers_initialize();
   server_onion_keys_t server = {0};
   payment_profile_export_t result = {0};
   curve25519_keypair_t relay_key;
   extend_info_t info = {0};
   circuit_params_t ns_params = {0}, negotiated;
+  ns_params.eltor_resource_eligible=true;
   uint8_t skin[CELL_PAYLOAD_SIZE], keys[100], nonce[DIGEST_LEN];
   created_cell_t reply = {0};
   congestion_control_set_cc_disabled();
@@ -494,6 +520,7 @@ test_ntor3_payment_origin_install(void *arg)
   memset(info.ed_identity.pubkey, 0x4b, 32);
   info.curve25519_onion_key = relay_key.pubkey;
   info.supports_ntor_v3 = true;
+  info.payment_free_v1 = true;
   server.my_ed_identity = info.ed_identity;
   server.junk_keypair = &relay_key;
   dimap_add_entry(&server.curve25519_key_map,
@@ -507,18 +534,20 @@ test_ntor3_payment_origin_install(void *arg)
   crypt_path_t *hop = origin->cpath;
   tt_assert(!hop->payment_export_requested);
   tt_ptr_op(hop->payment_keys, OP_EQ, NULL);
-  /* Explicit test-only opt in; runtime negotiation is still unimplemented. */
+  /* Explicit opt in to authenticated resource negotiation for this test. */
   hop->payment_export_requested = true;
+  tt_int_op(free_capacity_circuit_prepare(TO_CIRCUIT(origin),&resource_conn),OP_EQ,0);
   int skin_len = onion_skin_create(ONION_HANDSHAKE_TYPE_NTOR_V3,
                     hop->extend_info, &hop->handshake_state,
-                    skin, sizeof(skin), NULL, hop->payment_export_requested);
+                    skin, sizeof(skin), ntor_test_initial_payload(),
+                    hop->payment_export_requested);
   tt_int_op(skin_len, OP_GT, 0);
   hop->state = CPATH_STATE_AWAITING_KEYS;
   size_t keylen = sizeof(keys);
   int reply_len = onion_skin_server_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,
                     skin, skin_len, &server, &ns_params,
                     reply.reply, sizeof(reply.reply), keys, &keylen,
-                    nonce, &negotiated, NULL, NULL, true, &result);
+                    nonce, &negotiated, NULL, NULL, true, &result, NULL);
   tt_int_op(reply_len, OP_GT, 0);
   tt_assert(result.valid);
   reply.cell_type = CELL_CREATED2;
@@ -535,12 +564,66 @@ test_ntor3_payment_origin_install(void *arg)
   payment_profile_export_clear(&result);
   dimap_free(server.curve25519_key_map, NULL);
   circuit_free_all();
+  free_capacity_connection_free(&resource_conn);
+  (void)payment_resources_free_all();
+  timers_shutdown();
+}
+
+/* MAC-valid resource requests must still fail on missing frozen admission or
+ * a noncanonical initial suffix, without publishing any partial output. */
+static void
+test_ntor3_resource_rejections(void *arg)
+{
+  (void)arg;
+  curve25519_keypair_t relay_key;
+  server_onion_keys_t server={0};
+  ntor3_handshake_state_t *client=NULL;
+  payment_profile_export_t result,zero={0};
+  payment_initial_material_t material,zero_material={0};
+  circuit_params_t params,zero_params={0},ns={0};
+  uint8_t *skin=NULL;
+  size_t skin_len=0;
+  uint8_t plaintext[5+781],reply_buffer[CELL_PAYLOAD_SIZE];
+  uint8_t keys[MAX_RELAY_KEY_MATERIAL_LEN],nonce[DIGEST_LEN];
+  const uint8_t verification[]="circuit extend";
+  congestion_control_set_cc_disabled();
+  tt_int_op(curve25519_keypair_generate(&relay_key,0),OP_EQ,0);
+  memset(server.my_ed_identity.pubkey,0x47,32);
+  server.junk_keypair=&relay_key;
+  dimap_add_entry(&server.curve25519_key_map,
+                 relay_key.pubkey.public_key,&relay_key);
+  for (unsigned mode=0;mode<3;++mode) {
+    memcpy(plaintext,"\x01\xe0\x02\x01\x01",5);
+    memcpy(plaintext+5,ntor_test_initial_payload(),781);
+    ns.eltor_resource_eligible=mode!=0;
+    if (mode==1) plaintext[5+13]='A'; /* forbidden upper-case hex */
+    size_t n=sizeof(plaintext)-(mode==2); /* truncated authenticated suffix */
+    tt_int_op(onion_skin_ntor3_create(&server.my_ed_identity,&relay_key.pubkey,
+          verification,sizeof(verification)-1,plaintext,n,&client,&skin,&skin_len,
+          true),OP_EQ,0);
+    memset(&result,0xff,sizeof(result));
+    memset(&material,0xff,sizeof(material));
+    memset(&params,0xff,sizeof(params));
+    size_t keylen=sizeof(keys);
+    tt_int_op(onion_skin_server_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,
+          skin,skin_len,&server,&ns,reply_buffer,sizeof(reply_buffer),keys,&keylen,
+          nonce,&params,NULL,NULL,true,&result,&material),OP_EQ,-1);
+    tt_mem_op(&result,OP_EQ,&zero,sizeof(zero));
+    tt_mem_op(&material,OP_EQ,&zero_material,sizeof(zero_material));
+    tt_mem_op(&params,OP_EQ,&zero_params,sizeof(zero_params));
+    ntor3_handshake_state_free(client); tor_free(skin);
+  }
+ done:
+  ntor3_handshake_state_free(client); tor_free(skin);
+  dimap_free(server.curve25519_key_map,NULL);
+  memwipe(plaintext,0,sizeof(plaintext));
 }
 
 struct testcase_t ntor_v3_tests[] = {
   { "testvecs", test_ntor3_testvecs, 0, NULL, NULL, },
   { "testvecs_payment_export", test_ntor3_testvecs_payment,
     0, NULL, NULL, },
+  { "resource_rejections", test_ntor3_resource_rejections,TT_FORK,NULL,NULL },
   { "payment_export", test_ntor3_payment_export, TT_FORK, NULL, NULL, },
   { "payment_origin_install", test_ntor3_payment_origin_install,
     TT_FORK, &helper_pubsub_setup, NULL, },

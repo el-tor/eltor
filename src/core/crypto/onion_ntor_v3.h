@@ -25,6 +25,8 @@
  * Client-side state held while an ntor v3 handshake is in progress.
  **/
 typedef struct ntor3_handshake_state_t ntor3_handshake_state_t;
+/* Exact native client-state allocation, excluding separately retained HDATA. */
+size_t onion_ntor3_client_state_memory_cost(void);
 
 /**
  * Server-side state held while the relay is handling a client's

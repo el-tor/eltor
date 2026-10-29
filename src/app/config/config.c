@@ -63,6 +63,8 @@
 
 #define CONFIG_PRIVATE
 #include "core/or/or.h"
+#include "feature/payment/payment_circuit.h"
+#include "feature/payment/payment_origin.h"
 #include "app/config/config.h"
 #include "lib/confmgt/confmgt.h"
 #include "app/config/statefile.h"
@@ -655,6 +657,7 @@ static const config_var_t option_vars_[] = {
   V(PerConnBWRate,               MEMUNIT,  "0"),
   V_IMMUTABLE(PidFile,           FILENAME,   NULL),
   V_IMMUTABLE(TestingTorNetwork, BOOL,     "0"),
+  V_IMMUTABLE(ElTorFoundation, BOOL,       "0"),
 
   V(TestingLinkCertLifetime,          INTERVAL, "2 days"),
   V(TestingAuthKeyLifetime,          INTERVAL, "2 days"),
@@ -2116,6 +2119,14 @@ options_act,(const or_options_t *old_options))
   char *msg=NULL;
   const int transition_affects_guards =
     old_options && options_transition_affects_guards(old_options, options);
+
+  /* The test-only option is immutable, so repeated options_act calls cannot
+   * replace live terms or reset a circuit/resource lifecycle. */
+  payment_profile_policy_t foundation_policy=payment_profile_testing_policy();
+  if (payment_circuit_configure_construction(options->ElTorFoundation,
+             options->ElTorFoundation ? &foundation_policy : NULL)<0 ||
+      payment_origin_configure_enabled(options->ElTorFoundation)<0)
+    return -1;
 
   if (options->NoExec || options->Sandbox) {
     tor_disable_spawning_background_processes();
@@ -4020,6 +4031,9 @@ options_validate_cb(const void *old_options_, void *options_, char **msg)
   if (parse_virtual_addr_network(options->VirtualAddrNetworkIPv6,
                                  AF_INET6, 1, msg)<0)
     return -1;
+
+  if (options->ElTorFoundation && !options->TestingTorNetwork)
+    REJECT("ElTorFoundation requires TestingTorNetwork 1.");
 
   if (options->TestingTorNetwork &&
       !(options->DirAuthorities ||

@@ -48,6 +48,10 @@ typedef struct payment_profile_policy_t {
   uint32_t setup_timeout_ms;
 } payment_profile_policy_t;
 
+/* Exact zero-price candidate used only by the explicit TestingTorNetwork
+ * ElTorFoundation option. It is not a production pricing default. */
+payment_profile_policy_t payment_profile_testing_policy(void);
+
 typedef struct payment_profile_keys_t {
   uint8_t context[32];
   uint8_t binding[32];

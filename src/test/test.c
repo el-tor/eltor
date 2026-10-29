@@ -724,6 +724,12 @@ struct testgroup_t testgroups[] = {
   { "protocol_budget/", protocol_budget_tests },
   { "payment_schedule/", payment_schedule_tests },
   { "payment_circuit/", payment_circuit_tests },
+  { "payment_origin/", payment_origin_tests },
+  { "payment_initial/", payment_initial_tests },
+  { "payment_workqueue/", payment_workqueue_tests },
+  { "payment_cpuworker/", payment_cpuworker_tests },
+  { "payment_resources/", payment_resources_tests },
+  { "free_capacity_hooks/", free_capacity_hooks_tests },
   { "control_payment/", control_payment_tests },
   END_OF_GROUPS
 };

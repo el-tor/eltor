@@ -399,6 +399,39 @@ test_free_capacity_two_links(void *arg)
   free_capacity_release(&circ);
 }
 
+static void
+test_free_capacity_paid_hold(void *arg)
+{
+  free_capacity_t owner;
+  free_capacity_conn_t conn;
+  free_capacity_circuit_t circ = {0};
+  free_capacity_queue_ticket_t ticket, rejected;
+  uint64_t credit;
+  (void)arg;
+  free_capacity_init(&owner, 0);
+  tt_int_op(free_capacity_conn_init(&conn, &owner, 0), OP_EQ, FREE_CAPACITY_OK);
+  tt_int_op(free_capacity_admit(&conn, &circ, 0), OP_EQ, FREE_CAPACITY_OK);
+  tt_int_op(free_capacity_send(&circ, &conn, 128, 2053, 0), OP_EQ,
+            FREE_CAPACITY_OK);
+  credit = circ.cells.credit_milli;
+  tt_int_op(free_capacity_queue_hold(&circ, 2053, 600001, 600001, &ticket),
+            OP_EQ, FREE_CAPACITY_OK);
+  tt_u64_op(circ.cells.credit_milli, OP_EQ, credit);
+  tt_uint_op(owner.queued_bytes, OP_EQ, 2053);
+  tt_int_op(free_capacity_queue_hold(&circ, 2053, 600003, 600002, &rejected),
+            OP_EQ, FREE_CAPACITY_CLOCK_ERROR);
+  tt_u64_op(owner.last_ms, OP_EQ, 600001);
+  tt_int_op(free_capacity_queue_hold(&circ, 2053, 600001, 605001, &rejected),
+            OP_EQ, FREE_CAPACITY_CLOSE);
+  tt_u64_op(rejected.serial, OP_EQ, 0);
+  tt_int_op(free_capacity_queue_discard(&circ, &ticket), OP_EQ,
+            FREE_CAPACITY_OK);
+  tt_uint_op(owner.queued_bytes, OP_EQ, 0);
+  tt_u64_op(circ.cells.credit_milli, OP_EQ, credit);
+ done:
+  free_capacity_release(&circ);
+}
+
 #define FREE_TEST(name) { #name, test_free_capacity_##name, 0, NULL, NULL }
 struct testcase_t free_capacity_tests[] = {
   FREE_TEST(refill),
@@ -410,5 +443,6 @@ struct testcase_t free_capacity_tests[] = {
   FREE_TEST(queue_ticket_exhaustion),
   FREE_TEST(clock_and_age),
   FREE_TEST(two_links),
+  FREE_TEST(paid_hold),
   END_OF_TESTCASES
 };

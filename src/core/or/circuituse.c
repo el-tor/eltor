@@ -28,6 +28,7 @@
  **/
 
 #include "core/or/or.h"
+#include "feature/payment/payment_origin.h"
 #include "app/config/config.h"
 #include "core/mainloop/connection.h"
 #include "core/or/channel.h"
@@ -123,6 +124,12 @@ circuit_is_acceptable(const origin_circuit_t *origin_circ,
   if (must_be_open && (circ->state != CIRCUIT_STATE_OPEN || !circ->n_chan))
     return 0; /* ignore non-open circs */
   if (circ->marked_for_close)
+    return 0;
+  if (must_be_open &&
+      !(conn->use_begindir && origin_circ->build_state &&
+        origin_circ->build_state->onehop_tunnel &&
+        circ->purpose==CIRCUIT_PURPOSE_C_GENERAL) &&
+      !payment_origin_streams_ready(origin_circ,monotime_absolute_msec()))
     return 0;
 
   /* if this circ isn't our purpose, skip. */
@@ -3013,6 +3020,11 @@ connection_ap_handshake_attach_chosen_circuit(entry_connection_t *conn,
   tor_assert(circ);
   tor_assert(circ->base_.state == CIRCUIT_STATE_OPEN);
 
+  if (!(conn->use_begindir && circ->build_state &&
+        circ->build_state->onehop_tunnel &&
+        circ->base_.purpose==CIRCUIT_PURPOSE_C_GENERAL) &&
+      !payment_origin_streams_ready(circ,monotime_absolute_msec()))
+    return 0; /* Keep the original pending stream; no BEGIN or state change. */
   base_conn->state = AP_CONN_STATE_CIRCUIT_WAIT;
 
   if (!circ->base_.timestamp_dirty ||

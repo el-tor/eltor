@@ -7,6 +7,15 @@
 #include "lib/ctime/di_ops.h"
 #include <string.h>
 
+payment_profile_policy_t
+payment_profile_testing_policy(void)
+{
+  return (payment_profile_policy_t){ .rate_msat=0, .grace_ms=15000,
+    .paid_quota_bytes=0, .max_age_ms=1800000, .max_periods=3,
+    .initial_handshake_fee_msat=0, .setup_timeout_ms=30000 };
+}
+
+
 /* Explicit byte operations keep unaligned data and host byte order out of the
  * format, including on architectures where unaligned integer loads trap. */
 static uint64_t

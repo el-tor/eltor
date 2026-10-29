@@ -18,14 +18,20 @@
  *      <li>and for solving onion service PoW challenges in pow.c.
  *  </ul>
  **/
+#define CPUWORKER_PRIVATE
 #include "core/or/or.h"
+#include "feature/payment/payment_initial.h"
+#include "feature/payment/payment_circuit.h"
+#include "feature/payment/free_capacity_hooks.h"
+#include "feature/payment/payment_workqueue.h"
+#include "feature/payment/payment_resources.h"
+#include "lib/time/compat_time.h"
 #include "core/or/channel.h"
 #include "core/or/circuitlist.h"
 #include "core/or/connection_or.h"
 #include "core/or/congestion_control_common.h"
 #include "core/or/congestion_control_flow.h"
 #include "app/config/config.h"
-#include "core/mainloop/cpuworker.h"
 #include "lib/crypt_ops/crypto_rand.h"
 #include "lib/crypt_ops/crypto_util.h"
 #include "core/or/onion.h"
@@ -36,15 +42,12 @@
 #include "feature/nodelist/networkstatus.h"
 #include "lib/evloop/workqueue.h"
 #include "core/crypto/onion_crypto.h"
+#include "core/mainloop/cpuworker.h"
 
 #include "core/or/or_circuit_st.h"
 
 static void queue_pending_tasks(void);
 
-typedef struct worker_state_t {
-  int generation;
-  server_onion_keys_t *onion_keys;
-} worker_state_t;
 
 static void *
 worker_state_new(void *arg)
@@ -74,9 +77,9 @@ worker_state_free_void(void *arg)
   worker_state_free_(arg);
 }
 
-static threadpool_t *threadpool = NULL;
+STATIC threadpool_t *threadpool = NULL;
 
-static uint32_t total_pending_tasks = 0;
+STATIC uint32_t total_pending_tasks = 0;
 static uint32_t max_pending_tasks = 128;
 
 /** Return the consensus parameter max pending tasks per CPU. */
@@ -161,83 +164,6 @@ cpuworker_get_n_threads(void)
   return threadpool_get_n_threads(threadpool);
 }
 
-/** Magic numbers to make sure our cpuworker_requests don't grow any
- * mis-framing bugs. */
-#define CPUWORKER_REQUEST_MAGIC 0xda4afeed
-#define CPUWORKER_REPLY_MAGIC 0x5eedf00d
-
-/** A request sent to a cpuworker. */
-typedef struct cpuworker_request_t {
-  /** Magic number; must be CPUWORKER_REQUEST_MAGIC. */
-  uint32_t magic;
-
-  /** Flag: Are we timing this request? */
-  unsigned timed : 1;
-  /** If we're timing this request, when was it sent to the cpuworker? */
-  struct timeval started_at;
-
-  /** A create cell for the cpuworker to process. */
-  create_cell_t create_cell;
-
-  /**
-   * A copy of this relay's consensus params that are relevant to
-   * the circuit, for use in negotiation. */
-  circuit_params_t circ_ns_params;
-  /** False until future authenticated payment-profile negotiation. */
-  bool payment_export_requested;
-
-  /** The circuit ID for this handshake. */
-  circid_t circuit_id;
-
-  /** The next circuit ID for this handshake (for multi-hop tracking). */
-  circid_t n_circuit_id;
-
-  /* Turn the above into a tagged union if needed. */
-} cpuworker_request_t;
-
-/** A reply sent by a cpuworker. */
-typedef struct cpuworker_reply_t {
-  /** Magic number; must be CPUWORKER_REPLY_MAGIC. */
-  uint32_t magic;
-
-  /** True iff we got a successful request. */
-  uint8_t success;
-
-  /** Are we timing this request? */
-  unsigned int timed : 1;
-  /** What handshake type was the request? (Used for timing) */
-  uint16_t handshake_type;
-  /** When did we send the request to the cpuworker? */
-  struct timeval started_at;
-  /** Once the cpuworker received the request, how many microseconds did it
-   * take? (This shouldn't overflow; 4 billion micoseconds is over an hour,
-   * and we'll never have an onion handshake that takes so long.) */
-  uint32_t n_usec;
-
-  /** Output of processing a create cell
-   *
-   * @{
-   */
-  /** The created cell to send back. */
-  created_cell_t created_cell;
-  /** The keys to use on this circuit. */
-  uint8_t keys[MAX_RELAY_KEY_MATERIAL_LEN];
-  /** Length of the generated key material. */
-  size_t keys_len;
-  payment_profile_export_t payment_result;
-  /** Input to use for authenticating introduce1 cells. */
-  uint8_t rend_auth_material[DIGEST_LEN];
-  /** Negotiated circuit parameters. */
-  circuit_params_t circ_params;
-} cpuworker_reply_t;
-
-typedef struct cpuworker_job_u_t {
-  or_circuit_t *circ;
-  union {
-    cpuworker_request_t request;
-    cpuworker_reply_t reply;
-  } u;
-} cpuworker_job_t;
 
 static workqueue_reply_t
 update_state_threadfn(void *state_, void *work_)
@@ -379,7 +305,7 @@ cpuworker_log_onionskin_overhead(int severity, int onionskin_type,
 }
 
 /** Handle a reply from the worker threads. */
-static void
+STATIC void
 cpuworker_onion_handshake_replyfn(void *work_)
 {
   cpuworker_job_t *job = work_;
@@ -391,6 +317,14 @@ cpuworker_onion_handshake_replyfn(void *work_)
 
   /* Could avoid this, but doesn't matter. */
   memcpy(&rpl, &job->u.reply, sizeof(rpl));
+  circ=job->circ;
+  payment_work_t *payment_work=job->payment_work;
+  if (payment_work && circ->base_.magic!=DEAD_CIRCUIT_MAGIC)
+    circ->payment_native_work=NULL;
+  /* Actual work has ended. Preserve the copied reply while retiring the job
+   * buffers before releasing the shared running/memory reservation. */
+  memwipe(job,0,sizeof(*job)); tor_free(job);
+  if (payment_work && !payment_work_result_timely(payment_work)) rpl.success=0;
 
   tor_assert(rpl.magic == CPUWORKER_REPLY_MAGIC);
 
@@ -418,11 +352,8 @@ cpuworker_onion_handshake_replyfn(void *work_)
     }
   }
 
-  circ = job->circ;
-
   log_debug(LD_OR,
-            "Unpacking cpuworker reply %p, circ=%p, success=%d",
-            job, circ, rpl.success);
+            "Unpacking cpuworker reply, circ=%p, success=%d",circ,rpl.success);
 
   if (circ->base_.magic == DEAD_CIRCUIT_MAGIC) {
     /* The circuit was supposed to get freed while the reply was
@@ -464,6 +395,33 @@ cpuworker_onion_handshake_replyfn(void *work_)
 
   circ->relay_cell_format = rpl.circ_params.cell_fmt;
 
+  /* Authenticated negotiation cannot outrun the main-loop reservation. Install
+   * all live owners before onionskin_answer queues the CREATED acknowledgement. */
+  if (rpl.circ_params.eltor_resource_admitted) {
+    if (!circ->payment_construction_prepared || !rpl.initial_material.valid ||
+        !rpl.payment_result.valid ||
+        free_capacity_circuit_confirm(TO_CIRCUIT(circ)) < 0) {
+      circuit_mark_for_close(TO_CIRCUIT(circ),END_CIRC_REASON_RESOURCELIMIT);
+      goto done_processing;
+    }
+    circ->payment_export_requested=true;
+  } else {
+    free_capacity_circuit_free(TO_CIRCUIT(circ));
+    circ->payment_export_requested=false;
+  }
+  if (payment_profile_export_take(&circ->payment_keys,&rpl.payment_result,
+                                    circ->payment_export_requested) < 0) {
+    circuit_mark_for_close(TO_CIRCUIT(circ),END_CIRC_REASON_INTERNAL);
+    goto done_processing;
+  }
+  if (rpl.circ_params.eltor_resource_admitted && circ->payment_policy_available &&
+      payment_circuit_attach(circ,&circ->payment_construction_policy,
+          rpl.initial_material.ids,rpl.initial_material.fee_hash,
+          circ->payment_constructed_ms,monotime_absolute_msec()) != PAYMENT_CIRCUIT_OK) {
+    circuit_mark_for_close(TO_CIRCUIT(circ),END_CIRC_REASON_RESOURCELIMIT);
+    goto done_processing;
+  }
+
   if (onionskin_answer(circ,
                        &rpl.created_cell,
                        rpl.circ_params.crypto_alg,
@@ -474,23 +432,16 @@ cpuworker_onion_handshake_replyfn(void *work_)
     goto done_processing;
   }
 
-  if (payment_profile_export_take(&circ->payment_keys, &rpl.payment_result,
-                                    circ->payment_export_requested) < 0) {
-    circuit_mark_for_close(TO_CIRCUIT(circ), END_CIRC_REASON_INTERNAL);
-    goto done_processing;
-  }
 
   log_debug(LD_OR,"onionskin_answer succeeded. Yay.");
 
  done_processing:
   memwipe(&rpl, 0, sizeof(rpl));
-  memwipe(job, 0, sizeof(*job));
-  tor_free(job);
   queue_pending_tasks();
 }
 
 /** Implementation function for onion handshake requests. */
-static workqueue_reply_t
+STATIC workqueue_reply_t
 cpuworker_onion_handshake_threadfn(void *state_, void *work_)
 {
   worker_state_t *state = state_;
@@ -518,7 +469,12 @@ cpuworker_onion_handshake_threadfn(void *state_, void *work_)
   uint64_t circuit_id_64 = req.circuit_id;
   uint64_t n_circuit_id_64 = req.n_circuit_id;
   rpl.keys_len = sizeof(rpl.keys);
-  n = onion_skin_server_handshake(cc->handshake_type,
+  uint64_t worker_now=monotime_absolute_msec();
+  if (req.payment_export_requested &&
+      (worker_now<req.payment_native_queued_ms ||
+       worker_now>=req.payment_native_start_before_ms)) {
+    n=-1;
+  } else n = onion_skin_server_handshake(cc->handshake_type,
                                   cc->onionskin, cc->handshake_len,
                                   onion_keys,
                                   &req.circ_ns_params,
@@ -530,7 +486,7 @@ cpuworker_onion_handshake_threadfn(void *state_, void *work_)
                                   &circuit_id_64,
                                   &n_circuit_id_64,
                                   req.payment_export_requested,
-                                  &rpl.payment_result);
+                                  &rpl.payment_result, &rpl.initial_material);
   if (n < 0) {
     /* failure */
     log_debug(LD_OR,"onion_skin_server_handshake failed.");
@@ -608,6 +564,40 @@ cpuworker_queue_work,(workqueue_priority_t priority,
                                         arg);
 }
 
+static void
+cpuworker_payment_entry_released(void *arg)
+{
+  (void)payment_work_complete(arg);
+}
+
+static int
+cpuworker_payment_start(payment_work_t *work, void *arg)
+{
+  cpuworker_job_t *job=arg;
+  or_circuit_t *circ=job->circ;
+  if (circ->base_.marked_for_close || total_pending_tasks>=max_pending_tasks)
+    return -1;
+  workqueue_entry_t *entry=cpuworker_queue_work(WQ_PRI_HIGH,
+      cpuworker_onion_handshake_threadfn,cpuworker_onion_handshake_replyfn,job);
+  if (!entry) return -1;
+  workqueue_entry_set_reply_release(entry,cpuworker_payment_entry_released,work);
+  job->payment_work=work;
+  ++total_pending_tasks;
+  circ->workqueue_entry=entry;
+  return 0;
+}
+
+static void
+cpuworker_payment_drop(void *arg)
+{
+  cpuworker_job_t *job=arg;
+  or_circuit_t *circ=job->circ;
+  circ->payment_native_work=NULL;
+  memwipe(job,0,sizeof(*job)); tor_free(job);
+  if (!circ->base_.marked_for_close)
+    circuit_mark_for_close(TO_CIRCUIT(circ),END_CIRC_REASON_RESOURCELIMIT);
+}
+
 /** Try to tell a cpuworker to perform the public key operations necessary to
  * respond to <b>onionskin</b> for the circuit <b>circ</b>.
  *
@@ -630,7 +620,26 @@ assign_onionskin_to_cpuworker(or_circuit_t *circ,
     return -1;
   }
 
-  if (total_pending_tasks >= max_pending_tasks) {
+  if (onionskin->handshake_type == ONION_HANDSHAKE_TYPE_NTOR_V3 &&
+      !circ->payment_construction_prepared) {
+    payment_profile_policy_t policy;
+    bool candidate;
+    if (payment_circuit_construction_policy(&policy,&candidate)) {
+      if (free_capacity_circuit_prepare_channel(TO_CIRCUIT(circ),circ->p_chan) < 0 ||
+          free_capacity_circuit_setup_received(TO_CIRCUIT(circ),circ->p_chan) < 0) {
+        free_capacity_circuit_free(TO_CIRCUIT(circ));
+        tor_free(onionskin);
+        return -1;
+      }
+      circ->payment_construction_prepared=true;
+      circ->payment_constructed_ms=monotime_absolute_msec();
+      circ->payment_construction_policy=policy;
+      circ->payment_policy_available=candidate;
+    }
+  }
+
+  if (!circ->payment_construction_prepared &&
+      total_pending_tasks >= max_pending_tasks) {
     log_debug(LD_OR,"No idle cpuworkers. Queuing.");
     if (onion_pending_add(circ, onionskin) < 0) {
       tor_free(onionskin);
@@ -660,26 +669,59 @@ assign_onionskin_to_cpuworker(or_circuit_t *circ,
   req.circ_ns_params.sendme_inc_cells = congestion_control_sendme_inc();
 
   /* Copy the circuit ID for payment processing */
-  req.payment_export_requested = circ->payment_export_requested;
+  req.circ_ns_params.eltor_resource_eligible=circ->payment_construction_prepared;
+  req.payment_export_requested=circ->payment_construction_prepared;
+  if (req.payment_export_requested) {
+    req.payment_native_queued_ms=monotime_absolute_msec();
+    uint64_t wait=payment_resources_protocol()->limits.max_wait_ms;
+    req.payment_native_start_before_ms=req.payment_native_queued_ms>UINT64_MAX-wait ?
+      UINT64_MAX : req.payment_native_queued_ms+wait;
+  }
   req.circuit_id = circ->p_circ_id;
   req.n_circuit_id = TO_CIRCUIT(circ)->n_circ_id;
 
+  payment_work_t *payment_work=NULL;
+  if (circ->payment_construction_prepared) {
+    uint64_t lifetime=circ->payment_policy_available ?
+      circ->payment_construction_policy.setup_timeout_ms : FREE_CAPACITY_LIFETIME_MS;
+    if (circ->payment_constructed_ms>UINT64_MAX-lifetime ||
+        !(payment_work=payment_work_reserve(NULL,PROTOCOL_BUDGET_NATIVE_SETUP,
+            /* The native callback may outlive circuit teardown: DEAD_CIRCUIT
+             * storage remains allocated until its actual reply frees it. */
+            sizeof(cpuworker_job_t)+workqueue_entry_memory_cost()+sizeof(*circ),
+            circ->payment_constructed_ms+lifetime))) {
+      memwipe(&req,0,sizeof(req));
+      return -1;
+    }
+  }
   job = tor_malloc_zero(sizeof(cpuworker_job_t));
   job->circ = circ;
   memcpy(&job->u.request, &req, sizeof(req));
   memwipe(&req, 0, sizeof(req));
 
-  ++total_pending_tasks;
-  queue_entry = threadpool_queue_work_priority(threadpool,
-                                      WQ_PRI_HIGH,
+  if (payment_work) {
+    job->payment_work=payment_work;
+    circ->payment_native_work=payment_work;
+    if (payment_work_queue(payment_work,cpuworker_payment_start,
+                             cpuworker_payment_drop,job)<0) {
+      circ->payment_native_work=NULL;
+      memwipe(job,0,sizeof(*job)); tor_free(job);
+      payment_work_release(payment_work);
+      return -1;
+    }
+    return 0;
+  }
+
+  queue_entry = cpuworker_queue_work(WQ_PRI_HIGH,
                                       cpuworker_onion_handshake_threadfn,
                                       cpuworker_onion_handshake_replyfn,
                                       job);
   if (!queue_entry) {
     log_warn(LD_BUG, "Couldn't queue work on threadpool");
-    tor_free(job);
+    memwipe(job,0,sizeof(*job)); tor_free(job);
     return -1;
   }
+  ++total_pending_tasks;
 
   log_debug(LD_OR, "Queued task %p (qe=%p, circ=%p)",
             job, queue_entry, job->circ);
@@ -695,17 +737,22 @@ void
 cpuworker_cancel_circ_handshake(or_circuit_t *circ)
 {
   cpuworker_job_t *job;
+  if (circ->payment_native_work && !circ->workqueue_entry &&
+      payment_work_cancel(circ->payment_native_work)) return;
   if (circ->workqueue_entry == NULL)
     return;
 
   job = workqueue_entry_cancel(circ->workqueue_entry);
   if (job) {
     /* It successfully cancelled. */
+    payment_work_t *payment_work=job->payment_work;
+    circ->payment_native_work=NULL;
     memwipe(job, 0xe0, sizeof(*job));
     tor_free(job);
     tor_assert(total_pending_tasks > 0);
     --total_pending_tasks;
     /* if (!job), this is done in cpuworker_onion_handshake_replyfn. */
     circ->workqueue_entry = NULL;
+    if (payment_work) (void)payment_work_complete(payment_work);
   }
 }

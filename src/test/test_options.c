@@ -3748,6 +3748,17 @@ test_options_validate__testing_options(void *ignored)
   char *msg;
   options_test_data_t *tdata = NULL;
   setup_capture_of_logs(LOG_WARN);
+  tdata=get_options_test_data("ElTorFoundation 1\n");
+  ret=options_validate(NULL,tdata->opt,&msg);
+  tt_int_op(ret,OP_EQ,-1);
+  tt_str_op(msg,OP_EQ,"ElTorFoundation requires TestingTorNetwork 1.");
+  tor_free(msg);
+  free_options_test_data(tdata);
+  tdata=get_options_test_data(VALID_DIR_AUTH
+                             "TestingTorNetwork 1\nElTorFoundation 1\n");
+  ret=options_validate(NULL,tdata->opt,&msg);
+  tt_int_op(ret,OP_EQ,0);
+  tor_free(msg);
 
 #define TEST_TESTING_OPTION(name, accessor, \
                             low_val, high_val, err_low, EXTRA_OPT_STR)  \

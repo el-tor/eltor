@@ -69,7 +69,6 @@ payment_util_get_preimage_from_torrc(char *eltor_payhash, int hop_num)
     }
     strncpy(eltor_preimage_raw, preimage_value, 64);
     eltor_preimage_raw[64] = '\0'; // Ensure null termination
-    log_info(LD_CIRC, "ElTorPreimageHop%d: %s", hop_num, eltor_preimage_raw);
   } else {
     log_warn(LD_CONFIG, "Preimage key %s not found in torrc", preimage_key);
   }
@@ -85,7 +84,6 @@ payment_util_get_preimage_from_torrc(char *eltor_payhash, int hop_num)
     }
     strncpy(eltor_payhash_raw, payhash_value, 64);
     eltor_payhash_raw[64] = '\0'; // Ensure null termination
-    log_info(LD_CIRC, "ElTorPayHashHop%d: %s", hop_num, eltor_payhash_raw);
   } else {
     log_warn(LD_CONFIG, "PayHash key %s not found in torrc", payhash_key);
   }
@@ -148,8 +146,6 @@ payment_util_get_payhash_from_circ(char *eltor_payhash, char *payhash,
   } else {
     strncpy(eltor_payhash_raw, payhash + offset, 768);
     eltor_payhash_raw[768] = '\0'; // Ensure null termination
-    log_info(LD_CONFIG, "eltor_payhash_raw (hop %d): %s", hop_num,
-             eltor_payhash_raw);
   }
 
   // 3. Prefix the Preimage string
@@ -190,15 +186,11 @@ payment_util_has_paid(const char *contact_info, const uint8_t *payload,
       char preimage[64 + 1]; // null-terminated string
       memcpy(preimage, payload + index + nlen, 64);
       preimage[64] = '\0'; // Null-terminate the string
-      log_info(LD_APP, "ElTorRelay: %s, Preimage: %s", get_options()->Nickname,
-               preimage);
 
       // Check for payhash
       char payhash[64 + 1]; // null-terminated string
       memcpy(payhash, payload + indexPayHash + plen, 64);
       payhash[64] = '\0'; // Null-terminate the string
-      log_info(LD_APP, "ElTorRelay: %s, PayHash: %s", get_options()->Nickname,
-               payhash);
 
       // Verify preimage against the payment hash
       if (payment_util_verify_preimage(preimage, payhash)) {
@@ -264,8 +256,6 @@ payment_util_has_payment_id_hash(const uint8_t *payload, size_t payload_len)
 
     // Add additional debugging to check for any string that looks like a
     // payment hash
-    log_debug(LD_APP, "ELTOR RELAY %s: Full payload hex dump: %s",
-              get_options()->Nickname, hex_str(payload, payload_len));
     return 0;
   }
 }
@@ -310,9 +300,6 @@ int payment_util_get_hop_payhash(origin_circuit_t *circ, crypt_path_t *hop, char
                                       circ->payhashes, hop_num);
 
   if (strlen(extracted_payhash) > 0) {
-    log_info(LD_GENERAL,
-              "ELTOR: Found payment hash for hop %d (first 20 chars): %.20s...",
-              hop_num, extracted_payhash);
     strlcpy(out_buf, extracted_payhash, out_len);
     return 1;
   } else {
@@ -426,11 +413,6 @@ payment_util_parse_payment_line(const char *line)
   memcpy(item->wire_format, prefix, prefix_len);
   memcpy(item->wire_format + prefix_len, payload, payload_len);
 
-  log_debug(
-      LD_CONTROL,
-      "ELTOR: Parsed payment line for %s (hash: %.10s..., preimage: %.10s...)",
-      item->fingerprint, item->handshake_payment_hash,
-      item->handshake_preimage);
 
   return item;
 }

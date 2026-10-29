@@ -148,6 +148,36 @@ protocol_budget_slot_reserve(protocol_budget_t *owner,
 }
 
 protocol_budget_result_t
+protocol_budget_native_slot_reserve(protocol_budget_t *owner,
+    protocol_budget_slot_t *slot, uint32_t bytes,
+    uint64_t expires_ms, uint64_t now_ms)
+{
+  protocol_budget_result_t r = protocol_budget_slot_reserve(owner, slot, bytes,
+                                                          expires_ms, now_ms);
+  if (r == PROTOCOL_BUDGET_OK) slot->native_only = true;
+  return r;
+}
+
+protocol_budget_result_t
+protocol_budget_native_slot_retire(protocol_budget_slot_t *slot,
+                                   uint64_t generation, uint64_t now_ms)
+{
+  if (!slot || !generation || slot->generation != generation ||
+      !slot->native_only)
+    return PROTOCOL_BUDGET_BAD_STATE;
+  if (slot->state == PROTOCOL_BUDGET_SLOT_UNUSED)
+    return PROTOCOL_BUDGET_OK;
+  if (slot->jobs) return PROTOCOL_BUDGET_WAIT;
+  protocol_budget_result_t r = advance(slot->owner, now_ms);
+  if (r != PROTOCOL_BUDGET_OK) return r;
+  slot->owner->arena_used -= slot->allocation_bytes;
+  --slot->owner->slots;
+  slot->allocation_bytes = 0;
+  slot->state = PROTOCOL_BUDGET_SLOT_UNUSED;
+  return PROTOCOL_BUDGET_OK;
+}
+
+protocol_budget_result_t
 protocol_budget_slot_finish(protocol_budget_slot_t *slot, uint64_t generation,
                             uint32_t bytes, uint64_t now_ms)
 {
@@ -200,7 +230,8 @@ protocol_budget_submit(protocol_budget_slot_t *slot, uint64_t slot_generation,
       !job || job->state != PROTOCOL_BUDGET_JOB_UNUSED ||
       (job->issuer && job->issuer != slot->owner) ||
       bytes < sizeof(*job) || work < PROTOCOL_BUDGET_SIGNATURE ||
-      work > PROTOCOL_BUDGET_NATIVE_SETUP)
+      work > PROTOCOL_BUDGET_NATIVE_SETUP ||
+      (slot->native_only && work != PROTOCOL_BUDGET_NATIVE_SETUP))
     return PROTOCOL_BUDGET_BAD_STATE;
   owner = slot->owner;
   r = advance(owner, now_ms);

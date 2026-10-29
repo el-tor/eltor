@@ -20,6 +20,7 @@ struct tor_tls_t;
 /** Subtype of connection_t for an "OR connection" -- that is, one that speaks
  * cells over TLS. */
 struct or_connection_t {
+  struct free_capacity_link_t *free_capacity;
   connection_t base_;
 
   /** Hash of the public RSA key for the other side's identity key, or zeroes

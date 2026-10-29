@@ -22,3 +22,14 @@ noinst_HEADERS += src/feature/payment/payment_schedule.h
 
 LIBTOR_APP_A_SOURCES += src/feature/payment/payment_circuit.c
 noinst_HEADERS += src/feature/payment/payment_circuit.h
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_origin.c
+noinst_HEADERS += src/feature/payment/payment_origin.h
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_resources.c
+noinst_HEADERS += src/feature/payment/payment_resources.h
+LIBTOR_APP_A_SOURCES += src/feature/payment/free_capacity_hooks.c
+noinst_HEADERS += src/feature/payment/free_capacity_hooks.h
+
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_initial.c
+noinst_HEADERS += src/feature/payment/payment_initial.h
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_workqueue.c
+noinst_HEADERS += src/feature/payment/payment_workqueue.h

@@ -11,6 +11,7 @@
 #include "lib/string/util_string.h"
 #include "lib/string/printf.h"
 #include "lib/log/util_bug.h"
+#include "lib/crypt_ops/crypto_util.h"
 
 /** Free all storage held by a relay payment item. */
 void
@@ -20,14 +21,17 @@ relay_payment_item_free_(relay_payment_item_t *item)
     return;
 
   tor_free(item->fingerprint);
+  if (item->handshake_payment_hash)
+    memwipe(item->handshake_payment_hash,0,strlen(item->handshake_payment_hash));
+  if (item->handshake_preimage)
+    memwipe(item->handshake_preimage,0,strlen(item->handshake_preimage));
+  if (item->payhashes) memwipe(item->payhashes,0,strlen(item->payhashes));
+  if (item->wire_format) memwipe(item->wire_format,0,strlen(item->wire_format));
   tor_free(item->handshake_payment_hash);
   tor_free(item->handshake_preimage);
   tor_free(item->payhashes);
   tor_free(item->wire_format);
-
-  // Debug pattern - fill with unusual value before freeing
-  memset(item, 0x5E,
-         sizeof(relay_payment_item_t)); /* debug bad memory usage */
+  memwipe(item,0,sizeof(*item));
 
   tor_free(item);
 }
@@ -200,20 +204,6 @@ relay_payment_item_is_valid(const relay_payment_item_t *item)
 void
 log_relay_payment(const relay_payment_item_t *payment_item)
 {
-  log_debug(
-      LD_CONTROL,
-      "Parsed payment_item: fingerprint=%s, handshake_payment_hash=%s, "
-      "handshake_preimage=%s, payhashes=%s, wire_format=%s",
-      payment_item && payment_item->fingerprint ? payment_item->fingerprint
-                                                : "(null)",
-      payment_item && payment_item->handshake_payment_hash
-          ? payment_item->handshake_payment_hash
-          : "(null)",
-      payment_item && payment_item->handshake_preimage
-          ? payment_item->handshake_preimage
-          : "(null)",
-      payment_item && payment_item->payhashes ? payment_item->payhashes
-                                              : "(null)",
-      payment_item && payment_item->wire_format ? payment_item->wire_format
-                                                : "(null)");
+  log_debug(LD_CONTROL,"Parsed relay payment metadata: %s",
+            payment_item ? "present" : "absent");
 }

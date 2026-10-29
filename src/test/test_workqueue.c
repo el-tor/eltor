@@ -163,6 +163,7 @@ static int rsa_sent = 0;
 static int ecdh_sent = 0;
 static int n_received_previously = 0;
 static int n_received = 0;
+static int n_released = 0;
 static int no_shutdown = 0;
 
 #ifdef TRACK_RESPONSES
@@ -182,6 +183,16 @@ handle_reply(void *arg)
   ++n_received;
 }
 
+/* Every normal reply has destroyed its caller buffer before this hook. A
+ * cancelled entry must not invoke it, since cancellation frees that buffer. */
+static void
+handle_reply_release(void *arg)
+{
+  int *released = arg;
+  tor_assert(*released + 1 == n_received);
+  ++*released;
+}
+
 /* This should never get called. */
 static void
 handle_reply_shutdown(void *arg)
@@ -193,6 +204,7 @@ handle_reply_shutdown(void *arg)
 static workqueue_entry_t *
 add_work(threadpool_t *tp)
 {
+  workqueue_entry_t *entry;
   int add_rsa =
     opt_ratio_rsa == 0 ||
     tor_weak_random_range(&weak_rng, opt_ratio_rsa) == 0;
@@ -203,7 +215,7 @@ add_work(threadpool_t *tp)
     crypto_rand((char*)w->msg, 20);
     w->msglen = 20;
     ++rsa_sent;
-    return threadpool_queue_work_priority(tp,
+    entry = threadpool_queue_work_priority(tp,
                                           WQ_PRI_MED,
                                           workqueue_do_rsa, handle_reply, w);
   } else {
@@ -212,8 +224,11 @@ add_work(threadpool_t *tp)
     /* Not strictly right, but this is just for benchmarks. */
     crypto_rand((char*)w->u.pk.public_key, 32);
     ++ecdh_sent;
-    return threadpool_queue_work(tp, workqueue_do_ecdh, handle_reply, w);
+    entry = threadpool_queue_work(tp, workqueue_do_ecdh, handle_reply, w);
   }
+  if (entry)
+    workqueue_entry_set_reply_release(entry, handle_reply_release, &n_released);
+  return entry;
 }
 
 static int n_failed_cancel = 0;
@@ -294,7 +309,8 @@ replysock_readable_cb(threadpool_t *tp)
 #endif /* defined(TRACK_RESPONSES) */
 
   if (n_sent - (n_received+n_successful_cancel) < opt_n_lowwater) {
-    int n_to_send = n_received + opt_n_inflight - n_sent;
+    int n_to_send = n_received + n_successful_cancel +
+                    opt_n_inflight - n_sent;
     if (n_to_send > opt_n_items - n_sent)
       n_to_send = opt_n_items - n_sent;
     add_n_work_items(tp, n_to_send);
@@ -440,7 +456,8 @@ main(int argc, char **argv)
 
   tor_libevent_run_event_loop(tor_libevent_get_base(), 0);
 
-  if (n_sent != opt_n_items || n_received+n_successful_cancel != n_sent) {
+  if (n_sent != opt_n_items || n_received+n_successful_cancel != n_sent ||
+      n_released != n_received) {
     printf("%d vs %d\n", n_sent, opt_n_items);
     printf("%d+%d vs %d\n", n_received, n_successful_cancel, n_sent);
     puts("FAIL");

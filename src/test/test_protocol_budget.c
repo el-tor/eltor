@@ -437,6 +437,61 @@ test_protocol_budget_shared_backing(void *arg)
   ;
 }
 
+static void
+test_protocol_budget_native_lifetime(void *arg)
+{
+  protocol_budget_t owner, saved;
+  protocol_budget_slot_t financial = {0}, native = {0};
+  protocol_budget_job_t job = {0}, *started = NULL;
+  uint64_t generation, credit;
+  (void)arg;
+  tt_int_op(protocol_budget_init(&owner, NULL, 0), OP_EQ, PROTOCOL_BUDGET_OK);
+  tt_int_op(SLOT_INIT(&owner, &financial, SLOT_BYTES, 30000, 0), OP_EQ,
+            PROTOCOL_BUDGET_OK);
+  saved = owner;
+  tt_int_op(protocol_budget_native_slot_retire(&financial,
+      financial.generation, 0), OP_EQ, PROTOCOL_BUDGET_BAD_STATE);
+  tt_mem_op(&owner, OP_EQ, &saved, sizeof(owner));
+  tt_int_op(protocol_budget_native_slot_reserve(&owner, &native, SLOT_BYTES,
+      1000, 0), OP_EQ, PROTOCOL_BUDGET_OK);
+  generation = native.generation;
+  saved = owner;
+  tt_int_op(SUBMIT(&native, &job, PROTOCOL_BUDGET_SIGNATURE, JOB_BYTES, 0),
+            OP_EQ, PROTOCOL_BUDGET_BAD_STATE);
+  tt_int_op(SUBMIT(&native, &job, PROTOCOL_BUDGET_HPKE, JOB_BYTES, 0),
+            OP_EQ, PROTOCOL_BUDGET_BAD_STATE);
+  tt_mem_op(&owner, OP_EQ, &saved, sizeof(owner));
+  tt_int_op(SUBMIT(&native, &job, PROTOCOL_BUDGET_NATIVE_SETUP, JOB_BYTES, 0),
+            OP_EQ, PROTOCOL_BUDGET_OK);
+  tt_int_op(protocol_budget_native_slot_retire(&native, generation, 0), OP_EQ,
+            PROTOCOL_BUDGET_WAIT);
+  tt_int_op(protocol_budget_start_next(&owner, 0, &started), OP_EQ,
+            PROTOCOL_BUDGET_OK);
+  tt_ptr_op(started, OP_EQ, &job);
+  tt_int_op(protocol_budget_native_slot_retire(&native, generation, 0), OP_EQ,
+            PROTOCOL_BUDGET_WAIT);
+  tt_int_op(CANCEL(&job, 0), OP_EQ, PROTOCOL_BUDGET_BAD_STATE);
+  credit = owner.crypto_credit_milli;
+  tt_int_op(COMPLETE(&job, 0), OP_EQ, PROTOCOL_BUDGET_OK);
+  tt_int_op(protocol_budget_native_slot_retire(&native, generation, 0), OP_EQ,
+            PROTOCOL_BUDGET_OK);
+  tt_int_op(protocol_budget_native_slot_retire(&native, generation, 0), OP_EQ,
+            PROTOCOL_BUDGET_OK);
+  tt_u64_op(owner.crypto_credit_milli, OP_EQ, credit);
+  tt_uint_op(owner.slots, OP_EQ, 1);
+  tt_uint_op(owner.arena_used, OP_EQ, SLOT_BYTES);
+  /* Reuse as a normal financial slot clears early-release permission. */
+  tt_int_op(SLOT_INIT(&owner, &native, SLOT_BYTES, 30000, 0), OP_EQ,
+            PROTOCOL_BUDGET_OK);
+  tt_assert(!native.native_only);
+  tt_int_op(protocol_budget_native_slot_retire(&native, generation, 0), OP_EQ,
+            PROTOCOL_BUDGET_BAD_STATE);
+  tt_int_op(protocol_budget_native_slot_retire(&native, native.generation, 0),
+            OP_EQ, PROTOCOL_BUDGET_BAD_STATE);
+ done:
+  ;
+}
+
 #define BUDGET_TEST(name) { #name, test_protocol_budget_##name, 0, NULL, NULL }
 struct testcase_t protocol_budget_tests[] = {
   BUDGET_TEST(config),
@@ -448,5 +503,6 @@ struct testcase_t protocol_budget_tests[] = {
   BUDGET_TEST(generation_clock),
   BUDGET_TEST(lower_ceilings),
   BUDGET_TEST(shared_backing),
+  BUDGET_TEST(native_lifetime),
   END_OF_TESTCASES
 };

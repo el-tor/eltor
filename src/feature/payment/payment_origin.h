@@ -1,0 +1,143 @@
+/* Copyright (c) 2026, The El Tor Project. */
+/* See LICENSE for licensing information. */
+#ifndef TOR_PAYMENT_ORIGIN_H
+#define TOR_PAYMENT_ORIGIN_H
+
+#include "feature/payment/payment_profile.h"
+
+struct origin_circuit_t;
+struct crypt_path_t;
+struct relay_msg_t;
+typedef struct payment_origin_hop_t payment_origin_hop_t;
+
+/* Known constructor allocations plus an explicitly conservative 8KiB/hop
+ * allowance for this native TOR1/OpenSSL backend. This candidate is not proof
+ * of arbitrary crypto-provider allocator overhead; measure before deployment. */
+#define PAYMENT_ORIGIN_NATIVE_CRYPTO_RESERVE 8192u
+#define PAYMENT_ORIGIN_CONSTRUCTION_PAYHASH_BYTES (16u * 769u - 1u)
+int payment_origin_construction_cost(const struct origin_circuit_t *, size_t *);
+int payment_origin_reserve_construction(struct origin_circuit_t *);
+
+typedef enum payment_origin_result_t {
+  PAYMENT_ORIGIN_OK = 0,
+  PAYMENT_ORIGIN_INVALID,
+  PAYMENT_ORIGIN_UNSUPPORTED,
+  PAYMENT_ORIGIN_UNCONFIRMED,
+  PAYMENT_ORIGIN_UNKNOWN_OPERATION,
+  PAYMENT_ORIGIN_CONFLICT,
+  PAYMENT_ORIGIN_BAD_SEQUENCE,
+  PAYMENT_ORIGIN_EXPIRED,
+  PAYMENT_ORIGIN_CAPACITY,
+  PAYMENT_ORIGIN_CLOSED
+} payment_origin_result_t;
+
+typedef enum payment_origin_kind_t {
+  PAYMENT_ORIGIN_COMMIT,
+  PAYMENT_ORIGIN_START,
+  PAYMENT_ORIGIN_QUERY,
+  PAYMENT_ORIGIN_RENEW
+} payment_origin_kind_t;
+
+typedef enum payment_origin_phase_t {
+  PAYMENT_ORIGIN_QUEUED,
+  PAYMENT_ORIGIN_SENT,
+  PAYMENT_ORIGIN_VERIFIED,
+  PAYMENT_ORIGIN_ADMITTED,
+  PAYMENT_ORIGIN_ACTIVE,
+  PAYMENT_ORIGIN_REFUSED,
+  PAYMENT_ORIGIN_UNCERTAIN,
+  PAYMENT_ORIGIN_OPERATION_CLOSED
+} payment_origin_phase_t;
+
+/* Copied, read-only observations. Absolute local deadlines never leave Tor.
+ * Availability flags distinguish missing authenticated facts from numeric zero.
+ * Remaining clocks already subtract all time since the earliest transmission.
+ */
+typedef struct payment_origin_snapshot_t {
+  uint64_t revision, relay_revision, current_round, active_period;
+  uint64_t elapsed_upper_ms, round_remaining_ms, enforcement_remaining_ms;
+  uint64_t setup_remaining_ms, admission_remaining_ms, hard_age_remaining_ms;
+  uint8_t terms[32], initial_allocation[32], active_allocation[32];
+  uint8_t state, operation[16], request_digest[32], allocation_digest[32];
+  payment_origin_kind_t kind;
+  payment_origin_phase_t phase;
+  uint64_t period;
+  uint8_t transmissions, relay_status;
+  bool confirmed, status_available, operation_available, relay_status_available;
+  bool relay_revision_available, setup_available;
+  bool allocation_available, schedule_available, admission_available;
+} payment_origin_snapshot_t;
+
+/* Privileged registration facts pinned before COMMIT; no invoice/proof or MAC
+ * keys. C is the exact retained circuit binding, not the exporter context. */
+typedef struct payment_origin_registration_t {
+  uint8_t policy[55], terms[32], initial[32], binding[32], ids[10][32];
+  uint64_t revision;
+} payment_origin_registration_t;
+payment_origin_result_t payment_origin_get_registration(
+    const struct origin_circuit_t *,uint16_t hop,uint64_t now_ms,
+    payment_origin_registration_t *out);
+
+/* Pin authenticated full-descriptor terms and strict canonical legacy initial
+ * payload before creating this hop's onionskin. The caller has explicitly
+ * selected this profile; capability flags alone must not enable it. The payload
+ * is the unchanged eltor_payhash + fee hash + proof + ten IDs. No keys are
+ * derived here. False gates stay false on any failure. */
+payment_origin_result_t payment_origin_pin(struct origin_circuit_t *circ,
+    struct crypt_path_t *hop, const char *payload, size_t payload_len,
+    uint64_t now_ms);
+/* Inactive until the final operator configuration integrates all relay/free
+ * gates. Actual construction callers invoke this before generating onionskins.
+ * Returns0 when disabled/no advertised profile; negative on a selected failure. */
+int payment_origin_prepare_handshake(struct origin_circuit_t *circ,
+    struct crypt_path_t *hop, const char *payload, uint64_t now_ms);
+int payment_origin_configure_enabled(bool enabled);
+int payment_origin_resource_complete(struct origin_circuit_t *,
+    struct crypt_path_t *, bool admitted, uint64_t now_ms);
+/* Called only after authenticated handshake + traffic-key installation. */
+payment_origin_result_t payment_origin_handshake_complete(
+    struct origin_circuit_t *circ, struct crypt_path_t *hop, uint64_t now_ms);
+/* Read-only conservative path gate. Every pinned hop must have authenticated
+ * ACTIVE status and positive round, enforcement and hard-age budgets. */
+bool payment_origin_present(const struct origin_circuit_t *);
+bool payment_origin_data_active(const struct origin_circuit_t *, uint64_t now_ms);
+/* Test foundation mode excludes legacy application circuits; authenticated
+ * resource-only circuits remain eligible. A pinned financial profile requires
+ * all-hop authenticated activation. Directory bootstrap is scoped by caller. */
+bool payment_origin_streams_ready(const struct origin_circuit_t *,uint64_t now_ms);
+void payment_origin_close(struct origin_circuit_t *circ);
+void payment_origin_hop_free(struct crypt_path_t *hop);
+
+payment_origin_result_t payment_origin_initial_prepare(
+    struct origin_circuit_t *circ, uint16_t hop, const uint8_t operation[16],
+    const uint8_t nonce[16], const uint8_t policy[55], uint64_t now_ms);
+payment_origin_result_t payment_origin_initial_start(
+    struct origin_circuit_t *circ, uint16_t hop, const uint8_t operation[16],
+    const uint8_t nonce[16], uint64_t now_ms);
+payment_origin_result_t payment_origin_initial_refresh(
+    struct origin_circuit_t *circ, uint16_t hop, const uint8_t operation[16],
+    const uint8_t nonce[16], uint64_t now_ms);
+payment_origin_result_t payment_origin_renew_prepare(
+    struct origin_circuit_t *circ, uint16_t hop, const uint8_t operation[16],
+    uint64_t period, uint64_t first_round, const uint8_t nonce[16],
+    const uint8_t terms[32], const uint8_t parent[32],
+    const uint8_t ids[10][32], uint64_t now_ms);
+/* operation=NULL selects only the hop snapshot. No dispatch, timer advancement,
+ * operation creation, payment or activation occurs from observation. */
+payment_origin_result_t payment_origin_get(
+    const struct origin_circuit_t *circ, uint16_t hop,
+    const uint8_t operation[16], bool initial, uint64_t now_ms,
+    payment_origin_snapshot_t *out);
+/* layer is the authenticated decrypting hop supplied by the relay engine. */
+int payment_origin_handle_reply(struct origin_circuit_t *circ,
+    struct crypt_path_t *layer, const struct relay_msg_t *msg, uint64_t now_ms);
+/* Timer driver; RPC duplicates never invoke this to add transmissions. */
+void payment_origin_tick(uint64_t now_ms);
+/* Local response-wait candidate only, initially 7000ms. Configuration is fixed
+ * before any live profile; a timeout permits a fresh bounded REFRESH but does
+ * not discard its nonce, resend, extend lifecycle clocks or prove failure. */
+int payment_origin_configure_query_timeout(uint32_t timeout_ms);
+/* Process/test shutdown only, after all cpath contexts have been freed. */
+int payment_origin_free_all(void);
+
+#endif /* !defined(TOR_PAYMENT_ORIGIN_H) */

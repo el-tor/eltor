@@ -4,12 +4,16 @@
 #define TOR_CONTROL_PAYMENT_H
 #include "core/or/or.h"
 #include "feature/payment/payment_circuit.h"
+#include <stdarg.h>
 
 #define CONTROL_PAYMENT_MAX_LINE 16384u
 #define CONTROL_PAYMENT_MAX_LIVE 4096u
 #define CONTROL_PAYMENT_MAX_TOMBSTONES 4096u
 #define CONTROL_PAYMENT_MAX_SNAPSHOTS 4u
 #define CONTROL_PAYMENT_PAGE_ROWS 128u
+#define CONTROL_PAYMENT_RESPONSE_BYTES (32u * 1024u)
+#define CONTROL_PAYMENT_OUTPUT_BYTES (256u * 1024u)
+#define CONTROL_PAYMENT_OUTPUT_RESERVATION_BYTES (512u * 1024u)
 
 typedef enum control_payment_role_t {
   CONTROL_PAYMENT_ORIGIN = 1,
@@ -22,6 +26,7 @@ typedef enum control_payment_command_t {
   CONTROL_PAYMENT_INITIAL_PREPARE,
   CONTROL_PAYMENT_INITIAL_START,
   CONTROL_PAYMENT_INITIAL_GET,
+  CONTROL_PAYMENT_INITIAL_REGISTRATION_GET,
   CONTROL_PAYMENT_INITIAL_REFRESH,
   CONTROL_PAYMENT_RENEW_PREPARE,
   CONTROL_PAYMENT_GET,
@@ -63,9 +68,17 @@ int control_payment_register(circuit_t *circ, control_payment_role_t role,
                              uint16_t hops, bool listed);
 int control_payment_binding(const circuit_t *circ, uint8_t instance[16],
                             uint8_t handle[16]);
+uint64_t control_payment_revision(const circuit_t *circ);
+void control_payment_origin_changed(origin_circuit_t *circ, const char *kind);
 void control_payment_circuit_closed(circuit_t *circ);
 void control_payment_connection_closed(control_connection_t *conn);
 void control_payment_finished_flushing(control_connection_t *conn);
+/* True only inside a bounded foundation response render. General legacy Tor
+ * control output keeps its inherited behavior. These writers allocate nothing. */
+bool control_payment_write_reply(control_connection_t *, int code, int separator,
+                                  const char *body);
+bool control_payment_vprintf_reply(control_connection_t *, int code,
+    int separator, const char *format, va_list args);
 /* Called only by the registered event's main-loop delivery path. */
 void control_payment_queue_event(control_connection_t *conn, const char *line);
 void control_payment_free_all(void);

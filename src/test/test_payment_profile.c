@@ -4,6 +4,8 @@
 #include "feature/payment/payment_profile.h"
 #include "lib/crypt_ops/crypto_digest.h"
 #include "test/test.h"
+#include "core/crypto/onion_crypto.h"
+#include "trunnel/extension.h"
 
 /* Public synthetic fixtures copied from
  * eltord/spec/vectors/payment_renewal_v1.json; no real ntor/wallet secrets.
@@ -673,6 +675,37 @@ test_payment_profile_capabilities(void *arg)
  done: ;
 }
 
+static void
+test_payment_profile_resource_extension(void *arg)
+{
+  const uint8_t expected[] = {1, 224, 2, 1, 1};
+  const uint8_t duplicate[] = {2, 224, 2, 1, 1, 224, 2, 1, 1};
+  uint8_t encoded[16], malformed[5];
+  trn_extension_t *ext = trn_extension_new();
+  (void)arg;
+  tt_int_op(eltor_resource_extension_parse(ext), OP_EQ, 0);
+  tt_int_op(eltor_resource_extension_add(ext), OP_EQ, 0);
+  tt_int_op(eltor_resource_extension_add(ext), OP_EQ, -1);
+  tt_int_op(trn_extension_encode(encoded, sizeof(encoded), ext), OP_EQ, 5);
+  tt_mem_op(encoded, OP_EQ, expected, sizeof(expected));
+  tt_int_op(eltor_resource_extension_parse(ext), OP_EQ, 1);
+  trn_extension_free(ext); ext = NULL;
+  tt_int_op(trn_extension_parse(&ext, duplicate, sizeof(duplicate)), OP_EQ, 9);
+  tt_int_op(eltor_resource_extension_parse(ext), OP_EQ, -1);
+  trn_extension_free(ext); ext = NULL;
+  for (unsigned offset = 3; offset <= 4; ++offset) {
+    memcpy(malformed, expected, sizeof(expected)); malformed[offset] = 2;
+    tt_int_op(trn_extension_parse(&ext, malformed, sizeof(malformed)), OP_EQ, 5);
+    tt_int_op(eltor_resource_extension_parse(ext), OP_EQ, -1);
+    trn_extension_free(ext); ext = NULL;
+  }
+  memcpy(malformed, expected, sizeof(expected)); malformed[2] = 1;
+  tt_int_op(trn_extension_parse(&ext, malformed, 4), OP_EQ, 4);
+  tt_int_op(eltor_resource_extension_parse(ext), OP_EQ, -1);
+ done:
+  trn_extension_free(ext);
+}
+
 #define PROFILE_TEST(name) \
   { #name, test_payment_profile_##name, 0, NULL, NULL }
 struct testcase_t payment_profile_tests[] = {
@@ -683,5 +716,6 @@ struct testcase_t payment_profile_tests[] = {
   PROFILE_TEST(initial),
   PROFILE_TEST(export_lifetime),
   PROFILE_TEST(capabilities),
+  PROFILE_TEST(resource_extension),
   END_OF_TESTCASES
 };

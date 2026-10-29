@@ -64,6 +64,8 @@
 #include "core/or/channeltls.h"
 #include "core/or/circuitbuild.h"
 #include "core/or/circuitlist.h"
+#include "core/or/circuit_st.h"
+#include "core/or/cell_st.h"
 #include "core/or/circuitmux.h"
 #include "core/or/circuitstats.h"
 #include "core/or/connection_or.h" /* For var_cell_free() */
@@ -2106,6 +2108,22 @@ channel_send_destroy(circid_t circ_id, channel_t *chan, int reason)
              (chan->global_identifier),
              chan, channel_state_to_string(chan->state),
              chan->state);
+    return 0;
+  }
+
+  /* A foundation circuit's teardown must not enter the separate unbounded
+   * cmux destroy queue after its context is freed. Send the fixed stack cell
+   * directly through the serialized connection hook; unavailable maintenance
+   * credit closes the link, and the circuit is already irrevocably closing. */
+  circuit_t *circ = circuit_get_by_circid_channel_even_if_marked(circ_id, chan);
+  if (circ && circ->free_capacity) {
+    if (!CHANNEL_CONDEMNED(chan) && CHANNEL_IS_OPEN(chan) && chan->write_cell) {
+      cell_t cell = {0};
+      cell.circ_id = circ_id;
+      cell.command = CELL_DESTROY;
+      cell.payload[0] = reason;
+      chan->write_cell(chan, &cell);
+    }
     return 0;
   }
 

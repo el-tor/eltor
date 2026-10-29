@@ -33,6 +33,7 @@
 #include "core/crypto/hs_ntor.h"
 #include "core/crypto/onion_crypto.h"
 #include "core/crypto/onion_fast.h"
+#include "feature/payment/payment_origin.h"
 #include "core/mainloop/connection.h"
 #include "core/mainloop/mainloop.h"
 #include "core/or/channel.h"
@@ -1078,6 +1079,14 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
   }
   const char *hop_payhash = (*hop_payhash_buf) ? hop_payhash_buf : NULL;
 
+  if (payment_origin_prepare_handshake(circ,circ->cpath,hop_payhash,
+                                       monotime_absolute_msec()) < 0)
+    return -END_CIRC_REASON_TORPROTOCOL;
+  if (circ->cpath->payment_export_requested) {
+    cc.cell_type = CELL_CREATE2;
+    cc.handshake_type = ONION_HANDSHAKE_TYPE_NTOR_V3;
+  }
+
   len = onion_skin_create(cc.handshake_type,
                           circ->cpath->extend_info,
                           &circ->cpath->handshake_state,
@@ -1267,6 +1276,11 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
     log_info(LD_GENERAL, "ELTOR intermediate hop with NO PayHash");
   }
 
+  if (payment_origin_prepare_handshake(circ,hop,hop_payhash,
+                                       monotime_absolute_msec()) < 0)
+    return -END_CIRC_REASON_TORPROTOCOL;
+  if (hop->payment_export_requested)
+    ec.create_cell.handshake_type = ONION_HANDSHAKE_TYPE_NTOR_V3;
   len = onion_skin_create(ec.create_cell.handshake_type,
                           hop->extend_info,
                           &hop->handshake_state,
@@ -1281,7 +1295,6 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   ec.create_cell.handshake_len = len;
 
 
-  log_info(LD_CIRC,"Sending extend relay cell with eltor. payhash: %s", hop_payhash);
   {
     uint8_t command = 0;
     uint16_t payload_len=0;
@@ -1433,6 +1446,9 @@ circuit_finish_handshake(origin_circuit_t *circ,
   }
   if (payment_profile_export_take(&hop->payment_keys, &payment_result,
                                    hop->payment_export_requested) < 0)
+    return -END_CIRC_REASON_TORPROTOCOL;
+  if (payment_origin_resource_complete(circ,hop,params.eltor_resource_admitted,
+                                         monotime_absolute_msec())<0)
     return -END_CIRC_REASON_TORPROTOCOL;
   hop->relay_cell_format = params.cell_fmt;
 
@@ -2889,6 +2905,11 @@ client_circ_negotiation_message(const extend_info_t *ei,
     }
     params_out->cell_fmt = RELAY_CELL_FORMAT_V1;
     params_out->crypto_alg = RELAY_CRYPTO_ALG_CGO_CLIENT;
+  }
+
+  if (params_out->eltor_resource_requested) {
+    if (!ei->payment_free_v1 ||
+        eltor_resource_extension_add(ext) < 0) goto err;
   }
 
   size_t n_fields = trn_extension_getlen_fields(ext);

@@ -12,6 +12,7 @@
 #define CONTROL_EVENTS_PRIVATE
 
 #include "core/or/or.h"
+#include "feature/payment/payment_origin.h"
 #include "app/config/config.h"
 #include "lib/confmgt/confmgt.h"
 #include "app/main/main.h"
@@ -767,6 +768,11 @@ handle_control_extendcircuit(control_connection_t *conn,
 
   const config_line_t *purpose_line = config_line_find_case(kwargs, "PURPOSE");
   bool zero_circ = !strcmp("0", circ_id);
+  if (!zero_circ && get_options()->ElTorFoundation) {
+    control_write_endreply(conn,551,"Foundation path is immutable");
+    goto done;
+  }
+
 
   if (purpose_line) {
     intended_purpose = circuit_purpose_from_string(purpose_line->value);
@@ -983,6 +989,12 @@ handle_control_attachstream(control_connection_t *conn,
       ENTRY_TO_CONN(ap_conn)->state != AP_CONN_STATE_RESOLVE_WAIT) {
     control_write_endreply(conn, 555,
                            "Connection is not managed by controller.");
+    return 0;
+  }
+
+  if (circ && !ap_conn->use_begindir &&
+      !payment_origin_streams_ready(circ,monotime_absolute_msec())) {
+    control_write_endreply(conn,551,"Foundation circuit is not active");
     return 0;
   }
 

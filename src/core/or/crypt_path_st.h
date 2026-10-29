@@ -63,6 +63,7 @@ struct crypt_path_t {
   bool payment_export_requested;
   /** Derived paid-hop keys, allocated only with an explicit profile gate. */
   payment_profile_keys_t *payment_keys;
+  struct payment_origin_hop_t *payment_profile;
 
   /** Negotiated key material shared with the OR at this step. */
   char rend_circ_nonce[DIGEST_LEN];/* KH in tor-spec.txt */

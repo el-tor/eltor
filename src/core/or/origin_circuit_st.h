@@ -15,7 +15,8 @@
 #include "core/or/or.h"
 
 #include "core/or/circuit_st.h"
-#include "feature/payment/relay_payments_st.h" 
+#include "feature/payment/relay_payments_st.h"
+#include "feature/payment/protocol_budget.h"
 
 
 struct onion_queue_t;
@@ -332,6 +333,12 @@ struct origin_circuit_t {
    * is randomized on a per-circuit basis from CircuitsAvailableTimoeut
    * to 2*CircuitsAvailableTimoeut. */
   int circuit_idle_timeout;
+
+  /* Shared constructor backing remains reserved until the native circuit and
+   * all cpath/proof backing are actually destroyed, including after close. */
+  protocol_budget_memory_t payment_construction_memory;
+  size_t payment_payhash_capacity;
+  uint16_t payment_construction_hops;
 
   char *payhashes;
 

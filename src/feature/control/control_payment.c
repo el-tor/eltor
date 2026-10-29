@@ -4,6 +4,8 @@
 #include "core/or/or.h"
 #include "feature/control/control_payment.h"
 #include "feature/control/control.h"
+#include "feature/payment/payment_origin.h"
+#include "feature/payment/payment_resources.h"
 #include "feature/control/control_connection_st.h"
 #include "feature/control/control_proto.h"
 #include "feature/control/control_events.h"
@@ -17,6 +19,8 @@
 #include "lib/crypt_ops/crypto_digest.h"
 #include "lib/crypt_ops/crypto_util.h"
 #include "lib/time/compat_time.h"
+#include "lib/buf/buffers.h"
+#include <stdio.h>
 #include <string.h>
 
 typedef struct command_name_t {
@@ -30,6 +34,7 @@ static const command_name_t names[] = {
   { "ELTOR_INITIAL_PREPARE", CONTROL_PAYMENT_INITIAL_PREPARE, 8 },
   { "ELTOR_INITIAL_START", CONTROL_PAYMENT_INITIAL_START, 7 },
   { "ELTOR_INITIAL_GET", CONTROL_PAYMENT_INITIAL_GET, 6 },
+  { "ELTOR_INITIAL_REGISTRATION_GET", CONTROL_PAYMENT_INITIAL_REGISTRATION_GET,5 },
   { "ELTOR_INITIAL_REFRESH", CONTROL_PAYMENT_INITIAL_REFRESH, 7 },
   { "ELTOR_RENEW_PREPARE", CONTROL_PAYMENT_RENEW_PREPARE, 12 },
   { "ELTOR_PAYMENT_GET", CONTROL_PAYMENT_GET, 6 },
@@ -209,7 +214,7 @@ control_payment_parse(const char *line, size_t len,
         r.no_operation = !strcmp(token[5], "-");
         if (!r.no_operation)
           HEX(operation, 5);
-      } else {
+      } else if (r.command!=CONTROL_PAYMENT_INITIAL_REGISTRATION_GET) {
         HEX(operation, 5);
         if (r.command == CONTROL_PAYMENT_RENEW_PREPARE) {
           NUMBER(period, 6);
@@ -294,6 +299,7 @@ typedef struct payment_inventory_row_t {
 typedef struct payment_inventory_t {
   control_connection_t *connection;
   payment_inventory_row_t *rows;
+  protocol_budget_memory_t rows_lease;
   uint8_t cursors[CONTROL_PAYMENT_CURSOR_PAGES][16];
   uint64_t created_ms, sequence;
   uint32_t count;
@@ -308,6 +314,150 @@ static struct {
   payment_control_record_t records[CONTROL_PAYMENT_RECORDS];
   payment_inventory_t snapshots[CONTROL_PAYMENT_MAX_SNAPSHOTS];
 } payment_control;
+static protocol_budget_memory_t registry_lease;
+
+/* Reserve a complete response before any command side effect or formatting.
+ * Each live output slab is shared by command replies and payment events. The
+ * separate 512 KiB reservation conservatively covers all incremental native
+ * buffer chunks for <=256 KiB of queued output, including chunk headers,
+ * capacity rounding, a partially drained head and an occupied old tail.
+ * Legacy control output
+ * is outside this feature budget; while payment output is pending we retain
+ * this reservation until the entire mixed native outbuf drains or is freed. */
+typedef struct payment_control_output_t {
+  control_connection_t *conn;
+  struct payment_control_output_t *next, **previous;
+  protocol_budget_memory_t memory, queue_memory;
+  size_t length;
+  bool active, failed;
+  char data[CONTROL_PAYMENT_RESPONSE_BYTES];
+} payment_control_output_t;
+static payment_control_output_t *payment_outputs;
+
+static void
+output_close(control_connection_t *conn)
+{
+  if (!conn->base_.marked_for_close)
+    connection_mark_for_close(TO_CONN(conn));
+}
+
+static void
+output_free(control_connection_t *conn, bool discard)
+{
+  payment_control_output_t *output = conn->payment_output;
+  if (!output) return;
+  if (discard && conn->base_.outbuf)
+    buf_clear(conn->base_.outbuf);
+  *output->previous = output->next;
+  if (output->next) output->next->previous = output->previous;
+  protocol_budget_memory_t memory = output->memory;
+  protocol_budget_memory_t queue_memory = output->queue_memory;
+  memwipe(output, 0, sizeof(*output));
+  tor_free(conn->payment_output);
+  (void)payment_resources_release(&queue_memory);
+  (void)payment_resources_release(&memory);
+}
+
+/* 0 refuses and closes, 1 owns a render, 2 joins a synchronous nested event. */
+static int
+output_begin(control_connection_t *conn)
+{
+  payment_control_output_t *output = conn->payment_output;
+  if (conn->base_.marked_for_close) return 0;
+#ifdef TOR_UNIT_TESTS
+  /* Existing parser/renderer tests mock control_write_reply and intentionally
+   * have no native outbuf. They cannot queue native output. */
+  if (!conn->base_.outbuf) return 1;
+#endif
+  tor_assert(conn->base_.outbuf);
+  if (output && output->active) return 2;
+  if (buf_datalen(conn->base_.outbuf) >
+      CONTROL_PAYMENT_OUTPUT_BYTES - CONTROL_PAYMENT_RESPONSE_BYTES) {
+    output_close(conn);
+    return 0;
+  }
+  if (!output) {
+    protocol_budget_memory_t memory = {0}, queue_memory = {0};
+    if (payment_resources_reserve(&memory, sizeof(*output)) !=
+        PROTOCOL_BUDGET_OK ||
+        payment_resources_reserve(&queue_memory,
+          CONTROL_PAYMENT_OUTPUT_RESERVATION_BYTES) != PROTOCOL_BUDGET_OK) {
+      (void)payment_resources_release(&queue_memory);
+      (void)payment_resources_release(&memory);
+      output_close(conn);
+      return 0;
+    }
+    output = tor_malloc_zero(sizeof(*output));
+    output->memory = memory;
+    output->queue_memory = queue_memory;
+    output->conn = conn;
+    output->previous = &payment_outputs;
+    output->next = payment_outputs;
+    if (payment_outputs) payment_outputs->previous = &output->next;
+    payment_outputs = output;
+    conn->payment_output = output;
+  }
+  output->length = 0;
+  output->failed = false;
+  output->active = true;
+  return 1;
+}
+
+static void
+output_end(control_connection_t *conn)
+{
+  payment_control_output_t *output = conn->payment_output;
+  if (!output) return;
+  output->active = false;
+  if (!output->failed && !conn->base_.marked_for_close && output->length)
+    connection_buf_add(output->data, output->length, TO_CONN(conn));
+  memwipe(output->data, 0, output->length);
+  output->length = 0;
+  if (!buf_datalen(conn->base_.outbuf)) output_free(conn, false);
+}
+
+bool
+control_payment_vprintf_reply(control_connection_t *conn, int code, int sep,
+                               const char *format, va_list args)
+{
+  payment_control_output_t *output = conn->payment_output;
+  if (!output || !output->active) return false;
+  if (output->failed) return true;
+  size_t available = sizeof(output->data) - output->length;
+  if (code < 100 || code > 999 || available < 7) goto exhausted;
+  int prefix = tor_snprintf(output->data + output->length, available,
+                            "%03d%c", code, sep);
+  if (prefix != 4) goto exhausted;
+  int n = vsnprintf(output->data + output->length + 4, available - 6,
+                    format, args);
+  if (n < 0 || (size_t)n >= available - 6) goto exhausted;
+  output->length += 4 + (size_t)n;
+  output->data[output->length++] = '\r';
+  output->data[output->length++] = '\n';
+  return true;
+ exhausted:
+  output->failed = true;
+  output_close(conn);
+  return true;
+}
+
+static bool
+output_printf(control_connection_t *conn, int code, int sep,
+                const char *format, ...)
+{
+  va_list args;
+  va_start(args, format);
+  bool result = control_payment_vprintf_reply(conn, code, sep, format, args);
+  va_end(args);
+  return result;
+}
+
+bool
+control_payment_write_reply(control_connection_t *conn, int code, int sep,
+                             const char *body)
+{
+  return output_printf(conn, code, sep, "%s", body);
+}
 
 static void relay_transition(or_circuit_t *, payment_circuit_event_t);
 
@@ -331,6 +481,13 @@ control_payment_init(void)
 {
   if (payment_control.initialized)
     return;
+  if (payment_resources_reserve(&registry_lease,
+        sizeof(payment_control) + sizeof(registry_lease)) !=
+      PROTOCOL_BUDGET_OK) {
+    payment_control.initialized = true;
+    payment_control.exhausted = true;
+    return;
+  }
   crypto_rand((char *)payment_control.instance, 16);
   crypto_rand((char *)payment_control.handle_key, 16);
   payment_control.last_ms = monotime_absolute_msec();
@@ -487,6 +644,37 @@ control_payment_binding(const circuit_t *circ, uint8_t instance[16],
   return 0;
 }
 
+uint64_t
+control_payment_revision(const circuit_t *circ)
+{
+  payment_control_record_t *record = record_for_circuit(circ);
+  return record && !record->closed ? record->revision : 0;
+}
+
+void
+control_payment_origin_changed(origin_circuit_t *circ, const char *kind)
+{
+  static const char *const allowed[] = {
+    "ADMISSION_PENDING", "REGISTERED", "COMMITTED", "START_REQUESTED",
+    "AUTHORIZED", "ROUND_ACTIVE", "RENEW_ADMITTED", "RENEW_REFUSED",
+    "GRACE", "EXPIRED"
+  };
+  payment_control_record_t *record = record_for_circuit(TO_CIRCUIT(circ));
+  bool known = false;
+  if (!record || record->closed || record->role != CONTROL_PAYMENT_ORIGIN ||
+      !kind) return;
+  for (unsigned i = 0; i < ARRAY_LENGTH(allowed); ++i)
+    if (!strcmp(kind, allowed[i])) known = true;
+  /* Closure has its own tombstone path; unknown kinds must not mutate state. */
+  if (!known) return;
+  if (record->revision == UINT64_MAX) {
+    payment_control.exhausted = true;
+    return;
+  }
+  ++record->revision;
+  emit_record(record, kind);
+}
+
 static void
 close_record(payment_control_record_t *record, uint64_t now_ms)
 {
@@ -560,12 +748,14 @@ static void
 snapshot_clear(payment_inventory_t *snapshot)
 {
   tor_free(snapshot->rows);
+  payment_resources_release(&snapshot->rows_lease);
   memset(snapshot, 0, sizeof(*snapshot));
 }
 
 void
 control_payment_connection_closed(control_connection_t *conn)
 {
+  output_free(conn, true);
   for (unsigned i = 0; i < CONTROL_PAYMENT_MAX_SNAPSHOTS; ++i)
     if (payment_control.snapshots[i].connection == conn)
       snapshot_clear(&payment_control.snapshots[i]);
@@ -574,7 +764,9 @@ control_payment_connection_closed(control_connection_t *conn)
 void
 control_payment_finished_flushing(control_connection_t *conn)
 {
+  if (conn->base_.outbuf && buf_datalen(conn->base_.outbuf)) return;
   conn->payment_events_queued = 0;
+  output_free(conn, false);
 }
 
 void
@@ -591,17 +783,34 @@ control_payment_queue_event(control_connection_t *conn, const char *line)
     connection_mark_for_close(TO_CONN(conn));
     return;
   }
+  int render = output_begin(conn);
+  if (!render) return;
   ++conn->payment_events_queued;
-  connection_write_str_to_buf(line, conn);
+  payment_control_output_t *output = conn->payment_output;
+  if (output) {
+    size_t length = strlen(line);
+    if (length > sizeof(output->data) - output->length) {
+      output->failed = true;
+      output_close(conn);
+    } else {
+      memcpy(output->data + output->length, line, length);
+      output->length += length;
+    }
+  } else {
+    connection_write_str_to_buf(line, conn);
+  }
+  if (render == 1) output_end(conn);
 }
 
 void
 control_payment_free_all(void)
 {
+  while (payment_outputs) output_free(payment_outputs->conn, true);
   for (unsigned i = 0; i < CONTROL_PAYMENT_MAX_SNAPSHOTS; ++i)
     snapshot_clear(&payment_control.snapshots[i]);
   payment_circuit_set_event_callback(NULL);
   memwipe(&payment_control, 0, sizeof(payment_control));
+  payment_resources_release(&registry_lease);
 }
 
 static bool
@@ -722,6 +931,11 @@ inventory_reply(control_connection_t *conn,
       reply_error(conn, 451, "CAPACITY");
       return;
     }
+    if (count && payment_resources_reserve(&snapshot->rows_lease,
+          count * sizeof(*snapshot->rows)) != PROTOCOL_BUDGET_OK) {
+      reply_error(conn, 451, "CAPACITY");
+      return;
+    }
     snapshot->rows = count ? tor_calloc(count, sizeof(*snapshot->rows)) : NULL;
     snapshot->count = count;
     snapshot->created_ms = now_ms;
@@ -832,6 +1046,13 @@ snapshot_reply(control_connection_t *conn,
       snapshot->pending ? "ADMISSION_PENDING" : phase_name(snapshot->phase),
       snapshot->current_round, snapshot->elapsed_ms, snapshot->setup_remaining_ms,
       snapshot->enforcement_remaining_ms);
+  char commit_age[24];
+  if (snapshot->commit_clock_available)
+    tor_snprintf(commit_age,sizeof(commit_age),"%"PRIu64,
+                 snapshot->commit_elapsed_ms);
+  else strlcpy(commit_age,"-",sizeof(commit_age));
+  control_printf_midreply(conn,250,"CLOCK %"PRIu64" %s",
+      snapshot->constructed_elapsed_ms,commit_age);
   lower_hex(hash, snapshot->fee.payment_hash, 32);
   if (snapshot->fee.authorization == PAYMENT_CIRCUIT_AUTH_NONE)
     strlcpy(decision, "-", sizeof(decision));
@@ -864,8 +1085,115 @@ snapshot_reply(control_connection_t *conn,
   send_control_done(conn);
 }
 
-int
-control_payment_handle_command(control_connection_t *conn,
+static void
+origin_error(control_connection_t *conn, payment_origin_result_t result)
+{
+  switch (result) {
+    case PAYMENT_ORIGIN_INVALID: reply_error(conn, 512, "BAD_ARGUMENT"); break;
+    case PAYMENT_ORIGIN_UNSUPPORTED: reply_error(conn, 551, "UNSUPPORTED_PROFILE"); break;
+    case PAYMENT_ORIGIN_UNCONFIRMED: reply_error(conn, 551, "INITIAL_STATE_UNCONFIRMED"); break;
+    case PAYMENT_ORIGIN_UNKNOWN_OPERATION: reply_error(conn, 552, "UNKNOWN_OPERATION"); break;
+    case PAYMENT_ORIGIN_CONFLICT: reply_error(conn, 553, "OPERATION_CONFLICT"); break;
+    case PAYMENT_ORIGIN_BAD_SEQUENCE: reply_error(conn, 553, "BAD_SEQUENCE"); break;
+    case PAYMENT_ORIGIN_EXPIRED: reply_error(conn, 551, "DEADLINE_EXPIRED"); break;
+    case PAYMENT_ORIGIN_CAPACITY: reply_error(conn, 451, "CAPACITY"); break;
+    case PAYMENT_ORIGIN_CLOSED: reply_error(conn, 552, "UNKNOWN_CIRCUIT"); break;
+    default: reply_error(conn, 512, "BAD_ARGUMENT"); break;
+  }
+}
+
+static const char *
+origin_phase(payment_origin_phase_t phase)
+{
+  switch (phase) {
+    case PAYMENT_ORIGIN_QUEUED: return "QUEUED";
+    case PAYMENT_ORIGIN_SENT: return "SENT";
+    case PAYMENT_ORIGIN_VERIFIED: return "VERIFIED";
+    case PAYMENT_ORIGIN_ADMITTED: return "ADMITTED";
+    case PAYMENT_ORIGIN_ACTIVE: return "ACTIVE";
+    case PAYMENT_ORIGIN_REFUSED: return "REFUSED";
+    case PAYMENT_ORIGIN_UNCERTAIN: return "UNCERTAIN";
+    case PAYMENT_ORIGIN_OPERATION_CLOSED: return "CLOSED";
+  }
+  return "UNCERTAIN";
+}
+
+static void
+origin_snapshot_reply(control_connection_t *conn,
+    const control_payment_request_t *request,
+    const payment_origin_snapshot_t *snapshot, bool initial,
+    const char *instance, const char *handle)
+{
+  char terms[65], allocation[65], operation[33], digest[65];
+  lower_hex(terms, snapshot->terms, 32);
+  lower_hex(allocation, snapshot->initial_allocation, 32);
+  control_printf_midreply(conn, 250, "%s 1 %s %s %u %"PRIu64,
+      initial ? "ELTOR_INITIAL" : "ELTOR_PAYMENT", instance, handle,
+      (unsigned)request->hop, snapshot->revision);
+  if (initial) {
+    static const char *const states[] = {"UNCOMMITTED", "COMMITTED",
+      "WAIT_PAYMENT", "ACTIVE", "GRACE", "CLOSED", "EXPIRED"};
+    char revision[24];
+    if (snapshot->relay_revision_available)
+      tor_snprintf(revision, sizeof(revision), "%"PRIu64, snapshot->relay_revision);
+    else strlcpy(revision, "-", sizeof(revision));
+    control_printf_midreply(conn, 250, "PROFILE %s %s %s %s",
+        snapshot->confirmed ? terms : "-",
+        snapshot->confirmed ? allocation : "-",
+        snapshot->confirmed && snapshot->state < ARRAY_LENGTH(states) ?
+          states[snapshot->state] : "UNCONFIRMED", revision);
+    char clocks[96], setup[24];
+    if (snapshot->status_available)
+      tor_snprintf(clocks, sizeof(clocks),
+          "%"PRIu64" %"PRIu64" %"PRIu64" %"PRIu64,
+          snapshot->current_round, snapshot->elapsed_upper_ms,
+          snapshot->round_remaining_ms, snapshot->enforcement_remaining_ms);
+    else strlcpy(clocks, "- - - -", sizeof(clocks));
+    if (snapshot->setup_available)
+      tor_snprintf(setup, sizeof(setup), "%"PRIu64, snapshot->setup_remaining_ms);
+    else strlcpy(setup, "-", sizeof(setup));
+    control_printf_midreply(conn, 250, "CLOCK %s %s", clocks, setup);
+  } else {
+    lower_hex(allocation, snapshot->active_allocation, 32);
+    control_printf_midreply(conn, 250, "PROFILE %s %"PRIu64" %s %"PRIu64,
+        terms, snapshot->active_period, allocation, snapshot->current_round);
+    char admission[24];
+    if (snapshot->admission_available)
+      tor_snprintf(admission, sizeof(admission), "%"PRIu64,
+                   snapshot->admission_remaining_ms);
+    else strlcpy(admission, "-", sizeof(admission));
+    control_printf_midreply(conn, 250, "SCHEDULE %"PRIu64" %s %"PRIu64,
+        snapshot->round_remaining_ms, admission, snapshot->hard_age_remaining_ms);
+  }
+  if (!snapshot->operation_available) {
+    control_printf_midreply(conn, 250, initial ? "OP - - - - -" :
+                                                "OP - - - - - - -");
+  } else {
+    lower_hex(operation, snapshot->operation, 16);
+    lower_hex(digest, snapshot->request_digest, 32);
+    if (initial) {
+      const char *kind = snapshot->kind == PAYMENT_ORIGIN_COMMIT ? "COMMIT" :
+                        snapshot->kind == PAYMENT_ORIGIN_START ? "START" : "QUERY";
+      control_printf_midreply(conn, 250, "OP %s %s %s %s %u", operation,
+          kind, origin_phase(snapshot->phase), digest,
+          (unsigned)snapshot->transmissions);
+    } else {
+      char status[4];
+      lower_hex(allocation, snapshot->allocation_digest, 32);
+      if (snapshot->relay_status_available)
+        tor_snprintf(status, sizeof(status), "%u", (unsigned)snapshot->relay_status);
+      else strlcpy(status, "-", sizeof(status));
+      control_printf_midreply(conn, 250, "OP %s %s %"PRIu64" %s %s %s %u",
+          operation, origin_phase(snapshot->phase), snapshot->period, digest,
+          snapshot->allocation_available ? allocation : "-", status,
+          (unsigned)snapshot->transmissions);
+    }
+  }
+  send_control_done(conn);
+}
+
+static int
+handle_payment_command(control_connection_t *conn,
                                const char *line, size_t len)
 {
   control_payment_request_t request;
@@ -906,6 +1234,7 @@ control_payment_handle_command(control_connection_t *conn,
   query = request.command == CONTROL_PAYMENT_BIND ||
     request.command == CONTROL_PAYMENT_LIST ||
     request.command == CONTROL_PAYMENT_INITIAL_GET ||
+    request.command == CONTROL_PAYMENT_INITIAL_REGISTRATION_GET ||
     request.command == CONTROL_PAYMENT_GET ||
     request.command == CONTROL_PAYMENT_ADMISSION_GET ||
     request.command == CONTROL_PAYMENT_REGISTRATION_GET;
@@ -1009,11 +1338,84 @@ control_payment_handle_command(control_connection_t *conn,
         record->revision);
     return 0;
   }
-  /* Origin operation/retry ownership has a separate live backend. Never
-   * manufacture a QUEUED/VERIFIED response from syntax or controller claims. */
-  if (record->role != CONTROL_PAYMENT_ORIGIN)
+  if (record->role != CONTROL_PAYMENT_ORIGIN) {
     reply_error(conn, 552, "UNKNOWN_CIRCUIT");
-  else
-    reply_error(conn, 551, "INITIAL_STATE_UNCONFIRMED");
+    return 0;
+  }
+  origin_circuit_t *origin = TO_ORIGIN_CIRCUIT(record->circ);
+  payment_origin_result_t origin_result;
+  if (request.command==CONTROL_PAYMENT_INITIAL_REGISTRATION_GET) {
+    payment_origin_registration_t registration;
+    origin_result=payment_origin_get_registration(origin,request.hop,now_ms,
+                                                   &registration);
+    if (origin_result!=PAYMENT_ORIGIN_OK) origin_error(conn,origin_result);
+    else {
+      char policy[111],terms[65],initial_allocation[65],binding[65],id[65];
+      lower_hex(policy,registration.policy,55);
+      lower_hex(terms,registration.terms,32);
+      lower_hex(initial_allocation,registration.initial,32);
+      lower_hex(binding,registration.binding,32);
+      control_printf_midreply(conn,250,"ELTOR_INITIAL_REGISTRATION 1 %s %s %u %"PRIu64,
+          instance,handle,(unsigned)request.hop,registration.revision);
+      control_printf_midreply(conn,250,"POLICY %s %s %s",policy,terms,
+                                initial_allocation);
+      control_printf_midreply(conn,250,"BINDING %s",binding);
+      for (unsigned i=0;i<10;++i) {
+        lower_hex(id,registration.ids[i],32);
+        control_printf_midreply(conn,250,"ROUND %u %s",i+1,id);
+      }
+      control_write_endreply(conn,250,"OK");
+    }
+    memwipe(&registration,0,sizeof(registration));
+    return 0;
+  }
+  bool initial = request.command != CONTROL_PAYMENT_GET &&
+                 request.command != CONTROL_PAYMENT_RENEW_PREPARE;
+  if (request.command == CONTROL_PAYMENT_INITIAL_GET ||
+      request.command == CONTROL_PAYMENT_GET) {
+    payment_origin_snapshot_t observed;
+    origin_result = payment_origin_get(origin, request.hop,
+        request.no_operation ? NULL : request.operation, initial, now_ms,
+        &observed);
+    if (origin_result != PAYMENT_ORIGIN_OK) origin_error(conn, origin_result);
+    else origin_snapshot_reply(conn, &request, &observed, initial, instance, handle);
+    return 0;
+  }
+  switch (request.command) {
+    case CONTROL_PAYMENT_INITIAL_PREPARE:
+      origin_result = payment_origin_initial_prepare(origin, request.hop,
+          request.operation, request.nonce, request.policy, now_ms); break;
+    case CONTROL_PAYMENT_INITIAL_START:
+      origin_result = payment_origin_initial_start(origin, request.hop,
+          request.operation, request.nonce, now_ms); break;
+    case CONTROL_PAYMENT_INITIAL_REFRESH:
+      origin_result = payment_origin_initial_refresh(origin, request.hop,
+          request.operation, request.nonce, now_ms); break;
+    case CONTROL_PAYMENT_RENEW_PREPARE:
+      origin_result = payment_origin_renew_prepare(origin, request.hop,
+          request.operation, request.period, request.first_round, request.nonce,
+          request.terms, request.parent, request.ids, now_ms); break;
+    default: origin_result = PAYMENT_ORIGIN_INVALID; break;
+  }
+  if (origin_result != PAYMENT_ORIGIN_OK) {
+    origin_error(conn, origin_result);
+    return 0;
+  }
+  char operation[33];
+  lower_hex(operation, request.operation, 16);
+  control_printf_endreply(conn, 250, "%s 1 %s %s %u %s %"PRIu64,
+      initial ? "ELTOR_INITIAL_QUEUED" : "ELTOR_RENEW_QUEUED",
+      instance, handle, (unsigned)request.hop, operation, record->revision);
   return 0;
+}
+
+int
+control_payment_handle_command(control_connection_t *conn,
+                               const char *line, size_t len)
+{
+  int render = output_begin(conn);
+  if (!render) return 0;
+  int result = handle_payment_command(conn, line, len);
+  if (render == 1) output_end(conn);
+  return result;
 }

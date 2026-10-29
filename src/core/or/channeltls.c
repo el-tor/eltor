@@ -39,6 +39,7 @@
 #define CHANNELTLS_PRIVATE
 
 #include "core/or/or.h"
+#include "feature/payment/free_capacity_hooks.h"
 #include "core/or/channel.h"
 #include "core/or/channeltls.h"
 #include "core/or/circuitmux.h"
@@ -895,6 +896,12 @@ channel_tls_write_packed_cell_method(channel_t *chan,
   tor_assert(packed_cell);
 
   if (tlschan->conn) {
+    if (!packed_cell->free_capacity_charged &&
+        !free_capacity_wire_send(tlschan->conn,
+          packed_cell_get_circid(packed_cell, chan->wide_circ_ids),
+          cell_network_size, true,
+          packed_cell_get_command(packed_cell, chan->wide_circ_ids)))
+      return -1;
     connection_buf_add(packed_cell->body, cell_network_size,
                             TO_CONN(tlschan->conn));
   } else {

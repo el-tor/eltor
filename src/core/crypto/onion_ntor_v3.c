@@ -128,6 +128,12 @@ push(uint8_t **ptr, const uint8_t *endptr, const uint8_t *data, size_t len)
 /**
  * Helper: Drop storage held by @a state, after wiping it.
  **/
+size_t
+onion_ntor3_client_state_memory_cost(void)
+{
+  return sizeof(ntor3_handshake_state_t);
+}
+
 void
 ntor3_handshake_state_free_(ntor3_handshake_state_t *state)
 {
@@ -655,30 +661,8 @@ onion_skin_ntor3_server_handshake_part1(
     (*state_out)->payment_client_hdata_len = client_handshake_len;
   }
 
-  /* Preserve the privileged legacy event, but never log decrypted payment
-   * payloads. The binary message is not necessarily NUL-terminated. */
-  if (*client_message_out && *client_message_len_out > 0) {
-    // Check for the prefixPayHash directly
-    const char *prefixPayHash = "eltor_payhash";
-    const void *foundPayHash = tor_memmem(*client_message_out, *client_message_len_out,
-                                        prefixPayHash, strlen(prefixPayHash));
-
-    if (foundPayHash) {
-      size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
-
-      // Extract and process the payment hash
-      size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
-      if (remaining > 0) {
-        char *payhash = tor_malloc(remaining + 1);
-        memcpy(payhash, (const char*)*client_message_out + indexPayHash + strlen(prefixPayHash), remaining);
-        payhash[remaining] = '\0';
-        control_event_payment_id_hash_received(payhash, p_circuit_id,
-                                              n_circuit_id);
-
-        tor_free(payhash);
-      }
-    }
-  }
+  /* Legacy observer dispatch follows parameter negotiation in onion_crypto. */
+  (void)p_circuit_id; (void)n_circuit_id;
 
   return 0;
 }

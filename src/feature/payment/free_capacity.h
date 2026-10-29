@@ -129,9 +129,21 @@ free_capacity_result_t free_capacity_link_send(free_capacity_conn_t *connection,
 free_capacity_result_t free_capacity_queue_push(
     free_capacity_circuit_t *circuit, uint32_t allocation_bytes,
     uint64_t now_ms, free_capacity_queue_ticket_t *ticket_out);
+/* Bounded ciphertext hold during an inactive paid interval. This reserves
+ * memory only: it grants no free cell credit/lifetime or paid authorization.
+ * Retain the cell's original queue time, including before entering the hold. */
+free_capacity_result_t free_capacity_queue_hold(
+    free_capacity_circuit_t *circuit, uint32_t allocation_bytes,
+    uint64_t queued_ms, uint64_t now_ms,
+    free_capacity_queue_ticket_t *ticket_out);
 free_capacity_result_t free_capacity_queue_remove(
     free_capacity_circuit_t *circuit,
     const free_capacity_queue_ticket_t *ticket, uint64_t now_ms);
+/* Actual queue memory disposal, including after expiry/close. No clock or
+ * refill; validates the receipt before releasing its exact allocation. */
+free_capacity_result_t free_capacity_queue_discard(
+    free_capacity_circuit_t *circuit,
+    const free_capacity_queue_ticket_t *ticket);
 /* Idempotent release on every circuit teardown; does not refill any bucket.
  * The process object must outlive its connections and circuits. */
 void free_capacity_release(free_capacity_circuit_t *circuit);

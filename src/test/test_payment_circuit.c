@@ -1,11 +1,17 @@
 /* See LICENSE for licensing information. */
+#define CHANNEL_OBJECT_PRIVATE
 #include "orconfig.h"
 #include "core/or/or.h"
 #include "core/or/or_circuit_st.h"
+#include "core/or/or_connection_st.h"
+#include "core/or/channeltls.h"
 #include "core/or/circuitlist.h"
 #include "core/or/relay.h"
 #include "core/or/relay_msg_st.h"
 #include "feature/payment/payment_circuit.h"
+#include "feature/payment/free_capacity_hooks.h"
+#include "feature/payment/payment_resources.h"
+#include "lib/time/compat_time.h"
 #include "feature/control/control_payment.h"
 #include "lib/evloop/timers.h"
 #include "test/test.h"
@@ -181,6 +187,8 @@ test_payment_circuit_commit_activation(void *arg)
   tt_assert(snapshot.pending);
   tt_mem_op(snapshot.circuit_binding, OP_EQ, f.keys.binding, 32);
   tt_u64_op(snapshot.admission_remaining_ms, OP_EQ, 29000);
+  tt_u64_op(snapshot.constructed_elapsed_ms,OP_EQ,1000);
+  tt_assert(!snapshot.commit_clock_available);
   tt_assert(!snapshot.rounds[0].window_available);
   uint64_t revision = payment_circuit_revision(f.circ);
   tt_int_op(payment_circuit_get_admission(f.circ, 0, 2500, &again), OP_EQ, 0);
@@ -198,6 +206,9 @@ test_payment_circuit_commit_activation(void *arg)
   tt_int_op(payment_circuit_get_registration(f.circ, 0, 4000, &snapshot),
             OP_EQ, 0);
   tt_u64_op(snapshot.rounds[0].closes_in_ms, OP_EQ, 27000);
+  tt_assert(snapshot.commit_clock_available);
+  tt_u64_op(snapshot.constructed_elapsed_ms,OP_EQ,3000);
+  tt_u64_op(snapshot.commit_elapsed_ms,OP_EQ,1000);
   tt_assert(!snapshot.rounds[1].window_available);
   unsigned sent = reply_count;
   revision = payment_circuit_revision(f.circ);
@@ -454,6 +465,50 @@ test_payment_circuit_zero_and_framing(void *arg)
   fixture_clear();
 }
 
+static void
+run_free_candidate(bool committed)
+{
+  test_fixture_t f;
+  or_connection_t conn={0}; channel_tls_t channel={0};
+  payment_profile_message_t message,received;
+  monotime_enable_test_mocking();
+  monotime_set_mock_time_nsec(INT64_C(1000000000));
+  monotime_coarse_set_mock_time_nsec(INT64_C(1000000000));
+  tt_int_op(fixture_init(&f),OP_EQ,0);
+  channel.base_.magic=TLS_CHAN_MAGIC; channel.base_.wide_circ_ids=1;
+  channel.conn=&conn;
+  tt_int_op(free_capacity_circuit_admit(TO_CIRCUIT(f.circ),&conn),OP_EQ,0);
+  if (committed) {
+    tt_int_op(commit_and_reserve(&f,2000),OP_EQ,0);
+    tt_assert(payment_circuit_requires_payment(f.circ));
+  }
+  monotime_set_mock_time_nsec(INT64_C(32000000000));
+  payment_circuit_tick(f.circ,32000);
+  if (committed) {
+    tt_assert(f.circ->base_.marked_for_close);
+    tt_ptr_op(f.circ->payment_keys,OP_EQ,NULL);
+  } else {
+    tt_assert(!f.circ->base_.marked_for_close);
+    tt_assert(!payment_circuit_requires_payment(f.circ));
+    tt_int_op(free_capacity_circuit_send(TO_CIRCUIT(f.circ),&channel.base_),OP_EQ,
+              FREE_CAPACITY_OK);
+    message=commit_request(&f);
+    tt_int_op(send_request(&f,&message,32000),OP_EQ,0);
+    tt_int_op(read_reply(&f,&received),OP_EQ,0);
+    tt_uint_op(received.u.committed.status,OP_EQ,4); /* late COMMIT cannot revive */
+    tt_assert(!payment_circuit_requires_payment(f.circ));
+  }
+ done:
+  fixture_clear(); free_capacity_connection_free(&conn);
+  (void)payment_resources_free_all(); monotime_disable_test_mocking();
+}
+static void
+test_payment_circuit_free_candidate(void *arg)
+{ (void)arg; run_free_candidate(false); }
+static void
+test_payment_circuit_free_paid_failure(void *arg)
+{ (void)arg; run_free_candidate(true); }
+
 #define CIRCUIT_TEST(name) \
   { #name, test_payment_circuit_##name, TT_FORK, NULL, NULL }
 struct testcase_t payment_circuit_tests[] = {
@@ -463,5 +518,7 @@ struct testcase_t payment_circuit_tests[] = {
   CIRCUIT_TEST(renewal),
   CIRCUIT_TEST(renewal_late),
   CIRCUIT_TEST(zero_and_framing),
+  CIRCUIT_TEST(free_candidate),
+  CIRCUIT_TEST(free_paid_failure),
   END_OF_TESTCASES
 };

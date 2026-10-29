@@ -56,6 +56,7 @@
 
 #define CONNECTION_PRIVATE
 #include "core/or/or.h"
+#include "feature/payment/free_capacity_hooks.h"
 #include "feature/client/bridges.h"
 #include "lib/buf/buffers.h"
 #include "lib/tls/buffers_tls.h"
@@ -871,6 +872,7 @@ connection_free_minimal(connection_t *conn)
       tor_tls_free(or_conn->tls);
       or_conn->tls = NULL;
     }
+    free_capacity_connection_free(or_conn);
     or_handshake_state_free(or_conn->handshake_state);
     or_conn->handshake_state = NULL;
     tor_str_wipe_and_free(or_conn->nickname);

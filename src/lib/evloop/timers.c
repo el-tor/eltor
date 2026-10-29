@@ -246,6 +246,12 @@ timers_shutdown(void)
 /**
  * Allocate and return a new timer, with given callback and argument.
  */
+size_t
+timer_memory_cost(void)
+{
+  return sizeof(tor_timer_t);
+}
+
 tor_timer_t *
 timer_new(timer_cb_fn_t cb, void *arg)
 {

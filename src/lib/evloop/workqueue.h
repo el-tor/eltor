@@ -10,6 +10,8 @@
 #define TOR_WORKQUEUE_H
 
 #include "lib/cc/torint.h"
+#include "lib/testsupport/testsupport.h"
+#include <stddef.h>
 
 /** A replyqueue is used to tell the main thread about the outcome of
  * work that we queued for the workers. */
@@ -52,7 +54,15 @@ int threadpool_queue_update(threadpool_t *pool,
                             workqueue_reply_t (*fn)(void *, void *),
                             void (*free_fn)(void *),
                             void *arg);
-void *workqueue_entry_cancel(workqueue_entry_t *pending_work);
+MOCK_DECL(void *, workqueue_entry_cancel, (workqueue_entry_t *pending_work));
+/* Exact entry allocation capacity, including optional release metadata. */
+size_t workqueue_entry_memory_cost(void);
+/* Main-loop only, after enqueue and before processing its reply. Normal reply
+ * order is reply callback, entry destruction, then release callback. Successful
+ * cancellation does not invoke this hook: its caller owns buffer disposal and
+ * resource completion. The release argument must outlive the reply callback. */
+MOCK_DECL(void, workqueue_entry_set_reply_release, (workqueue_entry_t *entry,
+                                      void (*release_fn)(void *), void *arg));
 threadpool_t *threadpool_new(int n_threads,
                              replyqueue_t *replyqueue,
                              void *(*new_thread_state_fn)(void*),

@@ -868,6 +868,9 @@ struct or_options_t {
    * couple of other configuration options and allow to change the values
    * of certain configuration options. */
   int TestingTorNetwork;
+  /** Isolated paid-circuit foundation acceptance only; immutable and requires
+   * TestingTorNetwork. Production profile enablement remains unavailable. */
+  int ElTorFoundation;
 
   /** Enable CONN_BW events.  Only altered on testing networks. */
   int TestingEnableConnBwEvent;
