@@ -255,7 +255,9 @@ src_test_test_SOURCES += \
 	src/test/testing_common.c \
 	src/test/testing_rsakeys.c \
 	src/ext/tinytest.c \
-	src/test/test_payment_util.c
+	src/test/test_payment_util.c \
+	src/test/test_payment_profile.c \
+	src/test/test_free_capacity.c
 
 if USE_NSS
 # ...
@@ -467,3 +469,5 @@ EXTRA_DIST += \
 	src/test/unittest_part6.sh \
 	src/test/unittest_part7.sh \
 	src/test/unittest_part8.sh
+
+EXTRA_DIST += src/test/payment_profile_initial_vectors.py
