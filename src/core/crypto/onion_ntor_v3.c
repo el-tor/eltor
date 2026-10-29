@@ -655,16 +655,9 @@ onion_skin_ntor3_server_handshake_part1(
     (*state_out)->payment_client_hdata_len = client_handshake_len;
   }
 
-  // After decrypting the message
+  /* Preserve the privileged legacy event, but never log decrypted payment
+   * payloads. The binary message is not necessarily NUL-terminated. */
   if (*client_message_out && *client_message_len_out > 0) {
-    log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message (len=%zu): %s",
-         *client_message_len_out,
-         (const char *)*client_message_out);
-    
-    // Log the first few bytes for debugging
-    log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message hex dump: %s",
-              hex_str((const char *)*client_message_out, MIN(32, *client_message_len_out)));
-    
     // Check for the prefixPayHash directly
     const char *prefixPayHash = "eltor_payhash";
     const void *foundPayHash = tor_memmem(*client_message_out, *client_message_len_out,
@@ -672,30 +665,18 @@ onion_skin_ntor3_server_handshake_part1(
 
     if (foundPayHash) {
       size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
-      log_notice(LD_CIRC, "ELTOR RELAY: Found Payment hash: %.*s", 
-                 (int)MIN(32, *client_message_len_out - indexPayHash - strlen(prefixPayHash)),
-                 (const char *)foundPayHash); 
 
-      log_notice(LD_CIRC, "ELTOR RELAY: Found payment hash prefix at offset %zu", indexPayHash);
-      
       // Extract and process the payment hash
       size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
       if (remaining > 0) {
         char *payhash = tor_malloc(remaining + 1);
         memcpy(payhash, (const char*)*client_message_out + indexPayHash + strlen(prefixPayHash), remaining);
         payhash[remaining] = '\0';
-
-        log_notice(LD_CIRC, "ELTOR RELAY: Payment hash: %s, P_CircuitID: %"PRIu64", N_CircuitID: %"PRIu64, 
-                   payhash, 
-                   p_circuit_id ? *p_circuit_id : 0,
-                   n_circuit_id ? *n_circuit_id : 0);
-        control_event_payment_id_hash_received(payhash, p_circuit_id, n_circuit_id);
+        control_event_payment_id_hash_received(payhash, p_circuit_id,
+                                              n_circuit_id);
 
         tor_free(payhash);
       }
-        
-    } else {
-      log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in decrypted message");
     }
   }
 

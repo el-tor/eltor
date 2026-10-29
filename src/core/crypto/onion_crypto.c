@@ -202,8 +202,6 @@ onion_skin_create(int type,
 
     // Now handle the payment hash
     if (eltor_payhash && strlen(eltor_payhash) > 0) {
-      log_notice(LD_GENERAL, "ELTOR CLIENT: Adding payment hash to NTOR_V3 client message");
-      
       // Create an extended message
       uint8_t *extended_msg = NULL;
       size_t extended_msg_len = 0;
@@ -218,20 +216,12 @@ onion_skin_create(int type,
       
       // Copy the payment hash with its built-in prefix
       memcpy(extended_msg + msg_len, eltor_payhash, strlen(eltor_payhash));
-      
-      log_notice(LD_GENERAL, "ELTOR CLIENT: Extended message length: %zu (original: %zu, hash: %zu)", 
-                extended_msg_len, msg_len, strlen(eltor_payhash));
-      log_notice(LD_GENERAL, "ELTOR CLIENT: First 50 bytes of extended message: %s", 
-                hex_str((const char *)extended_msg, MIN(50, extended_msg_len)));
-      
+
       // Free original message and replace with extended one
       tor_free(msg);
       msg = extended_msg;
       msg_len = extended_msg_len;
     }
-
-    // Verify message size is reasonable for debug purposes
-    log_notice(LD_GENERAL, "ELTOR CLIENT: Creating NTOR3 handshake with message len=%zu", msg_len);
 
     int status = onion_skin_ntor3_create(
                           &node->ed_identity,
