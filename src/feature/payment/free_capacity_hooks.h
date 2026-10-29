@@ -33,12 +33,18 @@ bool free_capacity_wire_send(or_connection_t *, circid_t, uint32_t bytes,
 /* Reserve before packed-cell allocation. Release on actual cell destruction or
  * transfer out of the bounded circuit queues. Both directions share 32 cells. */
 int free_capacity_cell_reserve(circuit_t *, free_capacity_queue_ticket_t *);
+/* Provisional contexts admit only fixed setup commands to the same bounded
+ * queues. Ordinary RELAY/control traffic still requires confirmation. */
+int free_capacity_cell_reserve_command(circuit_t *,
+    free_capacity_queue_ticket_t *, uint8_t cell_command);
 void free_capacity_cell_release(circuit_t *, free_capacity_queue_ticket_t *);
 /* Pre-pop send gate: OK sends once; WAIT suppresses only this circuit's cmux
  * queues until a finite timer wakes them; CLOSE tears down the circuit. */
 free_capacity_result_t free_capacity_circuit_send(circuit_t *, channel_t *);
 free_capacity_result_t free_capacity_circuit_send_control(circuit_t *,
     channel_t *, bool locally_generated_payment_control);
+free_capacity_result_t free_capacity_circuit_send_cell(circuit_t *,
+    channel_t *, bool locally_generated_payment_control, uint8_t cell_command);
 void free_capacity_circuit_queued(circuit_t *);
 MOCK_DECL(bool, free_capacity_paid_data_active, (const circuit_t *));
 #endif

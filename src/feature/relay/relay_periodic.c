@@ -166,7 +166,10 @@ check_for_reachability_bw_callback(time_t now, const or_options_t *options)
   /* also, check religiously for reachability, if it's within the first
    * 20 minutes of our uptime. */
   if (server_mode(options) &&
-      (have_completed_a_circuit() || !any_predicted_circuits(now)) &&
+      /* Foundation does not prebuild legacy application paths. Its first
+       * completed circuit may be this uniformly bounded native self-test. */
+      (have_completed_a_circuit() || !any_predicted_circuits(now) ||
+       options->ElTorFoundation) &&
       !net_is_disabled()) {
     if (get_uptime() < TIMEOUT_UNTIL_UNREACHABILITY_COMPLAINT) {
       router_do_reachability_checks();

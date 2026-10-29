@@ -14,6 +14,7 @@
 #include "core/or/circuitlist.h"
 #include "core/or/circuit_st.h"
 #include "core/or/or_circuit_st.h"
+#include "core/or/origin_circuit_st.h"
 #include "core/or/or_connection_st.h"
 #include "core/or/cell_queue_st.h"
 #include "core/or/cell_st.h"
@@ -306,6 +307,62 @@ test_free_hooks_provisional(void *arg)
 }
 
 static void
+test_free_hooks_provisional_queue(void *arg)
+{
+  (void)arg;
+  origin_circuit_t *circ = NULL;
+  or_connection_t conn = {0};
+  channel_tls_t *chan = NULL;
+  cell_t cell = { .command = CELL_CREATE2, .circ_id = 10 };
+  free_capacity_queue_ticket_t ticket;
+  MOCK(scheduler_channel_has_waiting_cells,
+       scheduler_channel_has_waiting_cells_mock);
+  MOCK(scheduler_release_channel, scheduler_release_channel_mock);
+  monotime_enable_test_mocking();
+  monotime_set_mock_time_nsec(INT64_C(1000000000));
+  monotime_coarse_set_mock_time_nsec(INT64_C(1000000000));
+  timers_initialize(); cell_ewma_initialize_ticks();
+  chan = tor_realloc(new_fake_channel(), sizeof(*chan));
+  chan->base_.magic = TLS_CHAN_MAGIC;
+  chan->base_.wide_circ_ids = conn.wide_circ_ids = true;
+  chan->conn = &conn; conn.chan = chan;
+  circ = origin_circuit_new(); circ->base_.purpose = CIRCUIT_PURPOSE_C_GENERAL;
+  circuit_set_n_circid_chan(TO_CIRCUIT(circ), 10, &chan->base_);
+  tt_int_op(free_capacity_circuit_prepare(TO_CIRCUIT(circ), &conn), OP_EQ, 0);
+  tt_int_op(free_capacity_cell_reserve(TO_CIRCUIT(circ), &ticket), OP_EQ, -1);
+  /* Native first CREATE uses the packed circuit queue before authenticated
+   * CREATED can confirm the context. It still owns one bounded receipt. */
+  cell_queue_append_packed_copy(TO_CIRCUIT(circ), &circ->base_.n_chan_cells,
+                               1, &cell, 1, 0);
+  tt_assert(!circ->base_.marked_for_close);
+  tt_uint_op(payment_resources_free()->queued_bytes, OP_EQ, packed_cell_mem_cost());
+  circuitmux_set_num_cells(chan->base_.cmux, TO_CIRCUIT(circ), 1);
+  tt_int_op(channel_flush_from_first_active_circuit(&chan->base_, 1), OP_EQ, 1);
+  tt_uint_op(payment_resources_free()->queued_bytes, OP_EQ, 0);
+  tt_u64_op(payment_resources_free()->sent_bytes, OP_EQ, 2053);
+  tt_uint_op(circ->base_.n_chan_cells.n, OP_EQ, 0);
+  cell_queue_append_packed_copy(TO_CIRCUIT(circ), &circ->base_.n_chan_cells,
+                               1, &cell, 1, 0);
+  circuitmux_set_num_cells(chan->base_.cmux, TO_CIRCUIT(circ), 1);
+  /* A locally generated payment-control annotation is not a setup command and
+   * cannot bypass authentication, even at the otherwise permitted FIFO head. */
+  tt_int_op(free_capacity_circuit_send_control(TO_CIRCUIT(circ), &chan->base_,
+                                               true), OP_EQ, FREE_CAPACITY_CLOSE);
+  tt_assert(circ->base_.marked_for_close);
+  /* Actual queued backing remains owned until cleanup, but the native flush
+   * must return instead of spinning on this marked circuit's refused head. */
+  tt_int_op(channel_flush_from_first_active_circuit(&chan->base_, 1), OP_EQ, 0);
+  tt_uint_op(circuitmux_num_cells(chan->base_.cmux), OP_EQ, 0);
+  tt_uint_op(circ->base_.n_chan_cells.n, OP_EQ, 1);
+ done:
+  circuit_free_all(); free_capacity_connection_free(&conn); conn.chan = NULL;
+  if (chan) free_fake_channel(&chan->base_);
+  (void)payment_resources_free_all(); timers_shutdown();
+  monotime_disable_test_mocking();
+  UNMOCK(scheduler_channel_has_waiting_cells); UNMOCK(scheduler_release_channel);
+}
+
+static void
 test_free_hooks_paid_queue_expiry(void *arg)
 {
   or_circuit_t *circ = NULL;
@@ -514,6 +571,7 @@ struct testcase_t free_capacity_hooks_tests[] = {
   HOOK_TEST(lower_arena),
   HOOK_TEST(scheduler_and_ingress),
   HOOK_TEST(provisional),
+  HOOK_TEST(provisional_queue),
   HOOK_TEST(paid_queue_expiry),
   HOOK_TEST(paid_grace_fifo),
   HOOK_TEST(paid_grace_overflow),

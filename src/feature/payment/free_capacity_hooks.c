@@ -375,6 +375,15 @@ paid_wire_account(circuit_t *circ, uint32_t bytes)
 }
 
 static bool
+setup_command(uint8_t command)
+{
+  return command == CELL_CREATE || command == CELL_CREATE2 ||
+    command == CELL_CREATE_FAST || command == CELL_CREATED ||
+    command == CELL_CREATED2 || command == CELL_CREATED_FAST ||
+    command == CELL_DESTROY;
+}
+
+static bool
 wire_account(or_connection_t *conn, circid_t circid, uint32_t bytes,
              bool fixed, uint8_t command, bool receive)
 {
@@ -401,10 +410,7 @@ wire_account(or_connection_t *conn, circid_t circid, uint32_t bytes,
     return false;
   }
   if (circ && circ->free_capacity) {
-    bool setup = fixed && (command == CELL_CREATE || command == CELL_CREATE2 ||
-        command == CELL_CREATE_FAST || command == CELL_CREATED ||
-        command == CELL_CREATED2 || command == CELL_CREATED_FAST ||
-        command == CELL_DESTROY);
+    bool setup = fixed && setup_command(command);
     if (!circ->free_capacity->confirmed && !setup) {
       if (!circ->marked_for_close)
         circuit_mark_for_close(circ, END_CIRC_REASON_RESOURCELIMIT);
@@ -446,11 +452,12 @@ free_capacity_wire_send(or_connection_t *conn, circid_t id, uint32_t bytes,
 { return wire_account(conn, id, bytes, fixed, command, false); }
 
 int
-free_capacity_cell_reserve(circuit_t *circ, free_capacity_queue_ticket_t *ticket)
+free_capacity_cell_reserve_command(circuit_t *circ,
+    free_capacity_queue_ticket_t *ticket, uint8_t command)
 {
   memset(ticket, 0, sizeof(*ticket));
   if (!circ || !circ->free_capacity) return 0;
-  if (!circ->free_capacity->confirmed) return -1;
+  if (!circ->free_capacity->confirmed && !setup_command(command)) return -1;
   if (circ->free_capacity->paid) {
     if (free_capacity_paid_data_active(circ)) return 0;
     uint64_t now_ms = monotime_absolute_msec();
@@ -462,6 +469,13 @@ free_capacity_cell_reserve(circuit_t *circ, free_capacity_queue_ticket_t *ticket
       packed_cell_mem_cost(), monotime_absolute_msec(), ticket) ==
       FREE_CAPACITY_OK ? 0 : -1;
 }
+
+int
+free_capacity_cell_reserve(circuit_t *circ, free_capacity_queue_ticket_t *ticket)
+{
+  return free_capacity_cell_reserve_command(circ, ticket, CELL_RELAY);
+}
+
 void
 free_capacity_cell_release(circuit_t *circ, free_capacity_queue_ticket_t *ticket)
 {
@@ -473,8 +487,8 @@ free_capacity_cell_release(circuit_t *circ, free_capacity_queue_ticket_t *ticket
 }
 
 free_capacity_result_t
-free_capacity_circuit_send_control(circuit_t *circ, channel_t *chan,
-                                    bool payment_control)
+free_capacity_circuit_send_cell(circuit_t *circ, channel_t *chan,
+                                 bool payment_control, uint8_t command)
 {
   free_capacity_context_t *context = circ->free_capacity;
   free_capacity_link_t *link;
@@ -500,7 +514,8 @@ free_capacity_circuit_send_control(circuit_t *circ, channel_t *chan,
     return FREE_CAPACITY_OK;
   }
   context->data_only = false;
-  if (!context->confirmed || chan->magic != TLS_CHAN_MAGIC ||
+  if ((!context->confirmed && !setup_command(command)) ||
+      chan->magic != TLS_CHAN_MAGIC ||
       !(conn = BASE_CHAN_TO_TLS(chan)->conn) || !(link = link_get(conn))) {
     result = FREE_CAPACITY_CLOSE;
   } else if (context->paid && !adopt_held_queues(circ)) {
@@ -532,6 +547,13 @@ free_capacity_circuit_send_control(circuit_t *circ, channel_t *chan,
     set_queue_activity(context, false);
   }
   return result;
+}
+
+free_capacity_result_t
+free_capacity_circuit_send_control(circuit_t *circ, channel_t *chan,
+                                    bool payment_control)
+{
+  return free_capacity_circuit_send_cell(circ, chan, payment_control, CELL_RELAY);
 }
 
 free_capacity_result_t

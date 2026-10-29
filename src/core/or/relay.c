@@ -2810,7 +2810,7 @@ cell_queue_append_packed_copy_impl(circuit_t *circ, cell_queue_t *queue,
                               bool payment_control)
 {
   free_capacity_queue_ticket_t ticket;
-  if (free_capacity_cell_reserve(circ, &ticket) < 0) {
+  if (free_capacity_cell_reserve_command(circ, &ticket, cell->command) < 0) {
     circuit_mark_for_close(circ, END_CIRC_REASON_RESOURCELIMIT);
     return;
   }
@@ -3349,10 +3349,16 @@ channel_flush_from_first_active_circuit, (channel_t *chan, int max))
      * has more than one.
      */
     packed_cell_t *head = TOR_SIMPLEQ_FIRST(&queue->head);
-    free_capacity_result_t free_result = free_capacity_circuit_send_control(
-        circ, chan, head->payment_control);
-    if (free_result != FREE_CAPACITY_OK)
+    free_capacity_result_t free_result = free_capacity_circuit_send_cell(
+        circ, chan, head->payment_control,
+        packed_cell_get_command(head, chan->wide_circ_ids));
+    if (free_result != FREE_CAPACITY_OK) {
+      /* A closing circuit can retain queued cells until deferred cleanup.
+       * Never select that same refused head forever in this flush loop.
+       * WAIT is reactivated only by the bounded resource timer. */
+      circuitmux_set_num_cells(cmux, circ, 0);
       continue;
+    }
     cell = cell_queue_pop(queue);
     free_capacity_cell_release(cell->free_capacity_circuit,
                                &cell->free_capacity_ticket);
