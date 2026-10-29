@@ -1,0 +1,4 @@
+  o Minor features (security, defense-in-depth):
+    - In relay_msg_copy, allocate extra bytes for conflux-queued relay
+      messages, to defend against possible off-by-one bugs like
+      41254 and 41245.

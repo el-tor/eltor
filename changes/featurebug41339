@@ -1,0 +1,5 @@
+  o Minor features (HSDirs):
+    - Rate limit "Service descriptor has an invalid signature length" messages
+      at HSDir relays. This step only makes a flooding attack more tolerable;
+      it does not resolve or explain a flooding attack. Improves the situation
+      for ticket 41339. Bugfix on 0.3.0.1-alpha.

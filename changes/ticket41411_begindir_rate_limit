@@ -1,0 +1,8 @@
+  o Minor features (denial of service mitigation):
+    - Directory caches can now rate limit BEGIN_DIR cells per circuit,
+      independently of the exit stream creation limit. This is controlled
+      by the new DoSBeginDirRateEnabled, DoSBeginDirRate, DoSBeginDirBurst
+      and DoSBeginDirDefenseType consensus parameters and torrc options,
+      enabled by default. Refusals are reported in the heartbeat and in the
+      relay_dos_total{type="begindir_rate_rejected"} metric. Part of
+      ticket 41411.

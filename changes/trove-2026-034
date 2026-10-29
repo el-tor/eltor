@@ -1,0 +1,6 @@
+  o Major bugfixes (security):
+    - Fix a bug where a hostile cache could trick a client into
+      falsely believing that certain relays' microdescriptors
+      or router descriptors were unusable.
+      Fixes bug 41358; bugfix on 0.2.6.1-alpha or earlier.
+      Tracked as TROVE-2026-034.

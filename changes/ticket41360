@@ -1,0 +1,5 @@
+  o Major bugfixes (onion service, TROVE):
+    - Reject INTRODUCE2 cells containing a zeroed rendezvous point ntor onion
+      key. Previously, we would record a first-hop failure against a guard that
+      was never contacted. This is trove TROVE-2026-030. Fixes bug 41360;
+      bugfix on 0.4.9.1-alpha.

@@ -23,7 +23,7 @@
  *
  * 28/06/2017: This value was increased from 16 MB to 20 MB after we introduced
  * LZMA support in Tor (0.3.1.1-alpha). We limit our LZMA coder to 16 MB, but
- * liblzma have a small overhead that we need to compensate for to avoid being
+ * liblzma has a small overhead that we need to compensate for to avoid being
  * killed by the sandbox.
  */
 #define MALLOC_MP_LIM (20*1024*1024)
@@ -241,7 +241,6 @@ static int filter_nopar_gen[] = {
     /* XXXX restrict this in the same ways as mmap2 */
     SCMP_SYS(mmap),
 #endif
-    SCMP_SYS(munmap),
 #ifdef __NR_nanosleep
     SCMP_SYS(nanosleep),
 #endif
@@ -289,6 +288,10 @@ static int filter_nopar_gen[] = {
     // getaddrinfo uses this..
     SCMP_SYS(stat64),
 #endif
+#ifdef __NR_lstat64
+    // glob uses this on i386 with glibc 2.36+
+    SCMP_SYS(lstat64),
+#endif
 
 #ifdef __NR_getrandom
     SCMP_SYS(getrandom),
@@ -328,7 +331,7 @@ static int filter_nopar_gen[] = {
 };
 
 /* opendir is not a syscall but it will use either open or openat. We do not
- * want the decision to allow open/openat to be the callers reponsability, so
+ * want the decision to allow open/openat to be the callers responsibility, so
  * we create a phony syscall number for opendir and sb_opendir will choose the
  * correct syscall. */
 #define PHONY_OPENDIR_SYSCALL -2
@@ -1433,26 +1436,6 @@ sb_futex(scmp_filter_ctx ctx, sandbox_cfg_t *filter)
   return 0;
 }
 
-/**
- * Function responsible for setting up the mremap syscall for
- * the seccomp filter sandbox.
- *
- *  NOTE: so far only occurs before filter is applied.
- */
-static int
-sb_mremap(scmp_filter_ctx ctx, sandbox_cfg_t *filter)
-{
-  int rc = 0;
-  (void) filter;
-
-  rc = seccomp_rule_add_1(ctx, SCMP_ACT_ALLOW, SCMP_SYS(mremap),
-      SCMP_CMP(3, SCMP_CMP_EQ, MREMAP_MAYMOVE));
-  if (rc)
-    return rc;
-
-  return 0;
-}
-
 #ifdef ARCH_USES_GENERIC_SYSCALLS
 /**
  * Function responsible for setting up the newfstatat syscall for
@@ -1580,7 +1563,6 @@ static sandbox_filter_func_t filter_func[] = {
     sb_mprotect,
     sb_flock,
     sb_futex,
-    sb_mremap,
 #if defined(ARCH_USES_GENERIC_SYSCALLS)
     sb_newfstatat,
 #elif defined(__NR_stat64)
@@ -1769,11 +1751,53 @@ prot_strings(scmp_filter_ctx ctx, sandbox_cfg_t* cfg)
     goto out;
   }
 
+  /* Exclude the protected base from both ALLOW rules. Use LT/GT instead of
+   * NE as the same reason as munmap. See below for a better explanation. */
+  ret = seccomp_rule_add_2(ctx, SCMP_ACT_ALLOW, SCMP_SYS(mremap),
+      SCMP_CMP(0, SCMP_CMP_LT, (intptr_t) pr_mem_base),
+      SCMP_CMP(3, SCMP_CMP_EQ, MREMAP_MAYMOVE));
+  if (ret) {
+    log_err(LD_BUG,"(Sandbox) mremap ALLOW non base address fail (LT)!");
+    goto out;
+  }
+
+  ret = seccomp_rule_add_2(ctx, SCMP_ACT_ALLOW, SCMP_SYS(mremap),
+      SCMP_CMP(0, SCMP_CMP_GT, (intptr_t) pr_mem_base),
+      SCMP_CMP(3, SCMP_CMP_EQ, MREMAP_MAYMOVE));
+  if (ret) {
+    log_err(LD_BUG,"(Sandbox) mremap ALLOW non base address fail (GT)!");
+    goto out;
+  }
+
   // no munmap of the protected base address
   ret = seccomp_rule_add_1(ctx, SCMP_ACT_KILL, SCMP_SYS(munmap),
         SCMP_CMP(0, SCMP_CMP_EQ, (intptr_t) pr_mem_base));
   if (ret) {
     log_err(LD_BUG,"(Sandbox) munmap protected memory filter fail!");
+    goto out;
+  }
+
+  /* NE fails with errno 524 on Linux 6.8.0-11-generic. With some help of a
+   * LLM, this seems to be a BPF JIT layout issue. Use the disjoint LT/GT rules
+   * appears to fix the issue.
+   *
+   * Here is the explanation after several standalone tests were done on the
+   * kernel version from above: The NE-generated filter puts two machine-code
+   * jumps near the short-jump size limit so resizing one changes the other’s
+   * distance and they repeatedly switch between short and long encodings. It
+   * seems that the the kernel JIT then fails its padding check. Using </>
+   * changes the layout enough to avoid that failure. */
+  ret = seccomp_rule_add_1(ctx, SCMP_ACT_ALLOW, SCMP_SYS(munmap),
+      SCMP_CMP(0, SCMP_CMP_LT, (intptr_t) pr_mem_base));
+  if (ret) {
+    log_err(LD_BUG,"(Sandbox) munmap ALLOW non base address fail (LT)!");
+    goto out;
+  }
+
+  ret = seccomp_rule_add_1(ctx, SCMP_ACT_ALLOW, SCMP_SYS(munmap),
+      SCMP_CMP(0, SCMP_CMP_GT, (intptr_t) pr_mem_base));
+  if (ret) {
+    log_err(LD_BUG,"(Sandbox) munmap ALLOW non base address fail (GT)!");
     goto out;
   }
 
@@ -2019,6 +2043,25 @@ add_noparam_filter(scmp_filter_ctx ctx)
     rc = seccomp_rule_add_0(ctx, SCMP_ACT_ALLOW, SCMP_SYS(newfstatat));
     if (rc != 0) {
       log_err(LD_BUG,"(Sandbox) failed to add newfstatat() syscall; "
+          "received libseccomp error %d", rc);
+      return rc;
+    }
+#elif defined(__NR_fstatat64)
+    // On i386, glibc uses fstatat64 instead of newfstatat.
+    // This is needed for glob() and stat() operations on 32-bit systems.
+    rc = seccomp_rule_add_0(ctx, SCMP_ACT_ALLOW, SCMP_SYS(fstatat64));
+    if (rc != 0) {
+      log_err(LD_BUG,"(Sandbox) failed to add fstatat64() syscall; "
+          "received libseccomp error %d", rc);
+      return rc;
+    }
+#endif
+#if defined(__i386__) && defined(__NR_statx)
+    // On i386 with glibc 2.33+, statx may be used for time64 support.
+    // glob() in glibc 2.36+ uses statx for directory traversal.
+    rc = seccomp_rule_add_0(ctx, SCMP_ACT_ALLOW, SCMP_SYS(statx));
+    if (rc != 0) {
+      log_err(LD_BUG,"(Sandbox) failed to add statx() syscall; "
           "received libseccomp error %d", rc);
       return rc;
     }

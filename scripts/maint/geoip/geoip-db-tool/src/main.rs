@@ -7,10 +7,11 @@ use ipnetwork::IpNetwork;
 use rangemap::RangeInclusiveMap;
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{IpAddr, Ipv6Addr};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 fn default_ipv4_path() -> PathBuf {
     "./geoip".into()
@@ -30,8 +31,8 @@ struct Args {
     #[argh(option, default = "default_ipv6_path()", short = '6')]
     output_ipv6: PathBuf,
 
-    /// where to find the dump file
-    #[argh(option, short = 'i')]
+    /// where to find the dump file or `-` for stdin
+    #[argh(option, short = 'i', default = "PathBuf::from_str(\"-\").unwrap()")]
     input: PathBuf,
 
     /// whether to include AS information in our output
@@ -142,7 +143,11 @@ fn convert(args: Args) -> std::io::Result<()> {
     let output_v6 = args.output_ipv6.as_path();
     let include_asn = args.include_asn;
 
-    let f = File::open(input)?;
+    let f: Box<dyn Read> = if input == "-" {
+        Box::new(io::stdin())
+    } else {
+        Box::new(File::open(input)?)
+    };
     let f = BufReader::new(f);
     let mut blocks = Vec::new();
     let mut networks = Vec::new();
@@ -175,8 +180,8 @@ fn convert(args: Args) -> std::io::Result<()> {
     let num_blocks = blocks.len();
     for nb in blocks {
         n += 1;
-        if n % 100000 == 0 {
-            println!("{}/{}", n, num_blocks);
+        if n.is_multiple_of(100000) {
+            println!("{n}/{num_blocks}");
         }
         let start = nb.net.network();
         let end = nb.net.broadcast();

@@ -23,6 +23,7 @@
 #include "feature/dirclient/dirclient.h"
 #include "feature/dircommon/directory.h"
 #include "feature/hs_common/shared_random_client.h"
+#include "feature/hs_common/replaycache.h"
 #include "feature/keymgt/loadkey.h"
 #include "feature/nodelist/describe.h"
 #include "feature/nodelist/microdesc.h"
@@ -126,7 +127,7 @@ static int service_encode_descriptor(const hs_service_t *service,
                                      char **encoded_out);
 
 /** Helper: Function to compare two objects in the service map. Return 1 if the
- * two service have the same master public identity key. */
+ * two services have the same master public identity key. */
 static inline int
 hs_service_ht_eq(const hs_service_t *first, const hs_service_t *second)
 {
@@ -264,7 +265,9 @@ set_service_default_config(hs_service_config_t *c,
   c->intro_dos_rate_per_sec = HS_CONFIG_V3_DOS_DEFENSE_RATE_PER_SEC_DEFAULT;
   c->intro_dos_burst_per_sec = HS_CONFIG_V3_DOS_DEFENSE_BURST_PER_SEC_DEFAULT;
   /* PoW default options. */
-  c->has_dos_defense_enabled = HS_CONFIG_V3_POW_DEFENSES_DEFAULT;
+  c->has_pow_defenses_enabled = HS_CONFIG_V3_POW_DEFENSES_DEFAULT;
+  c->pow_queue_rate = HS_CONFIG_V3_POW_QUEUE_RATE;
+  c->pow_queue_burst = HS_CONFIG_V3_POW_QUEUE_BURST;
 }
 
 /** Initialize PoW defenses */
@@ -666,8 +669,8 @@ service_desc_find_by_intro(const hs_service_t *service,
  * ident. If not NULL, service, ip or desc are set if the object can be found.
  * They are untouched if they can't be found.
  *
- * This is an helper function because we do those lookups often so it's more
- * convenient to simply call this functions to get all the things at once. */
+ * This is a helper function because we do those lookups often so it's more
+ * convenient to simply call this function to get all the things at once. */
 STATIC void
 get_objects_from_ident(const hs_ident_circuit_t *ident,
                        hs_service_t **service, hs_service_intro_point_t **ip,
@@ -683,8 +686,8 @@ get_objects_from_ident(const hs_ident_circuit_t *ident,
     *service = s;
   }
 
-  /* From the service object, get the intro point object of that circuit. The
-   * following will query both descriptors intro points list. */
+  /* From the service object, get the intro point object of that circuit.
+   * This will query the intro points list of both descriptors. */
   if (s && ip) {
     *ip = service_intro_point_find(s, &ident->intro_auth_pk);
   }
@@ -2193,7 +2196,7 @@ pick_intro_point(unsigned int direct_conn, smartlist_t *exclude_nodes)
   const node_t *node;
   hs_service_intro_point_t *ip = NULL;
   /* Normal 3-hop introduction point flags. */
-  router_crn_flags_t flags = CRN_NEED_UPTIME | CRN_NEED_DESC;
+  router_crn_flags_t flags = CRN_NEED_UPTIME | CRN_NEED_DESC | CRN_FOR_HS;
   /* Single onion flags. */
   router_crn_flags_t direct_flags = flags | CRN_PREF_ADDR | CRN_DIRECT_CONN;
 
@@ -2515,6 +2518,13 @@ intro_point_should_expire(const hs_service_intro_point_t *ip,
     goto expired;
   }
 
+  /* Our INTRODUCE2 replay cache has reached the maximum number of INTRODUCE2
+   * we can accept for this intro point. Rotate it so we can clear it and avoid
+   * filling memory with replays. */
+  if (replay_cache_count(ip->replay_cache) >= ip->introduce2_max) {
+    goto expired;
+  }
+
   if (ip->time_to_expire <= now) {
     goto expired;
   }
@@ -2720,9 +2730,11 @@ update_suggested_effort(hs_service_t *service, time_t now)
   switch (aimd_event) {
     case INCREASE:
       if (pow_state->suggested_effort < UINT32_MAX) {
-        pow_state->suggested_effort = MAX(pow_state->suggested_effort + 1,
-                                          (uint32_t)(pow_state->total_effort /
-                                                     pow_state->rend_handled));
+        uint32_t avg =
+          pow_state->rend_handled ? /* check for div by 0 */
+            (uint32_t)(pow_state->total_effort / pow_state->rend_handled) : 0;
+        pow_state->suggested_effort =
+          MAX(pow_state->suggested_effort + 1, avg);
       }
       break;
     case DECREASE:
@@ -3262,9 +3274,8 @@ set_descriptor_revision_counter(hs_service_descriptor_t *hs_desc, time_t now,
 }
 
 /** Encode and sign the service descriptor desc and upload it to the
- * responsible hidden service directories. If for_next_period is true, the set
- * of directories are selected using the next hsdir_index. This does nothing
- * if PublishHidServDescriptors is false. */
+ * responsible hidden service directories.
+ * This does nothing if PublishHidServDescriptors is false. */
 STATIC void
 upload_descriptor_to_all(const hs_service_t *service,
                          hs_service_descriptor_t *desc)
@@ -4063,6 +4074,9 @@ hs_service_add_ephemeral_status_t
 hs_service_add_ephemeral(ed25519_secret_key_t *sk, smartlist_t *ports,
                          int max_streams_per_rdv_circuit,
                          int max_streams_close_circuit,
+                         int pow_defenses_enabled,
+                         uint32_t pow_queue_rate,
+                         uint32_t pow_queue_burst,
                          smartlist_t *auth_clients_v3, char **address_out)
 {
   hs_service_add_ephemeral_status_t ret;
@@ -4082,6 +4096,9 @@ hs_service_add_ephemeral(ed25519_secret_key_t *sk, smartlist_t *ports,
   service->config.is_ephemeral = 1;
   smartlist_free(service->config.ports);
   service->config.ports = ports;
+  service->config.has_pow_defenses_enabled = pow_defenses_enabled;
+  service->config.pow_queue_rate = pow_queue_rate;
+  service->config.pow_queue_burst = pow_queue_burst;
 
   /* Handle the keys. */
   memcpy(&service->keys.identity_sk, sk, sizeof(service->keys.identity_sk));
@@ -4300,13 +4317,14 @@ hs_service_set_conn_addr_port(const origin_circuit_t *circ,
                       "hidden service %s.",
              TO_CONN(conn)->port, service->onion_address);
     if (service->config.allow_unknown_ports) {
-      /* Service explicitly allow connection to unknown ports so close right
-       * away because we do not care about port mapping. */
-      goto err_close;
+      /* Service explicitly allows connections to unknown ports: only this
+       * stream fails, the rendezvous circuit is kept
+       * (HiddenServiceAllowUnknownPorts 1). */
+      goto err_no_close;
     }
-    /* If the service didn't explicitly allow it, we do NOT close the circuit
-     * here to raise the bar in terms of performance for port mapping. */
-    goto err_no_close;
+    /* By default, close the whole rendezvous circuit so that probing the
+     * ports of a service costs one circuit per unknown port. */
+    goto err_close;
   }
 
   /* Success. */
@@ -4585,7 +4603,7 @@ hs_service_get_metrics_stores(void)
   return list;
 }
 
-/** Lookup the global service map for the given identitiy public key and
+/** Lookup the global service map for the given identity public key and
  * return the service object if found, NULL if not. */
 hs_service_t *
 hs_service_find(const ed25519_public_key_t *identity_pk)

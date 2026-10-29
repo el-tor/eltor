@@ -464,8 +464,15 @@ static int
 compare_reveal_(const void **_a, const void **_b)
 {
   const sr_commit_t *a = *_a, *b = *_b;
-  return fast_memcmp(a->hashed_reveal, b->hashed_reveal,
-                     sizeof(a->hashed_reveal));
+  int r = fast_memcmp(a->hashed_reveal, b->hashed_reveal,
+                      sizeof(a->hashed_reveal));
+  if (r)
+    return r;
+  /* Two authorities with the same commitment value can happen if one
+   * copied the other's; make the order well defined, so that every
+   * authority holding the same commits hashes them in the same order. */
+  return fast_memcmp(a->rsa_identity, b->rsa_identity,
+                     sizeof(a->rsa_identity));
 }
 
 /** Given <b>commit</b> give the line that we should place in our votes.
@@ -575,7 +582,7 @@ commitments_are_the_same(const sr_commit_t *commit_one,
 }
 
 /** We just received a commit from the vote of authority with
- * <b>identity_digest</b>. Return 1 if this commit is authorititative that
+ * <b>voter_key</b>. Return 1 if this commit is authorititative, that
  * is, it belongs to the authority that voted it. Else return 0 if not. */
 STATIC int
 commit_is_authoritative(const sr_commit_t *commit,
@@ -616,7 +623,7 @@ should_keep_commit(const sr_commit_t *commit, const char *voter_key,
 
   /* Let's make sure, for extra safety, that this fingerprint is known to
    * us. Even though this comes from a vote, doesn't hurt to be
-   * extracareful. */
+   * extra careful. */
   if (trusteddirserver_get_by_v3_auth_digest(commit->rsa_identity) == NULL) {
     log_warn(LD_DIR, "SR: Fingerprint %s is not from a recognized "
                      "authority. Discarding commit.",
@@ -959,8 +966,8 @@ sr_compute_srv(void)
   commits = smartlist_new();
   chunks = smartlist_new();
 
-  /* We must make a list of commit ordered by authority fingerprint in
-   * ascending order as specified by proposal 250. */
+  /* We must make a list of commits ordered by reveal in
+   * ascending order as specified by srv-spec/protocol. */
   DIGESTMAP_FOREACH(state_commits, key, sr_commit_t *, c) {
     /* Extra safety net, make sure we have valid commit before using it. */
     ASSERT_COMMIT_VALID(c);
@@ -992,7 +999,7 @@ sr_compute_srv(void)
 
   {
     /* Join all reveal values into one giant string that we'll hash so we
-     * can generated our shared random value. */
+     * can generate our shared random value. */
     sr_srv_t *current_srv;
     char hashed_reveals[DIGEST256_LEN];
     reveals = smartlist_join_strings(chunks, "", 0, NULL);

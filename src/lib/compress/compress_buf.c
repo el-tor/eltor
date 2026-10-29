@@ -61,7 +61,7 @@ buf_add_compress(buf_t *buf, tor_compress_state_t *state,
         if (avail) {
           /* The compression module says we need more room
            * (TOR_COMPRESS_BUFFER_FULL).  Start a new chunk automatically,
-           * whether were going to or not. */
+           * whether we were going to or not. */
           need_new_chunk = 1;
         }
         if (data_len == 0 && !done) {

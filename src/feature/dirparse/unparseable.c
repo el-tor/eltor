@@ -120,6 +120,13 @@ dump_desc_create_dir(void)
   }
 }
 
+/* Return a-b if a>= b; otherwise return 0. */
+static uint64_t
+saturating_sub_u64(uint64_t a, uint64_t b)
+{
+  return (a>=b) ? a-b : 0;
+}
+
 /** Dump desc FIFO/cleanup; take ownership of the given filename, add it to
  * the FIFO, and clean up the oldest entries to the extent they exceed the
  * configured cap.  If any old entries with a matching hash existed, they
@@ -153,7 +160,7 @@ dump_desc_fifo_add_and_clean(char *filename, const uint8_t *digest_sha256,
   /* Do we need to do some cleanup? */
   max_len = get_options()->MaxUnparseableDescSizeToLog;
   /* Iterate over the list until we've freed enough space */
-  while (len > max_len - len_descs_dumped &&
+  while (len > saturating_sub_u64(max_len, len_descs_dumped) &&
          smartlist_len(descs_dumped) > 0) {
     /* Get the oldest thing on the list */
     tmp = (dumped_desc_t *)(smartlist_get(descs_dumped, 0));

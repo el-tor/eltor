@@ -1,0 +1,5 @@
+  o Minor bugfixes (pluggable transports):
+    - Bridge clients or bridge relays no longer mangle memory the second
+      time a pluggable transport or socksproxy configuration is changed,
+      such as by setconf, resetconf, or sighup. Fixes bug 41375; bugfix
+      on 0.4.0.1-alpha.

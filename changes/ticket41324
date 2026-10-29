@@ -1,0 +1,6 @@
+  o Minor bugfixes (compression):
+    - Harden the lzma2 streaming implementation against some kinds
+      of infinite-loop denial of service attacks.  This isn't
+      actually a security vulnerability in Tor, since we never use
+      lzma2 in streaming mode.
+      Fixes bug 41324; bugfix on 0.3.1.1-alpha.

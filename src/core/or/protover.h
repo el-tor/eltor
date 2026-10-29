@@ -58,6 +58,14 @@ struct smartlist_t;
 /** The protover that signals support for congestion control */
 #define PROTOVER_FLOWCTRL_CC 2
 
+/** The protover required for negotiating protovers as part of the circuit
+ * extension handshake. */
+#define PROTOVER_RELAY_NEGOTIATE_SUBPROTO 5
+
+/** The protover required for negotiating protovers as part of the circuit
+ * extension handshake. */
+#define PROTOVER_RELAY_CRYPT_CGO 6
+
 /** List of recognized subprotocols. */
 /// C_RUST_COUPLED: src/rust/protover/ffi.rs `translate_to_rust`
 /// C_RUST_COUPLED: src/rust/protover/protover.rs `Proto`
@@ -92,9 +100,6 @@ char *protover_compute_vote(const struct smartlist_t *list_of_proto_strings,
 const char *protover_compute_for_old_tor(const char *version);
 int protocol_list_supports_protocol(const char *list, protocol_type_t tp,
                                     uint32_t version);
-int protocol_list_supports_protocol_or_later(const char *list,
-                                             protocol_type_t tp,
-                                             uint32_t version);
 
 void protover_free_all(void);
 

@@ -1,0 +1,4 @@
+  o Major bugfixes (conflux, client, stream isolation):
+    - Keep the stream isolation state in sync of a linked conflux set on every
+      leg when attaching new streams. This is TROVE-2026-040. Fixes bug 41325;
+      bugfix on 0.4.8.1-alpha.

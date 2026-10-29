@@ -1,0 +1,4 @@
+  o Major bugfixes (relay, ):
+    - Remove circuits waiting for a channel from the pending channel list
+      as soon as they are marked for close instead of waiting until they
+      are freed. Fixes bug 41393; bugfix on 0.2.8.1-alpha.

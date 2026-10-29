@@ -1,0 +1,8 @@
+  o Major bugfixes (security):
+    - Reject the CC_RESPONSE extension in any handshakes
+      for which congestion control was _not_ requested.
+      Previously, clients would interpret this extension,
+      which could put congestion control into an invalid state,
+      leading to a possible remote crash attack.
+      Fixes bug 41345; bugfix on 0.4.9.3-alpha.
+      Tracked as TROVE-2026-032.

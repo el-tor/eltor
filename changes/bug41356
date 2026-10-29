@@ -1,0 +1,8 @@
+  o Minor bugfixes (directory authorities):
+    - If two shared-random-value commitments are equal, directory
+      authorities now tie-break by authority identity during the reveal
+      phase. Equal commits could happen if an evil authority republishes
+      another's public commitment (and later its public reveal) as its
+      own. Previously the two tied entries could cause honest authorities
+      to disagree about the resulting SRV. Fixes bug 41356; bugfix on
+      0.2.9.1-alpha.

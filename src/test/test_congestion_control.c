@@ -10,6 +10,7 @@
 #include "core/or/circuitlist.h"
 #include "core/or/circuitmux.h"
 #include "core/or/channel.h"
+#include "feature/nodelist/networkstatus.h"
 
 #define TOR_CONGESTION_CONTROL_COMMON_PRIVATE
 #define TOR_CONGESTION_CONTROL_PRIVATE
@@ -113,6 +114,30 @@ test_congestion_control_clock(void *arg)
   congestion_control_free(cc);
 }
 
+/* These upstream reference vectors were recorded with 31 cells per SENDME
+ * and a 124-cell initial window. Pin those inputs explicitly so the vectors
+ * still validate the algorithm independently of transport cell size. */
+static int32_t
+reference_cc_param(const networkstatus_t *ns, const char *name,
+                   int32_t def, int32_t min, int32_t max)
+{
+  (void)ns;
+  (void)min;
+  (void)max;
+  if (!strcmp(name, "cc_cwnd_init") || !strcmp(name, "cc_cwnd_min"))
+    return 124;
+  if (!strcmp(name, "cc_cwnd_inc_rate"))
+    return 31;
+  if (!strcmp(name, "cc_vegas_alpha_exit") ||
+      !strcmp(name, "cc_vegas_gamma_exit"))
+    return 186;
+  if (!strcmp(name, "cc_vegas_beta_exit"))
+    return 248;
+  if (!strcmp(name, "cc_vegas_delta_exit"))
+    return 310;
+  return def;
+}
+
 /* =========== RTT Test Vectors ================== */
 
 typedef struct rtt_vec {
@@ -175,11 +200,13 @@ test_congestion_control_rtt(void *arg)
   congestion_control_t *cc = NULL;
 
   params.cc_enabled = 1;
-  params.sendme_inc_cells = TLS_RECORD_MAX_CELLS;
+  params.sendme_inc_cells = 31;
+  MOCK(networkstatus_get_param, reference_cc_param);
   cc_alg = CC_ALG_VEGAS;
 
   cc = congestion_control_new(&params, CC_PATH_EXIT);
   run_rtt_test_vec(cc, vect1, sizeof(vect1)/sizeof(rtt_vec_t));
+  UNMOCK(networkstatus_get_param);
   congestion_control_free(cc);
 
   return;
@@ -351,7 +378,8 @@ test_congestion_control_vegas_cwnd(void *arg)
   circ->purpose = CIRCUIT_PURPOSE_OR;
 
   params.cc_enabled = 1;
-  params.sendme_inc_cells = TLS_RECORD_MAX_CELLS;
+  params.sendme_inc_cells = 31;
+  MOCK(networkstatus_get_param, reference_cc_param);
   cc_alg = CC_ALG_VEGAS;
 
   cc = congestion_control_new(&params, CC_PATH_EXIT);
@@ -374,6 +402,7 @@ test_congestion_control_vegas_cwnd(void *arg)
                           sizeof(vect4)/sizeof(cwnd_vec_t));
   congestion_control_free(cc);
 
+  UNMOCK(networkstatus_get_param);
  //done:
   circuitmux_free(dummy_channel.cmux);
   return;

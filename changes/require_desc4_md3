@@ -1,0 +1,12 @@
+  o Directory authority changes:
+    - Directory authorities now list the protocol capabilities "DESC_NO_TAP"
+      and "MICRODESC_NO_TAP" as required for clients and relays.
+      This changes will allow us to remove TAP keys from onion desciptors
+      and microdescriptors, saving a great deal of directory bandwidth.
+      Because of this change, Tor versions 0.4.8 and earlier will no longer
+      work on the network.
+    - Directory authorities now list the protocol capabilities
+      "RELAY_NEGOTIATE_SUBPROTO" and "RELAY_CRYPT_CGO" as required for relays.
+      This change will allow clients to assume that all relays support
+      Counter Galois Onion encryption, and use it even for relays not
+      currently listed in the consensus.

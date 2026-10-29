@@ -1,3 +1,0 @@
-  o Minor feature (defense in depth):
-    - verify needle is smaller than haystack before calling memmem.
-      Closes ticket 40854.

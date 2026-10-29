@@ -1,0 +1,4 @@
+  o Minor bugfixes (onion services):
+    - Stop memory-leaking an address string for every stream begin
+      request to an onion service unix domain socket ("unix:")
+      destination. Fixes bug 41434; bugfix on 0.2.6.3-alpha.

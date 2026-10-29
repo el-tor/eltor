@@ -1,0 +1,5 @@
+  o Minor bugfixes (directory parsing):
+    - When parsing an authority certificate with an explicit length,
+      do not skip trailing whitespace beyond that length. All current
+      callers pass NUL-terminated strings, so no bug was reachable in
+      practice. Fixes bug 41378; bugfix on 0.4.0.1-alpha.

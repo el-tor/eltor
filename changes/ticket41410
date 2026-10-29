@@ -1,0 +1,8 @@
+  o Major bugfixes (security):
+    - Correctly copy the MiddleOnly flag from routerstatuses
+      to node objects.  Without this fix,
+      the MiddleOnly flag was ignored on non-authorities,
+      and clients could use MiddleOnly relays
+      for inappropriate roles in onion service circuits.
+      Fixes bug 41410; bugfix on 0.4.8.15.
+      Tracked as TROVE-2026-067.

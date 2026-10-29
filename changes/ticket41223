@@ -1,0 +1,6 @@
+  o Minor features (relays):
+    - Add support for disabling Onion Key rotation for relays. This experimental
+      feature should enable more relay operators to experiment with various
+      workflows related to building more stateless relays. We also added a
+      `--keygen-onion` command line flag to Tor to make it easier for operators to
+      generate their Onion keys manually.  Closes ticket 41223.

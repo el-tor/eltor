@@ -1,0 +1,5 @@
+  o Major bugfixes (directory authority):
+    - When enforcing AuthDirMaxServersPerAddr, only count relays that we have
+      found reachable at that address and stop resetting the uptime history of
+      relays over the limit. This is TROVE-2026-064.
+      Fixes bug 41405; bugfix on 0.2.4.10-alpha.

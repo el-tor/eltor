@@ -1,0 +1,3 @@
+  o Minor features (portability):
+    - Fix seccomp compilation with recent versions of glibc.
+      (Closes ticket 41317.)

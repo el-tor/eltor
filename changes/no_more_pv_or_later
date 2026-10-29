@@ -1,0 +1,5 @@
+  o Removed features:
+    - We no longer check whether a relay supports LinkAuth>=3
+      when deciding whether to extend a circuit to it
+      using an Ed25519 identity.
+      Closes ticket 41379.

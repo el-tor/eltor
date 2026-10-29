@@ -45,7 +45,7 @@ typedef enum {
   RELAY_METRICS_NUM_TRAFFIC,
   /** Relay flags. */
   RELAY_METRICS_RELAY_FLAGS,
-  /** Numer of circuits. */
+  /** Number of circuits. */
   RELAY_METRICS_NUM_CIRCUITS,
   /** Timestamp at which the current online keys will expire. */
   RELAY_METRICS_SIGNING_CERT_EXPIRY,

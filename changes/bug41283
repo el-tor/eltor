@@ -1,0 +1,7 @@
+  o Minor bugfixes (controller interface):
+    - In the unusual case where the torrc option AllowNonRFC953Hostnames
+      is set to 1, a local user could request a socks hostname with
+      surprise characters (like newlines) that caused mischief on
+      the control port. Now we sanitize those addresses when they are
+      reported in control events or GETINFO responses. Fixes bug 41283;
+      bugfix on 0.1.1.1-alpha.

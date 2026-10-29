@@ -1,0 +1,3 @@
+  o Minor features (relay):
+    - Relays now use a separate circuit for each directory request, so that
+      directory caches can later limit relays to one BEGIN_DIR per circuit.

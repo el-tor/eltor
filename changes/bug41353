@@ -1,0 +1,9 @@
+  o Minor bugfixes (client, stream handling):
+    - When an exit or onion service answers a BEGIN with an END cell
+      whose reason byte is 0, report the stream to the application and
+      to controllers as a generic remote failure. Previously reason 0
+      turned into the internal "succeeded" value, so SOCKS clients got a
+      success reply, HTTP CONNECT clients got "200 OK", and controllers
+      got a STREAM SUCCEEDED event for a stream that never connected. Also
+      fix the formatting of unrecognized END reasons in controller STREAM
+      events. Fixes bug 41353; bugfix on 0.1.2.3-alpha.

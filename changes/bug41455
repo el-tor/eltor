@@ -1,0 +1,5 @@
+  o Minor bugfixes (onion service, control port):
+    - Fix a memory leak of the parsed signing-key certificate and
+      superencrypted blob (roughly the size of the descriptor) on
+      every HSPOST control-port command. Fixes bug 41455; bugfix on
+      0.3.3.1-alpha.

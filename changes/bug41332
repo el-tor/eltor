@@ -1,0 +1,4 @@
+  o Minor bugfixes (controller):
+    - No longer seg fault if a local authenticated controller connection
+      asks for SETCIRCUITPURPOSE with no arguments. Fixes bug 41332;
+      bugfix on 0.4.1.1-alpha.

@@ -1,0 +1,6 @@
+  o Major bugfixes (directory authority):
+    - Correctly handle the middle-only flag at directory authorities, to
+      prevent it from getting clobbered by a newly created consensus.
+      This prevents flip-flopping of the middleonly flag.
+      Fixes bug 41457; bugfix on 0.4.9.14.
+

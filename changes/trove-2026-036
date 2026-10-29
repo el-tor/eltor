@@ -1,0 +1,6 @@
+  o Major bugfixes (security):
+    - Fix a use-after-free error that could occur if AutomapHostsOnResolve
+      was set. Applications using AutomapHostsOnResolve with IPv4, or with
+      small VirtualAddrNetwork values, are especially vulnerable.
+      Fixes bug 41319; bugfix on 0.2.1.29.
+      Tracked as TROVE-2026-036.

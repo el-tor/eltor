@@ -1,0 +1,7 @@
+  o Major bugfixes (stream isolation):
+    - When a client establishes a circuit to an onion service, but the original
+      stream had already closed, we were mistakenly clearing the isolation
+      parameters on that circuit, allowing it to be reused by a future stream
+      from a different isolation context. A malicious onion service or HSDir
+      relay could use this technique to break first-party isolation (FPI) in
+      Tor Browser. TROVE-2026-053. Fixes bug 41368; bugfix on 0.2.3.3-alpha.

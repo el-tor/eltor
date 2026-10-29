@@ -1,0 +1,5 @@
+  o Minor features (directory performance):
+    - Summarize invalid directory request digests and consensus diff header
+      digests once per parsing call, instead of logging each rejected entry.
+      Omit rejected digest strings from these diagnostics and from invalid
+      consensus diff URL diagnostics.

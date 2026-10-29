@@ -1,0 +1,6 @@
+  o Major bugfixes (security):
+    - Treat a router descriptor as expired if any of its family certificates
+      has expired.  Previously, we incorrectly ignored the expiration time of
+      the family certificate.
+      Fixes bug 41413; bugfix on 0.4.9.2-alpha.
+      Tracked as TROVE-2026-062.

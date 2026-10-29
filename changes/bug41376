@@ -1,0 +1,5 @@
+  o Minor bugfixes (metrics):
+    - Fix an off-by-one in metrics_store_hist_entry_get_value() that read one
+      histogram bucket past the end of the array when asked for a bucket
+      boundary that does not exist. No in-tree caller currently passes such
+      a value. Fixes bug 41376; bugfix on 0.4.8.1-alpha.

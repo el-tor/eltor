@@ -1,0 +1,7 @@
+  o Minor bugfixes (memory management):
+    - Recompute memory usage after cache cleanup so that relay END cells queued
+      while expiring pending DNS resolutions count toward circuit memory
+      reclamation. Bugfix on 0.3.5.1-alpha.
+    - Preserve cleanup requests raised during reclamation while memory remains
+      over the limit, leaving further cleanup to the main loop.
+      Bugfix on 0.4.9.12.

@@ -1,0 +1,5 @@
+  o Major bugfixes (client stream handling):
+    - Stop trying to reattach BEGIN_DIR directory streams. Previously
+      we would look at the reason field in the END cell and consider
+      retrying it like a normal BEGIN exit request, which led to bizarre
+      behavior. TROVE-2026-052. Fixes bug 41369; bugfix on 0.1.2.5-alpha.

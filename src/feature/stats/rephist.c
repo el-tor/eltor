@@ -470,7 +470,7 @@ rep_hist_get_n_write_limit_reached(void)
   return stats_n_write_limit_reached;
 }
 
-/** Returns an allocated string for server descriptor for publising information
+/** Return an allocated string for server descriptor for publishing information
  * on whether we are overloaded or not. */
 char *
 rep_hist_get_overload_general_line(void)
@@ -752,20 +752,6 @@ rep_hist_note_router_unreachable(const char *id, time_t when)
                "non-Running since %s.", hex_str(id, DIGEST_LEN), tbuf);
     }
   }
-}
-
-/** Mark a router with ID <b>id</b> as non-Running, and retroactively declare
- * that it has never been running: give it no stability and no WFU. */
-void
-rep_hist_make_router_pessimal(const char *id, time_t when)
-{
-  or_history_t *hist = get_or_history(id);
-  tor_assert(hist);
-
-  rep_hist_note_router_unreachable(id, when);
-
-  hist->weighted_run_length = 0;
-  hist->weighted_uptime = 0;
 }
 
 /** Helper: Discount all old MTBF data, if it is time to do so.  Return

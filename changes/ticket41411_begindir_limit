@@ -1,0 +1,6 @@
+  o Minor features (denial of service mitigation):
+    - Directory caches can now refuse any BEGIN_DIR after the first one on a
+      circuit from an authenticated relay. This is controlled by the new
+      DoSBeginDirLimitEnabled consensus parameter, disabled by default.
+      Refusals are reported in the heartbeat and in the
+      relay_dos_total{type="begindir_rejected"} metric. Closes ticket 41411.

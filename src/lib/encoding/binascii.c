@@ -55,7 +55,9 @@ base32_encoded_size(size_t srclen)
   return enclen;
 }
 
-/** Implements base32 encoding as in RFC 4648. */
+/** Implements base32 encoding as in RFC 4648,
+ * except does not include any '=' character padding.
+ */
 void
 base32_encode(char *dest, size_t destlen, const char *src, size_t srclen)
 {

@@ -1,0 +1,5 @@
+  o Major bugfixes (security):
+    - Limit the size of consensus diffs, in bytes and in lines,
+      to prevent a class of memory-based denial-of-service attacks.
+      Fixes bug 41329; bugfix on 0.3.1.1-alpha.
+      This is tracked as TROVE-2026-042.

@@ -1,0 +1,8 @@
+  o Major bugfixes (onion services):
+    - Fix the behavior of HiddenServiceAllowUnknownPorts, which aims to
+      slow down port-scanning on onion services. It was correct as
+      implemented in Tor 0.2.6.3-alpha (ticket 14084), but during
+      the transition to v3 onion services we accidentally inverted its
+      logic. Now onion services will resume closing the client's circuit
+      if it asks to connect to an unconfigured port. Fixes bug 41435;
+      bugfix on 0.3.2.1-alpha.

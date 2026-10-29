@@ -1,0 +1,7 @@
+  o Minor features (performance):
+    - Track connection membership in the active linked and closeable lists
+      using indices, and update those indices when removing entries. Use the
+      connection array index for membership checks and clear it on removal.
+      This avoids repeated global list scans during activation and teardown.
+      Report inconsistent indices nonfatally and recover with a list search
+      before modifying the list.

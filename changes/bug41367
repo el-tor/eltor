@@ -1,0 +1,4 @@
+  o Minor bugfixes (controller):
+    - Fix an assert that can happen if a controller requests an HSFETCH
+      naming a relay that has a local descriptor but isn't in the
+      consensus. Fixes bug 41367; bugfix on 0.2.7.1-alpha.
