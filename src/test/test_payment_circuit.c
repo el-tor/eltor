@@ -261,6 +261,65 @@ test_payment_circuit_commit_activation(void *arg)
 }
 
 static void
+test_payment_circuit_activation_notifications(void *arg)
+{
+  (void)arg;
+  test_fixture_t f;
+  payment_profile_message_t reply;
+  payment_circuit_charge_t auth;
+  tt_int_op(fixture_init(&f), OP_EQ, 0);
+  tt_int_op(activate(&f, 2000), OP_EQ, 0);
+  tt_int_op(read_reply(&f, &reply), OP_EQ, 0);
+  tt_uint_op(reply_command, OP_EQ, PAYMENT_PROFILE_STARTED_STATUS);
+  tt_uint_op(reply.u.started.state, OP_EQ, 3);
+  tt_u64_op(reply.u.started.round, OP_EQ, 1);
+  uint8_t nonce[16]; memset(nonce, 0x22, sizeof(nonce));
+  tt_mem_op(reply.u.started.nonce, OP_EQ, nonce, sizeof(nonce));
+  uint8_t start_digest[32], wire[PAYMENT_PROFILE_WIRE_LEN];
+  payment_profile_message_t start = start_request(&f);
+  tt_int_op(payment_profile_encode(wire, sizeof(wire), &start,
+                         f.keys.start_request, f.keys.binding), OP_EQ, 0);
+  payment_profile_request_digest(start_digest, start.command, wire, sizeof(wire));
+  tt_mem_op(reply.u.started.request_digest, OP_EQ, start_digest, 32);
+  uint64_t revision = reply.u.started.revision;
+  unsigned count = reply_count;
+  charge(&f, 1, &auth);
+  tt_int_op(payment_circuit_authorize(f.circ, 1, &auth, 2001), OP_EQ, 0);
+  payment_circuit_tick(f.circ, 2002);
+  tt_uint_op(reply_count, OP_EQ, count);
+  charge(&f, 2, &auth);
+  tt_int_op(payment_circuit_authorize(f.circ, 2, &auth, 3000), OP_EQ, 0);
+  tt_uint_op(reply_count, OP_EQ, count); /* Future funding is not activation. */
+  payment_circuit_tick(f.circ, 61999);
+  tt_uint_op(reply_count, OP_EQ, count);
+  payment_circuit_tick(f.circ, 62000);
+  tt_uint_op(reply_count, OP_EQ, count+1);
+  tt_int_op(read_reply(&f, &reply), OP_EQ, 0);
+  tt_u64_op(reply.u.started.round, OP_EQ, 2);
+  tt_u64_op(reply.u.started.elapsed_ms, OP_EQ, 60000);
+  tt_u64_op(reply.u.started.revision, OP_GT, revision);
+  tt_mem_op(reply.u.started.request_digest, OP_EQ, start_digest, 32);
+  payment_circuit_tick(f.circ, 62001);
+  tt_uint_op(reply_count, OP_EQ, count+1);
+  /* No notification and no usable data when the next round is unfunded. */
+  payment_circuit_tick(f.circ, 122000);
+  tt_uint_op(reply_count, OP_EQ, count+1);
+  tt_assert(!payment_circuit_data_active(f.circ, 122000));
+  charge(&f, 3, &auth);
+  tt_int_op(payment_circuit_authorize(f.circ, 3, &auth, 125000), OP_EQ, 0);
+  tt_uint_op(reply_count, OP_EQ, count+2);
+  tt_int_op(read_reply(&f, &reply), OP_EQ, 0);
+  tt_u64_op(reply.u.started.round, OP_EQ, 3);
+  tt_u64_op(reply.u.started.elapsed_ms, OP_EQ, 123000);
+  tt_uint_op(reply.u.started.round_remaining_ms, OP_EQ, 57000);
+  payment_circuit_close(f.circ);
+  payment_circuit_tick(f.circ, 126000);
+  tt_uint_op(reply_count, OP_EQ, count+2);
+ done:
+  fixture_clear();
+}
+
+static void
 test_payment_circuit_refusal_and_expiry(void *arg)
 {
   (void)arg;
@@ -636,6 +695,10 @@ run_quota_wire(bool control_exhaustion, bool unlimited)
   monotime_set_mock_time_nsec(INT64_C(2000000000));
   monotime_coarse_set_mock_time_nsec(INT64_C(2000000000));
   tt_int_op(activate(&f, 2000), OP_EQ, 0);
+  payment_profile_message_t notification;
+  tt_int_op(read_reply(&f, &notification), OP_EQ, 0);
+  tt_uint_op(reply_command, OP_EQ, PAYMENT_PROFILE_STARTED_STATUS);
+  tt_uint_op(notification.u.started.state, OP_EQ, 3);
   wide = get_cell_network_size(true); narrow = get_cell_network_size(false);
   tt_uint_op(wide, OP_EQ, 2053); tt_uint_op(narrow, OP_EQ, 2051);
   unsigned count = unlimited ? 1024 : 1;
@@ -687,6 +750,7 @@ test_payment_circuit_free_paid_failure(void *arg)
   { #name, test_payment_circuit_##name, TT_FORK, NULL, NULL }
 struct testcase_t payment_circuit_tests[] = {
   CIRCUIT_TEST(commit_activation),
+  CIRCUIT_TEST(activation_notifications),
   CIRCUIT_TEST(refusal_and_expiry),
   CIRCUIT_TEST(round_boundaries),
   CIRCUIT_TEST(renewal),

@@ -55,12 +55,15 @@ struct payment_origin_hop_t {
   uint64_t constructed_ms, setup_deadline_ms, hard_deadline_ms;
   uint64_t round_deadline_ms, enforcement_deadline_ms;
   uint64_t observed_ms, elapsed_upper_ms, relay_revision, current_round;
+  /* Earliest safe local T0 bound, never moved later by a notification/query. */
+  uint64_t schedule_origin_ms;
   uint64_t active_period, last_query_ms;
   /* RENEWED ACTIVE proves the allocation, but does not contain a complete
    * START status clock. Suppress mixed-period observations until that arrives. */
   uint64_t pending_active_period;
   uint8_t state, setup_queries;
   bool ready, confirmed, status_seen, failed, query_seen, closed;
+  bool schedule_origin_seen;
 };
 
 static payment_origin_hop_t *origin_hops;
@@ -909,6 +912,14 @@ apply_status(payment_origin_hop_t *h, payment_origin_operation_t *op,
 {
   if (tor_memneq(r->terms, h->terms, 32) ||
       tor_memneq(r->allocation, h->initial, 32)) return false;
+  /* The immutable START can receive transition notifications for its whole
+   * live schedule. Exact/historical replay must not mutate live observations. */
+  bool notification = op->kind == PAYMENT_ORIGIN_START &&
+                      h->schedule_origin_seen && op->result_seen;
+  if (notification && r->revision <= h->relay_revision) {
+    return r->revision < h->relay_revision ||
+           (r->state == h->state && r->round == h->current_round);
+  }
   if (h->status_seen && r->revision < h->relay_revision) {
     op->phase = PAYMENT_ORIGIN_VERIFIED;
     op->relay_status = r->state; op->result_seen = true;
@@ -931,32 +942,68 @@ apply_status(payment_origin_hop_t *h, payment_origin_operation_t *op,
     uint64_t period = (r->round-1)/10;
     if (period < h->active_period || period >= h->policy.max_periods)
       return false;
+    payment_origin_operation_t *admitted = NULL;
     if (period != h->active_period) {
-      payment_origin_operation_t *admitted = find_kind(h,PAYMENT_ORIGIN_RENEW,period);
+      admitted = find_kind(h,PAYMENT_ORIGIN_RENEW,period);
       if (!admitted || !admitted->result_seen || !admitted->allocation_available ||
           (admitted->phase != PAYMENT_ORIGIN_ADMITTED &&
            admitted->phase != PAYMENT_ORIGIN_ACTIVE)) return false;
+    }
+    uint64_t round_end, enforcement_end, hard_end;
+    if (notification) {
+      if (now_ms < h->schedule_origin_ms ||
+          r->elapsed_ms > now_ms-h->schedule_origin_ms ||
+          r->round > UINT64_MAX/PAYMENT_PROFILE_ROUND_MS) return false;
+      /* The old START has no fresh RTT. Advance only the authenticated round
+       * on the original schedule; never treat delivery time as a new T0. */
+      round_end = saturating_add(h->schedule_origin_ms,
+                                r->round*PAYMENT_PROFILE_ROUND_MS);
+      enforcement_end = r->state == 3 ? round_end :
+        round_end-PAYMENT_PROFILE_ROUND_MS;
+      enforcement_end = saturating_add(enforcement_end,h->policy.grace_ms);
+      hard_end = saturating_add(h->schedule_origin_ms,h->policy.max_age_ms);
+      if (hard_end < enforcement_end) enforcement_end = hard_end;
+      uint64_t reported = saturating_add(now_ms,r->enforcement_remaining_ms);
+      if (reported < enforcement_end) enforcement_end = reported;
+    } else {
+      uint64_t candidate = remaining_ms(op->first_send_ms,r->elapsed_ms);
+      if (!h->schedule_origin_seen || candidate < h->schedule_origin_ms)
+        h->schedule_origin_ms = candidate;
+      h->schedule_origin_seen = true;
+      round_end = reply_deadline(op,r->round_remaining_ms);
+      enforcement_end = reply_deadline(op,r->enforcement_remaining_ms);
+      hard_end = reply_deadline(op,hard);
+    }
+    uint64_t retained_hard = h->hard_deadline_ms < hard_end ?
+                             h->hard_deadline_ms : hard_end;
+    uint64_t reported_round = saturating_add(now_ms,r->round_remaining_ms);
+    if (reported_round < round_end) round_end = reported_round;
+    if (retained_hard < round_end) round_end = retained_hard;
+    if (retained_hard < enforcement_end) enforcement_end = retained_hard;
+    /* Publish a new allocation only after all authenticated clock checks. */
+    if (admitted) {
       h->active_period = period;
       memcpy(h->active_allocation, admitted->allocation, 32);
       admitted->phase = PAYMENT_ORIGIN_ACTIVE;
     }
     if (!h->status_seen || r->round != h->current_round) {
-      h->round_deadline_ms = reply_deadline(op, r->round_remaining_ms);
-      h->enforcement_deadline_ms = reply_deadline(op,r->enforcement_remaining_ms);
+      h->round_deadline_ms = round_end;
+      h->enforcement_deadline_ms = enforcement_end;
     } else {
-      learn_deadline(&h->round_deadline_ms,reply_deadline(op,r->round_remaining_ms));
+      learn_deadline(&h->round_deadline_ms,round_end);
       if (h->state == 4 && r->state == 3)
-        h->enforcement_deadline_ms=reply_deadline(op,r->enforcement_remaining_ms);
-      else learn_deadline(&h->enforcement_deadline_ms,
-                           reply_deadline(op,r->enforcement_remaining_ms));
+        h->enforcement_deadline_ms=enforcement_end;
+      else learn_deadline(&h->enforcement_deadline_ms,enforcement_end);
     }
-    learn_deadline(&h->hard_deadline_ms, reply_deadline(op, hard));
+    learn_deadline(&h->hard_deadline_ms,hard_end);
   } else if ((h->status_seen && h->current_round && r->state < 3) ||
              (h->status_seen && h->state >= 5 && r->state < 5)) return false;
   if (r->state < 3)
     learn_deadline(&h->setup_deadline_ms,
                     reply_deadline(op,r->setup_remaining_ms));
-  uint64_t upper = saturating_add(r->elapsed_ms, now_ms-op->first_send_ms);
+  uint64_t upper = notification ?
+      now_ms-h->schedule_origin_ms :
+      saturating_add(r->elapsed_ms, now_ms-op->first_send_ms);
   if (h->status_seen && h->current_round) {
     uint64_t previous = saturating_add(h->elapsed_upper_ms,
                                        now_ms-h->observed_ms);
@@ -1101,7 +1148,9 @@ payment_origin_get(const origin_circuit_t *circ, uint16_t index,
   payment_origin_operation_t *op = operation ? find_operation(h,operation) : NULL;
   if (operation && (!op || ((op->kind == PAYMENT_ORIGIN_RENEW) == initial)))
     return PAYMENT_ORIGIN_UNKNOWN_OPERATION;
-  if (h->pending_active_period)
+  if (h->pending_active_period ||
+      (!h->failed && h->status_seen && h->state == 3 &&
+       now_ms >= h->round_deadline_ms && now_ms < h->hard_deadline_ms))
     return PAYMENT_ORIGIN_OBSERVATION_PENDING;
   if (!initial && (!h->confirmed || !h->status_seen || !h->current_round))
     return PAYMENT_ORIGIN_UNCONFIRMED;

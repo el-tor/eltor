@@ -1,12 +1,19 @@
 /* Copyright (c) 2026, The El Tor Project. */
 /* See LICENSE for licensing information. */
 #define CHANNEL_OBJECT_PRIVATE
+#define CIRCUITMUX_EWMA_PRIVATE
 #define SELFTEST_PRIVATE
 #include "orconfig.h"
 #include "core/or/or.h"
 #include "core/or/origin_circuit_st.h"
 #include "core/or/or_connection_st.h"
 #include "core/or/channeltls.h"
+#include "core/or/cell_queue_st.h"
+#include "core/or/cell_st.h"
+#include "core/or/circuitmux.h"
+#include "core/or/circuitmux_ewma.h"
+#include "core/or/scheduler.h"
+#include "test/fakechans.h"
 #include "core/or/crypt_path_st.h"
 #include "core/or/cpath_build_state_st.h"
 #include "core/or/extend_info_st.h"
@@ -233,6 +240,155 @@ test_origin_operations(void *arg)
   uint64_t revision=s.revision;
   tt_int_op(payment_origin_get(f.circ,1,NULL,true,3200,&s),OP_EQ,0);
   tt_u64_op(s.revision,OP_EQ,revision); tt_uint_op(sent_count,OP_EQ,2);
+ done:
+  clear_origin();
+}
+
+static uint8_t activation_fifo[4];
+static unsigned activation_fifo_count;
+static int
+capture_activation_fifo(channel_t *chan, packed_cell_t *cell)
+{
+  (void)chan;
+  if (activation_fifo_count < ARRAY_LENGTH(activation_fifo))
+    activation_fifo[activation_fifo_count++] = cell->body[5];
+  return 1;
+}
+
+static void
+set_activation_time(uint64_t now_ms)
+{
+  monotime_set_mock_time_nsec((int64_t)now_ms*INT64_C(1000000));
+  monotime_coarse_set_mock_time_nsec((int64_t)now_ms*INT64_C(1000000));
+}
+
+static void
+test_origin_activation_notifications(void *arg)
+{
+  (void)arg;
+  origin_fixture_t f;
+  payment_origin_snapshot_t snapshot;
+  or_connection_t conn = {0};
+  channel_tls_t *chan = NULL;
+  uint8_t op[16] = {1}, nonce[16] = {2};
+  tt_int_op(init_origin(&f), OP_EQ, 0);
+  MOCK(scheduler_channel_has_waiting_cells,
+       scheduler_channel_has_waiting_cells_mock);
+  MOCK(scheduler_release_channel, scheduler_release_channel_mock);
+  cell_ewma_initialize_ticks();
+  chan = tor_realloc(new_fake_channel(), sizeof(*chan));
+  chan->base_.magic = TLS_CHAN_MAGIC;
+  chan->base_.wide_circ_ids = conn.wide_circ_ids = true;
+  chan->base_.write_packed_cell = capture_activation_fifo;
+  chan->conn = &conn; conn.chan = chan;
+  circuit_set_n_circid_chan(TO_CIRCUIT(f.circ), 40, &chan->base_);
+  /* This fixture uses real queued cells and the real data-active getter. */
+  f.circ->base_.state = CIRCUIT_STATE_ONIONSKIN_PENDING;
+  tt_int_op(free_capacity_circuit_admit(TO_CIRCUIT(f.circ), &conn), OP_EQ, 0);
+  set_activation_time(2000);
+  tt_int_op(payment_origin_initial_prepare(f.circ, 1, op, nonce,
+                                            f.policy_wire, 2000), OP_EQ, 0);
+  tt_int_op(reply(&f, 0, 0, 0, 2100), OP_EQ, 0);
+  op[0] = 3; nonce[0] = 4;
+  tt_int_op(payment_origin_initial_start(f.circ, 1, op, nonce, 2200), OP_EQ, 0);
+  set_activation_time(2300);
+  tt_int_op(reply(&f, 3, 0, 2, 2300), OP_EQ, 0);
+  tt_assert(payment_origin_data_active(f.circ, 2300));
+  unsigned transmissions = sent_count;
+  set_activation_time(62250);
+  tt_assert(!payment_origin_data_active(f.circ, 62250));
+  uint64_t revision = control_payment_revision(TO_CIRCUIT(f.circ));
+  tt_int_op(payment_origin_get(f.circ, 1, op, true, 62250, &snapshot), OP_EQ,
+            PAYMENT_ORIGIN_OBSERVATION_PENDING);
+  tt_u64_op(control_payment_revision(TO_CIRCUIT(f.circ)), OP_EQ, revision);
+  cell_t cell = { .command = CELL_RELAY, .circ_id = 40 };
+  for (unsigned i = 0; i < 3; ++i) {
+    cell.payload[0] = (uint8_t)(0x31+i);
+    cell_queue_append_packed_copy(TO_CIRCUIT(f.circ),
+        &f.circ->base_.n_chan_cells, 1, &cell, 1, 0);
+  }
+  packed_cell_t *first = TOR_SIMPLEQ_FIRST(&f.circ->base_.n_chan_cells.head);
+  packed_cell_t *last = TOR_SIMPLEQ_NEXT(TOR_SIMPLEQ_NEXT(first, next), next);
+  last->payment_control = true; /* A new QUERY behind DATA cannot jump it. */
+  activation_fifo_count = 0;
+  circuitmux_set_num_cells(chan->base_.cmux, TO_CIRCUIT(f.circ), 3);
+  free_capacity_circuit_queued(TO_CIRCUIT(f.circ));
+  tt_int_op(channel_flush_from_first_active_circuit(&chan->base_, 3), OP_EQ, 0);
+  tt_uint_op(activation_fifo_count, OP_EQ, 0);
+  tt_ptr_op(TOR_SIMPLEQ_FIRST(&f.circ->base_.n_chan_cells.head), OP_EQ, first);
+  /* An inbound authenticated actual-round proof needs no outbound QUERY. Its
+   * delayed delivery cannot buy a new full minute at receipt time. */
+  set_activation_time(62700);
+  tt_int_op(reply(&f, 3, 60000, 3, 62700), OP_EQ, 0);
+  tt_assert(payment_origin_data_active(f.circ, 62700));
+  tt_int_op(payment_origin_get(f.circ, 1, op, true, 62700, &snapshot), OP_EQ, 0);
+  tt_u64_op(snapshot.current_round, OP_EQ, 2);
+  tt_u64_op(snapshot.elapsed_upper_ms, OP_EQ, 60500);
+  tt_u64_op(snapshot.round_remaining_ms, OP_EQ, 59500);
+  tt_uint_op(sent_count, OP_EQ, transmissions);
+  tt_int_op(channel_flush_from_first_active_circuit(&chan->base_, 4), OP_EQ, 3);
+  tt_uint_op(activation_fifo_count, OP_EQ, 3);
+  for (unsigned i = 0; i < 3; ++i)
+    tt_uint_op(activation_fifo[i], OP_EQ, 0x31+i);
+  tt_uint_op(payment_resources_free()->queued_bytes, OP_EQ, 0);
+  revision = snapshot.revision;
+  tt_int_op(reply(&f, 3, 60000, 3, 62800), OP_EQ, 0);
+  tt_int_op(reply(&f, 3, 0, 2, 62900), OP_EQ, 0); /* Historical replay. */
+  tt_int_op(payment_origin_get(f.circ, 1, op, true, 62900, &snapshot), OP_EQ, 0);
+  tt_u64_op(snapshot.current_round, OP_EQ, 2);
+  tt_u64_op(snapshot.revision, OP_EQ, revision);
+  tt_u64_op(snapshot.round_remaining_ms, OP_EQ, 59300);
+  /* Even a correctly MACed new-round proof delivered after its safe end
+   * grants no usable capacity and does not reset the original schedule. */
+  set_activation_time(183000);
+  tt_int_op(reply(&f, 3, 120000, 4, 183000), OP_EQ, 0);
+  tt_assert(!payment_origin_data_active(f.circ, 183000));
+  tt_int_op(payment_origin_get(f.circ, 1, op, true, 183000, &snapshot), OP_EQ,
+            PAYMENT_ORIGIN_OBSERVATION_PENDING);
+  payment_origin_close(f.circ);
+  tt_int_op(reply(&f, 3, 180000, 5, 183100), OP_EQ, 0);
+  tt_assert(!payment_origin_data_active(f.circ, 183100));
+ done:
+  clear_origin();
+  free_capacity_connection_free(&conn);
+  conn.chan = NULL;
+  if (chan) free_fake_channel(&chan->base_);
+  (void)payment_resources_free_all();
+  UNMOCK(scheduler_channel_has_waiting_cells);
+  UNMOCK(scheduler_release_channel);
+}
+
+static void
+test_origin_notification_invalid_clock(void *arg)
+{
+  (void)arg;
+  origin_fixture_t f;
+  payment_origin_snapshot_t snapshot;
+  uint8_t op[16] = {1}, nonce[16] = {2}, start_wire[PAYMENT_PROFILE_WIRE_LEN];
+  uint8_t renewal[16] = {5}, ids[10][32] = {{0}};
+  tt_int_op(init_origin(&f), OP_EQ, 0);
+  tt_int_op(payment_origin_initial_prepare(f.circ, 1, op, nonce,
+                                            f.policy_wire, 2000), OP_EQ, 0);
+  tt_int_op(reply(&f, 0, 0, 0, 2000), OP_EQ, 0);
+  op[0] = 3; nonce[0] = 4;
+  tt_int_op(payment_origin_initial_start(f.circ, 1, op, nonce, 2200), OP_EQ, 0);
+  memcpy(start_wire, sent_wire, sizeof(start_wire));
+  tt_int_op(reply(&f, 3, 0, 2, 2300), OP_EQ, 0);
+  for (unsigned i = 0; i < 10; ++i) ids[i][0] = (uint8_t)(80+i);
+  nonce[0] = 6;
+  tt_int_op(payment_origin_renew_prepare(f.circ, 1, renewal, 1, 11, nonce,
+                                       f.q, f.a0, ids, 3000), OP_EQ, 0);
+  tt_int_op(reply(&f, 0, 1000, 0, 4000), OP_EQ, 0);
+  /* Correct MAC and admitted allocation cannot make a future elapsed value
+   * credible. Reject before moving the active allocation or granting data. */
+  memcpy(sent_wire, start_wire, sizeof(start_wire));
+  sent_command = PAYMENT_PROFILE_START_STATUS;
+  tt_int_op(reply(&f, 3, 600000, 3, 5000), OP_EQ, 0);
+  tt_assert(!payment_origin_data_active(f.circ, 5000));
+  tt_int_op(payment_origin_get(f.circ, 1, op, true, 5000, &snapshot), OP_EQ, 0);
+  tt_u64_op(snapshot.active_period, OP_EQ, 0);
+  tt_mem_op(snapshot.active_allocation, OP_EQ, f.a0, sizeof(f.a0));
+  tt_assert(!snapshot.schedule_available);
  done:
   clear_origin();
 }
@@ -1042,6 +1198,8 @@ test_origin_renew_active_requires_status(void *arg)
 
 struct testcase_t payment_origin_tests[]={
   {"operations",test_origin_operations,TT_FORK,NULL,NULL},
+  {"activation_notifications",test_origin_activation_notifications,TT_FORK,NULL,NULL},
+  {"notification_invalid_clock",test_origin_notification_invalid_clock,TT_FORK,NULL,NULL},
   {"retries",test_origin_retries,TT_FORK,&helper_pubsub_setup,NULL},
   {"refresh_and_renew",test_origin_refresh_and_renew,TT_FORK,NULL,NULL},
   {"renew_active_requires_status",test_origin_renew_active_requires_status,TT_FORK,NULL,NULL},

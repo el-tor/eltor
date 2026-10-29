@@ -42,7 +42,7 @@ struct payment_circuit_t {
   payment_allocation_t initial, active, next_allocation;
   uint8_t start_digest[32], start_nonce[16], start_transmissions;
   uint8_t setup_queries;
-  bool start_operation, query_seen, closed;
+  bool start_operation, query_seen, closed, start_reply_pending;
 };
 
 static payment_circuit_t *profiles;
@@ -89,6 +89,8 @@ static void schedule_timer(uint64_t now_ms);
 static int send_allocation_reply(payment_circuit_t *pc,
                                  payment_allocation_t *allocation,
                                  uint64_t now_ms);
+
+static int send_activation_notification(payment_circuit_t *pc, uint64_t now_ms);
 
 static bool
 zero_bytes(const uint8_t *p, size_t len)
@@ -215,6 +217,9 @@ observe_schedule(payment_circuit_t *pc, payment_schedule_phase_t old_phase,
     else if (pc->schedule.phase == PAYMENT_SCHEDULE_CLOSED)
       event = PAYMENT_CIRCUIT_EVENT_CLOSED;
     notify(pc, event);
+    if (event == PAYMENT_CIRCUIT_EVENT_ROUND_ACTIVE &&
+        pc->start_operation && !pc->start_reply_pending)
+      (void)send_activation_notification(pc, pc->schedule.last_ms);
   }
 }
 
@@ -564,6 +569,19 @@ send_start_reply(payment_circuit_t *pc, const payment_profile_start_t *request,
   return send_message(pc, &m);
 }
 
+/* A transition proof uses the original START association, with fresh ordinary
+ * relay encryption. It cannot authorize funding or bypass the outbound FIFO. */
+static int
+send_activation_notification(payment_circuit_t *pc, uint64_t now_ms)
+{
+  payment_profile_start_t start = {0};
+  start.round = 1;
+  memcpy(start.nonce, pc->start_nonce, sizeof(start.nonce));
+  memcpy(start.terms, pc->terms, sizeof(start.terms));
+  memcpy(start.allocation, pc->initial_digest, sizeof(start.allocation));
+  return send_start_reply(pc, &start, pc->start_digest, false, now_ms);
+}
+
 static int
 handle_commit(payment_circuit_t *pc, const payment_profile_commit_t *request,
                const uint8_t digest[32], uint64_t now_ms)
@@ -681,9 +699,11 @@ handle_start(payment_circuit_t *pc, const payment_profile_start_t *request,
       payment_schedule_phase_t old_phase = pc->schedule.phase;
       uint64_t old_round = pc->schedule.current_round;
       uint64_t old_period = pc->schedule.active_period;
+      pc->start_reply_pending = true;
       payment_schedule_start(&pc->schedule, now_ms);
       notify(pc, PAYMENT_CIRCUIT_EVENT_START_REQUESTED);
       observe_schedule(pc, old_phase, old_round, old_period);
+      pc->start_reply_pending = false;
       schedule_timer(now_ms);
     }
   } else {
