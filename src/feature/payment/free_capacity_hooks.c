@@ -29,6 +29,7 @@ typedef struct free_capacity_context_t {
   or_connection_t *setup_link;
   struct free_capacity_context_t *next, **previous;
   bool waiting, data_only, paid, confirmed, first_link, setup_received;
+  bool bootstrap_only;
   uint64_t wake_ms;
 } free_capacity_context_t;
 
@@ -330,13 +331,58 @@ free_capacity_circuit_confirm(circuit_t *circ)
   return 0;
 }
 
+int
+free_capacity_circuit_confirm_bootstrap(circuit_t *circ)
+{
+  if (!circ || !circ->free_capacity || circ->free_capacity->confirmed ||
+      free_capacity_circuit_confirm(circ) < 0)
+    return -1;
+  circ->free_capacity->bootstrap_only = true;
+  return 0;
+}
+
+bool
+free_capacity_circuit_is_bootstrap(const circuit_t *circ)
+{
+  return circ && circ->free_capacity && circ->free_capacity->bootstrap_only;
+}
+
+bool
+free_capacity_circuit_is_normal(const circuit_t *circ)
+{
+  return circ && !circ->marked_for_close && circ->free_capacity &&
+    circ->free_capacity->confirmed && !circ->free_capacity->bootstrap_only &&
+    circ->free_capacity->limit.active && !circ->free_capacity->limit.closing;
+}
+
+bool
+free_capacity_bootstrap_command_allowed(const circuit_t *circ, uint8_t command,
+    uint16_t stream_id, bool established_directory_stream)
+{
+  if (!free_capacity_circuit_is_bootstrap(circ)) return true;
+  switch (command) {
+    case RELAY_COMMAND_BEGIN_DIR:
+      return stream_id != 0;
+    case RELAY_COMMAND_DATA:
+    case RELAY_COMMAND_END:
+      return stream_id != 0 && established_directory_stream;
+    case RELAY_COMMAND_SENDME:
+      return !stream_id || established_directory_stream;
+    case RELAY_COMMAND_DROP:
+      return stream_id == 0;
+    default:
+      return false;
+  }
+}
+
 bool
 free_capacity_circuit_ready(const circuit_t *circ, uint64_t now_ms)
 {
   if (!circ || circ->marked_for_close || !circ->free_capacity) return false;
   const free_capacity_context_t *context = circ->free_capacity;
   const free_capacity_circuit_t *limit = &context->limit;
-  if (!context->confirmed || context->paid || !limit->active || limit->closing ||
+  if (!context->confirmed || context->paid || context->bootstrap_only ||
+      !limit->active || limit->closing ||
       !limit->owner || now_ms < limit->owner->last_ms ||
       now_ms < limit->admitted_ms ||
       now_ms - limit->admitted_ms >= FREE_CAPACITY_LIFETIME_MS) return false;
@@ -607,7 +653,7 @@ void
 free_capacity_circuit_paid(circuit_t *circ)
 {
   free_capacity_context_t *context = circ->free_capacity;
-  if (!context || !context->confirmed) return;
+  if (!context || !context->confirmed || context->bootstrap_only) return;
   context->paid = true;
   context->waiting = false;
   context->data_only = false;

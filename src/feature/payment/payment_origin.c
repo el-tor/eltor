@@ -604,8 +604,13 @@ payment_origin_prepare_handshake(origin_circuit_t *circ, crypt_path_t *hop,
   if (!payload) {
     /* Directory bootstrap uses a purpose-limited one-hop tunnel before full
      * signed descriptors or daemon-owned foundation circuits are available. */
-    return circ->base_.purpose==CIRCUIT_PURPOSE_C_GENERAL && circ->build_state &&
-      circ->build_state->onehop_tunnel ? 0 : -1;
+    if (circ->base_.purpose != CIRCUIT_PURPOSE_C_GENERAL || !circ->build_state ||
+        !circ->build_state->onehop_tunnel) return -1;
+    if (!circ->base_.free_capacity &&
+        free_capacity_circuit_prepare_channel(TO_CIRCUIT(circ),
+                                               circ->base_.n_chan) < 0)
+      return -1;
+    return 0;
   }
   bool selected=false, supported=true, any_paid=false, all_paid=true;
   unsigned hops=0;
@@ -655,7 +660,12 @@ payment_origin_resource_complete(origin_circuit_t *circ, crypt_path_t *hop,
                                   bool admitted, uint64_t now_ms)
 {
   if (!circ || !hop || admitted!=hop->payment_export_requested) goto fail;
-  if (!admitted) return 0;
+  if (!admitted) {
+    if (circ->base_.free_capacity &&
+        free_capacity_circuit_confirm_bootstrap(TO_CIRCUIT(circ)) < 0)
+      goto fail;
+    return 0;
+  }
   if (!hop->payment_keys) goto fail;
   if (free_capacity_circuit_confirm(TO_CIRCUIT(circ))<0) goto fail;
   if (hop->payment_profile) {

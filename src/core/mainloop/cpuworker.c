@@ -406,7 +406,13 @@ cpuworker_onion_handshake_replyfn(void *work_)
     }
     circ->payment_export_requested=true;
   } else {
-    free_capacity_circuit_free(TO_CIRCUIT(circ));
+    /* Missing negotiation is permitted only as a bounded directory endpoint.
+     * It must never lose its reservation and become an unrestricted circuit. */
+    if (circ->payment_construction_prepared &&
+        free_capacity_circuit_confirm_bootstrap(TO_CIRCUIT(circ)) < 0) {
+      circuit_mark_for_close(TO_CIRCUIT(circ), END_CIRC_REASON_RESOURCELIMIT);
+      goto done_processing;
+    }
     circ->payment_export_requested=false;
   }
   if (payment_profile_export_take(&circ->payment_keys,&rpl.payment_result,
@@ -470,7 +476,7 @@ cpuworker_onion_handshake_threadfn(void *state_, void *work_)
   uint64_t n_circuit_id_64 = req.n_circuit_id;
   rpl.keys_len = sizeof(rpl.keys);
   uint64_t worker_now=monotime_absolute_msec();
-  if (req.payment_export_requested &&
+  if (req.circ_ns_params.eltor_resource_eligible &&
       (worker_now<req.payment_native_queued_ms ||
        worker_now>=req.payment_native_start_before_ms)) {
     n=-1;
@@ -620,8 +626,9 @@ assign_onionskin_to_cpuworker(or_circuit_t *circ,
     return -1;
   }
 
-  if (onionskin->handshake_type == ONION_HANDSHAKE_TYPE_NTOR_V3 &&
-      !circ->payment_construction_prepared) {
+  /* Every accepted handshake in enabled mode shares setup admission, including
+   * directory bootstrap. No handshake type creates a legacy resource lane. */
+  if (!circ->payment_construction_prepared) {
     payment_profile_policy_t policy;
     bool candidate;
     if (payment_circuit_construction_policy(&policy,&candidate)) {
@@ -670,8 +677,9 @@ assign_onionskin_to_cpuworker(or_circuit_t *circ,
 
   /* Copy the circuit ID for payment processing */
   req.circ_ns_params.eltor_resource_eligible=circ->payment_construction_prepared;
-  req.payment_export_requested=circ->payment_construction_prepared;
-  if (req.payment_export_requested) {
+  req.payment_export_requested=circ->payment_construction_prepared &&
+    req.create_cell.handshake_type == ONION_HANDSHAKE_TYPE_NTOR_V3;
+  if (circ->payment_construction_prepared) {
     req.payment_native_queued_ms=monotime_absolute_msec();
     uint64_t wait=payment_resources_protocol()->limits.max_wait_ms;
     req.payment_native_start_before_ms=req.payment_native_queued_ms>UINT64_MAX-wait ?

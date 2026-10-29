@@ -17,6 +17,14 @@ int free_capacity_circuit_prepare_channel(circuit_t *, channel_t *);
  * circuit allocation. Existing enabled-link byte debit is not repeated. */
 int free_capacity_circuit_setup_received(circuit_t *, channel_t *);
 int free_capacity_circuit_confirm(circuit_t *);
+/* Nonnegotiated one-hop directory bootstrap is an immutable local restriction,
+ * never authenticated normal admission or paid authority. All existing limits
+ * remain in force; recognized commands must pass the directory-only gate. */
+int free_capacity_circuit_confirm_bootstrap(circuit_t *);
+bool free_capacity_circuit_is_bootstrap(const circuit_t *);
+bool free_capacity_circuit_is_normal(const circuit_t *);
+bool free_capacity_bootstrap_command_allowed(const circuit_t *, uint8_t command,
+    uint16_t stream_id, bool established_directory_stream);
 int free_capacity_circuit_admit(circuit_t *, or_connection_t *);
 void free_capacity_circuit_free(circuit_t *);
 /* Read-only admission/lifetime gate. Does not refill buckets or grant paid

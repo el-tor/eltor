@@ -1,5 +1,6 @@
 /* Copyright (c) 2026, The El Tor Project. */
 /* See LICENSE for licensing information. */
+#define RELAY_PRIVATE
 #define CPUWORKER_PRIVATE
 #define CHANNEL_OBJECT_PRIVATE
 #define TOR_CONGESTION_CONTROL_PRIVATE
@@ -18,6 +19,8 @@
 #include "core/or/congestion_control_st.h"
 #include "core/or/congestion_control_common.h"
 #include "core/or/scheduler.h"
+#include "core/or/relay.h"
+#include "feature/payment/payment_circuit.h"
 #include "feature/payment/free_capacity_hooks.h"
 #include "feature/payment/payment_resources.h"
 #include "feature/control/control_payment.h"
@@ -294,9 +297,90 @@ test_cpu_native_cancel(void *arg)
  done:
   cpu_cleanup(&f);
 }
+/* Exercise actual CPU request/reply dispatch for each nonnegotiated handshake,
+ * not merely the token bucket. None may open an unrestricted relay circuit. */
+static void
+test_cpu_bounded_bootstrap(void *arg)
+{
+  (void)arg;
+  const unsigned types[] = { ONION_HANDSHAKE_TYPE_FAST,
+    ONION_HANDSHAKE_TYPE_NTOR, ONION_HANDSHAKE_TYPE_NTOR_V3 };
+  for (unsigned i = 0; i < ARRAY_LENGTH(types); ++i) {
+    cpu_fixture_t f = {0};
+    cpu_init();
+    tt_int_op(cpu_fixture(&f), OP_EQ, 0);
+    payment_profile_policy_t policy = payment_profile_testing_policy();
+    tt_int_op(payment_circuit_configure_construction(true, &policy), OP_EQ, 0);
+    /* Remove the fixture's prepared admission: real dispatch must reserve it. */
+    free_capacity_circuit_free(TO_CIRCUIT(f.circ));
+    f.circ->payment_construction_prepared = false;
+    onion_handshake_state_release(&f.client);
+    memset(&f.client, 0, sizeof(f.client));
+    f.create.cell_type = types[i] == ONION_HANDSHAKE_TYPE_FAST ?
+      CELL_CREATE_FAST : CELL_CREATE2;
+    f.create.handshake_type = types[i];
+    int n = onion_skin_create(types[i], &f.info, &f.client, f.create.onionskin,
+                               sizeof(f.create.onionskin), NULL, false);
+    tt_int_op(n, OP_GT, 0);
+    f.create.handshake_len = n;
+    tt_int_op(cpu_assign(&f), OP_EQ, 0);
+    tt_uint_op(payment_resources_free()->live_circuits, OP_EQ, 1);
+    tt_uint_op(payment_resources_protocol()->running, OP_EQ, 1);
+    tt_assert(!free_capacity_circuit_is_normal(TO_CIRCUIT(f.circ)));
+    worker_state_t state = {.onion_keys = &f.keys};
+    tt_int_op(queued_fn(&state, queued_job), OP_EQ, WQ_RPL_REPLY);
+    tt_int_op(queued_job->u.reply.success, OP_EQ, 1);
+    tt_assert(!queued_job->u.reply.circ_params.eltor_resource_admitted);
+    native_reply();
+    tt_assert(!f.circ->base_.marked_for_close);
+    tt_assert(free_capacity_circuit_is_bootstrap(TO_CIRCUIT(f.circ)));
+    tt_assert(!free_capacity_circuit_is_normal(TO_CIRCUIT(f.circ)));
+    tt_assert(!free_capacity_circuit_ready(TO_CIRCUIT(f.circ), 1000));
+    tt_assert(!f.circ->payment_export_requested);
+    tt_ptr_op(f.circ->payment_keys, OP_EQ, NULL);
+    tt_ptr_op(f.circ->payment_profile, OP_EQ, NULL);
+    tt_uint_op(payment_resources_free()->live_circuits, OP_EQ, 1);
+    tt_uint_op(payment_resources_protocol()->running, OP_EQ, 0);
+    tt_u64_op(payment_resources_protocol()->attempts_started, OP_EQ, 1);
+    tt_assert(free_capacity_bootstrap_command_allowed(TO_CIRCUIT(f.circ),
+      RELAY_COMMAND_BEGIN_DIR, 1, false));
+    tt_assert(free_capacity_bootstrap_command_allowed(TO_CIRCUIT(f.circ),
+      RELAY_COMMAND_DATA, 1, true));
+    tt_assert(!free_capacity_bootstrap_command_allowed(TO_CIRCUIT(f.circ),
+      RELAY_COMMAND_DATA, 1, false));
+    const uint8_t forbidden[] = { RELAY_COMMAND_BEGIN, RELAY_COMMAND_RESOLVE,
+      RELAY_COMMAND_EXTEND2, RELAY_COMMAND_ESTABLISH_INTRO,
+      RELAY_COMMAND_ESTABLISH_RENDEZVOUS, RELAY_COMMAND_PAYMENT_COMMIT };
+    for (unsigned j = 0; j < ARRAY_LENGTH(forbidden); ++j) {
+      relay_msg_t msg = {.command = forbidden[j], .stream_id = 1};
+      tt_int_op(handle_relay_msg(&msg, TO_CIRCUIT(f.circ), NULL, NULL, 0),
+                OP_EQ, -END_CIRC_REASON_TORPROTOCOL);
+    }
+    /* Switching to paid never clears the immutable bootstrap restriction. */
+    free_capacity_circuit_paid(TO_CIRCUIT(f.circ));
+    tt_assert(free_capacity_circuit_is_bootstrap(TO_CIRCUIT(f.circ)));
+    /* The original CREATE plus both directions shares the128-cell burst. */
+    for (unsigned j = 0; j < 127; ++j) {
+      if (j % 2) {
+        tt_assert(free_capacity_wire_receive(&f.conn, 10, 2053, true, CELL_RELAY));
+      } else {
+        tt_int_op(free_capacity_circuit_send(TO_CIRCUIT(f.circ),
+                    &f.chan->base_), OP_EQ, FREE_CAPACITY_OK);
+      }
+    }
+    tt_int_op(free_capacity_circuit_send(TO_CIRCUIT(f.circ), &f.chan->base_),
+              OP_EQ, FREE_CAPACITY_WAIT);
+    cpu_cleanup(&f);
+    continue;
+ done:
+    cpu_cleanup(&f);
+    return;
+  }
+}
+
 #define CPU_TEST(name) {#name,test_cpu_##name,TT_FORK,NULL,NULL}
 struct testcase_t payment_cpuworker_tests[]={
   CPU_TEST(authenticated_install), CPU_TEST(native_deadline),
   CPU_TEST(cancel_and_queue_failure), CPU_TEST(running_circuit_death),
-  CPU_TEST(native_cancel), END_OF_TESTCASES
+  CPU_TEST(native_cancel), CPU_TEST(bounded_bootstrap), END_OF_TESTCASES
 };

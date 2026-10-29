@@ -711,6 +711,7 @@ test_origin_no_application_fallback(void *arg)
   origin_circuit_t *circ=NULL;
   entry_connection_t entry={0}; socks_request_t socks={0};
   extend_info_t info={0};
+  or_connection_t conn={0}; channel_tls_t chan={0};
   timers_initialize();
   circ=origin_circuit_new();
   circ->base_.purpose=CIRCUIT_PURPOSE_C_GENERAL;
@@ -731,16 +732,25 @@ test_origin_no_application_fallback(void *arg)
   /* The one-hop directory constructor exception does not grant application
    * stream eligibility; circuituse separately checks use_begindir. */
   circ->build_state->onehop_tunnel=true;
+  chan.base_.magic=TLS_CHAN_MAGIC; chan.base_.wide_circ_ids=true;
+  chan.conn=&conn; circ->base_.n_chan=&chan.base_;
   tt_int_op(payment_origin_prepare_handshake(circ,circ->cpath,NULL,1000),OP_EQ,0);
+  tt_assert(circ->base_.free_capacity);
+  tt_int_op(payment_origin_resource_complete(circ,circ->cpath,false,1000),OP_EQ,0);
+  tt_assert(free_capacity_circuit_is_bootstrap(TO_CIRCUIT(circ)));
+  tt_assert(!free_capacity_circuit_is_normal(TO_CIRCUIT(circ)));
   tt_assert(!payment_origin_streams_ready(circ,1000));
   /* A path mixing signed free-only and paid-start hops is rejected before
-   * any provisional resource reservation or crypto allocation. */
+   * any new provisional reservation or crypto allocation. Existing bootstrap
+   * admission cannot become a normal authenticated profile. */
   info.payment_start_v1=true;
   tt_int_op(cpath_append_hop(&circ->cpath,&info),OP_EQ,0);
   tt_int_op(payment_origin_prepare_handshake(circ,circ->cpath,"invalid",1000),OP_EQ,-1);
-  tt_ptr_op(circ->base_.free_capacity,OP_EQ,NULL);
+  tt_assert(free_capacity_circuit_is_bootstrap(TO_CIRCUIT(circ)));
  done:
+  if (circ) circ->base_.n_chan=NULL;
   circuit_free_all(); (void)payment_origin_free_all(); control_payment_free_all();
+  free_capacity_connection_free(&conn);
   (void)payment_resources_free_all(); timers_shutdown();
 }
 

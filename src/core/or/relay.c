@@ -1670,6 +1670,18 @@ handle_relay_msg(const relay_msg_t *msg, circuit_t *circ,
 
   tor_assert(msg);
 
+  /* A nonnegotiated bootstrap endpoint cannot extend, exit to an application,
+   * join an onion service, or acquire paid authority. Only an actual linked
+   * directory stream can carry its stateful stream traffic. Check before other
+   * recognized command handlers (including padding) can create work. */
+  bool directory_stream = conn && conn->base_.linked_conn &&
+    conn->base_.linked_conn->type == CONN_TYPE_DIR;
+  if (!CIRCUIT_IS_ORIGIN(circ) &&
+      !free_capacity_bootstrap_command_allowed(circ, msg->command,
+                                               msg->stream_id,
+                                               directory_stream))
+    return -END_CIRC_REASON_TORPROTOCOL;
+
   /* First pass the cell to the circuit padding subsystem, in case it's a
    * padding cell or circuit that should be handled there. */
   if (circpad_check_received_cell(msg, circ, layer_hint) == 0) {
