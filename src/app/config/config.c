@@ -658,6 +658,7 @@ static const config_var_t option_vars_[] = {
   V_IMMUTABLE(PidFile,           FILENAME,   NULL),
   V_IMMUTABLE(TestingTorNetwork, BOOL,     "0"),
   V_IMMUTABLE(ElTorFoundation, BOOL,       "0"),
+  V_IMMUTABLE(ElTorFoundationTerms, STRING, NULL),
 
   V(TestingLinkCertLifetime,          INTERVAL, "2 days"),
   V(TestingAuthKeyLifetime,          INTERVAL, "2 days"),
@@ -2100,6 +2101,27 @@ options_transition_affects_guards(const or_options_t *old_options,
   return 0;
 }
 
+/** Resolve immutable operator terms without enabling a deployment. */
+int
+options_get_payment_policy(const or_options_t *options,
+                            payment_profile_policy_t *out)
+{
+  if (!out) return -1;
+  memset(out, 0, sizeof(*out));
+  if (!options) return -1;
+  if (options->ElTorFoundationTerms) {
+    payment_profile_policy_t parsed;
+    if (payment_profile_policy_parse_hex(&parsed,
+                              options->ElTorFoundationTerms) != 0 ||
+        parsed.paid_quota_bytes) return -1;
+    *out = parsed;
+    return 0;
+  }
+  if (!options->TestingTorNetwork) return -1;
+  *out = payment_profile_testing_policy();
+  return 0;
+}
+
 /** Fetch the active option list, and take actions based on it. All of the
  * things we do should survive being done repeatedly.  If present,
  * <b>old_options</b> contains the previous value of the options.
@@ -2122,7 +2144,9 @@ options_act,(const or_options_t *old_options))
 
   /* The test-only option is immutable, so repeated options_act calls cannot
    * replace live terms or reset a circuit/resource lifecycle. */
-  payment_profile_policy_t foundation_policy=payment_profile_testing_policy();
+  payment_profile_policy_t foundation_policy = {0};
+  if (options->ElTorFoundation &&
+      options_get_payment_policy(options, &foundation_policy) < 0) return -1;
   if (payment_circuit_configure_construction(options->ElTorFoundation,
              options->ElTorFoundation ? &foundation_policy : NULL)<0 ||
       payment_origin_configure_enabled(options->ElTorFoundation)<0)
@@ -4032,6 +4056,11 @@ options_validate_cb(const void *old_options_, void *options_, char **msg)
                                  AF_INET6, 1, msg)<0)
     return -1;
 
+  payment_profile_policy_t foundation_policy;
+  if (options->ElTorFoundationTerms &&
+      options_get_payment_policy(options, &foundation_policy) < 0)
+    REJECT("ElTorFoundationTerms must be canonical finite v1 policy terms "
+           "with paid_quota_bytes 0; paid quota enforcement is unavailable.");
   if (options->ElTorFoundation && !options->TestingTorNetwork)
     REJECT("ElTorFoundation requires TestingTorNetwork 1.");
 

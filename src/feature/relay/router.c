@@ -2212,8 +2212,9 @@ router_build_fresh_unsigned_routerinfo,(routerinfo_t **ri_out))
 
   ri = tor_malloc_zero(sizeof(routerinfo_t));
   if (options->ElTorFoundation && options->TestingTorNetwork) {
-    payment_profile_policy_t policy=payment_profile_testing_policy();
-    if (payment_profile_policy_encode(ri->payment_profile_terms,
+    payment_profile_policy_t policy;
+    if (options_get_payment_policy(options, &policy) < 0 ||
+        payment_profile_policy_encode(ri->payment_profile_terms,
                     sizeof(ri->payment_profile_terms),&policy)) goto err;
     ri->payment_start_v1=ri->payment_renew_v1=ri->payment_free_v1=true;
   }

@@ -495,7 +495,28 @@ test_payment_profile_policy(void *arg)
 {
   (void)arg;
   payment_profile_policy_t p;
+  payment_profile_policy_t empty = {0};
+  char text[112];
   uint8_t terms[56], encoded[55];
+  tt_int_op(payment_profile_policy_parse_hex(&p, fixtures[0].terms), OP_EQ, 0);
+  tt_int_op(payment_profile_policy_encode(encoded, sizeof(encoded), &p),
+            OP_EQ, 0);
+  tt_int_op(unhex(terms, sizeof(terms), fixtures[0].terms), OP_EQ, 55);
+  tt_mem_op(encoded, OP_EQ, terms, 55);
+  tor_snprintf(text, sizeof(text), "%s0", fixtures[0].terms);
+  tt_int_op(payment_profile_policy_parse_hex(&p, text), OP_EQ,
+            PAYMENT_PROFILE_ERR_LENGTH);
+  tt_mem_op(&p, OP_EQ, &empty, sizeof(p));
+  memcpy(text, fixtures[0].terms, 111);
+  text[0] = 'A';
+  tt_int_op(payment_profile_policy_parse_hex(&p, text), OP_EQ,
+            PAYMENT_PROFILE_ERR_BODY);
+  tt_mem_op(&p, OP_EQ, &empty, sizeof(p));
+  text[0] = ' ';
+  tt_int_op(payment_profile_policy_parse_hex(&p, text), OP_EQ,
+            PAYMENT_PROFILE_ERR_BODY);
+  tt_int_op(payment_profile_policy_parse_hex(&p, NULL), OP_EQ,
+            PAYMENT_PROFILE_ERR_LENGTH);
   tt_int_op(unhex(terms, sizeof(terms), fixtures[0].terms), OP_EQ, 55);
   tt_int_op(payment_profile_policy_decode(&p, terms, 54), OP_EQ,
             PAYMENT_PROFILE_ERR_LENGTH);

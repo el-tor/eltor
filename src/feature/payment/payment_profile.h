@@ -130,6 +130,10 @@ int payment_profile_policy_encode(uint8_t *out, size_t out_len,
                                   const payment_profile_policy_t *policy);
 int payment_profile_policy_decode(payment_profile_policy_t *out,
                                   const uint8_t *wire, size_t len);
+/* Canonical operator/descriptor text: exactly 110 lowercase hexadecimal
+ * characters. Clears out on every failure, including invalid policy fields. */
+int payment_profile_policy_parse_hex(payment_profile_policy_t *out,
+                                     const char *hex);
 int payment_profile_ids_valid(const uint8_t ids[10][32]);
 
 /* Standalone exporter primitive only: caller must supply the exact ntor-v3

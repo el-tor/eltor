@@ -59,6 +59,11 @@ setopt_err_t options_trial_assign(struct config_line_t *list, unsigned flags,
                                   char **msg);
 
 void options_init(or_options_t *options);
+struct payment_profile_policy_t;
+/* Resolve explicit finite terms; the candidate fallback exists only in testing
+ * networks. This helper does not authorize enabling or advertising a profile. */
+int options_get_payment_policy(const or_options_t *options,
+                               struct payment_profile_policy_t *out);
 
 #define OPTIONS_DUMP_MINIMAL 1
 #define OPTIONS_DUMP_ALL 2

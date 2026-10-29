@@ -14,6 +14,8 @@
 #include "feature/dirauth/dirauth_options_st.h"
 #include "feature/dirauth/dirauth_sys.h"
 #include "feature/relay/relay_config.h"
+#include "feature/payment/payment_profile.h"
+#include "feature/payment/payment_circuit.h"
 #include "test/test.h"
 #include "lib/geoip/geoip.h"
 
@@ -3741,6 +3743,81 @@ test_options_validate__virtual_addr(void *ignored)
 }
 
 static void
+test_options_foundation_terms(void *arg)
+{
+  (void)arg;
+  options_test_data_t *tdata = NULL;
+  char *msg = NULL, *cfg = NULL;
+  char hex[111];
+  uint8_t wire[55], observed_wire[55];
+  payment_profile_policy_t policy = payment_profile_testing_policy();
+  payment_profile_policy_t actual;
+  bool candidate = false;
+  or_options_t bare = {0};
+
+  /* The zero-price test candidate is never inferred outside test networks. */
+  tt_int_op(options_get_payment_policy(&bare, &actual), OP_EQ, -1);
+  bare.TestingTorNetwork = 1;
+  tt_int_op(options_get_payment_policy(&bare, &actual), OP_EQ, 0);
+  tt_u64_op(actual.rate_msat, OP_EQ, 0);
+  policy.rate_msat = 1500;
+  policy.initial_handshake_fee_msat = 2500;
+  policy.max_age_ms = 2400000;
+  policy.max_periods = 4;
+  tt_int_op(payment_profile_policy_encode(wire, sizeof(wire), &policy),
+            OP_EQ, 0);
+  base16_encode(hex, sizeof(hex), (const char *)wire, sizeof(wire));
+  tor_strlower(hex);
+  tor_asprintf(&cfg, VALID_DIR_AUTH "TestingTorNetwork 1\n"
+               "ElTorFoundation 1\nElTorFoundationTerms %s\n", hex);
+  tdata = get_options_test_data(cfg);
+  tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, 0);
+  tt_ptr_op(msg, OP_EQ, NULL);
+  tt_int_op(options_get_payment_policy(tdata->opt, &actual), OP_EQ, 0);
+  tt_u64_op(actual.rate_msat, OP_EQ, 1500);
+  tt_u64_op(actual.initial_handshake_fee_msat, OP_EQ, 2500);
+  tt_u64_op(actual.max_age_ms, OP_EQ, 2400000);
+  tt_uint_op(actual.max_periods, OP_EQ, 4);
+  tt_int_op(payment_circuit_configure_construction(true, &actual), OP_EQ, 0);
+  tt_assert(payment_circuit_construction_policy(&actual, &candidate));
+  tt_assert(candidate);
+  tt_int_op(payment_profile_policy_encode(observed_wire,
+                         sizeof(observed_wire), &actual), OP_EQ, 0);
+  tt_mem_op(observed_wire, OP_EQ, wire, sizeof(wire));
+  /* Parsing explicit terms also works without testing; it does not remove
+   * the independent production enable/advertisement gate. */
+  tdata->opt->TestingTorNetwork = 0;
+  tt_int_op(options_get_payment_policy(tdata->opt, &actual), OP_EQ, 0);
+  tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, -1);
+  tt_str_op(msg, OP_EQ, "ElTorFoundation requires TestingTorNetwork 1.");
+  tor_free(msg);
+  tdata->opt->ElTorFoundation = 0;
+  tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, 0);
+
+  /* Unsupported quota cannot be advertised as if native enforcement exists. */
+  policy.paid_quota_bytes = 1;
+  tt_int_op(payment_profile_policy_encode(wire, sizeof(wire), &policy),
+            OP_EQ, 0);
+  base16_encode(hex, sizeof(hex), (const char *)wire, sizeof(wire));
+  tor_strlower(hex);
+  tor_free(tdata->opt->ElTorFoundationTerms);
+  tdata->opt->ElTorFoundationTerms = tor_strdup(hex);
+  tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, -1);
+  tt_str_op(msg, OP_EQ, "ElTorFoundationTerms must be canonical finite v1 "
+    "policy terms with paid_quota_bytes 0; paid quota enforcement is unavailable.");
+  tor_free(msg);
+  tor_free(tdata->opt->ElTorFoundationTerms);
+  tdata->opt->ElTorFoundationTerms = tor_strdup("01");
+  tt_int_op(options_get_payment_policy(tdata->opt, &actual), OP_EQ, -1);
+  tt_u64_op(actual.rate_msat, OP_EQ, 0);
+ done:
+  (void)payment_circuit_configure_construction(false, NULL);
+  free_options_test_data(tdata);
+  tor_free(cfg);
+  tor_free(msg);
+}
+
+static void
 test_options_validate__testing_options(void *ignored)
 {
   (void)ignored;
@@ -4182,6 +4259,26 @@ test_options_trial_assign(void *arg)
   tor_free(msg);
   config_free_lines(lines);
 
+  // Foundation policy is immutable even when the feature is disabled.
+  {
+    payment_profile_policy_t policy = payment_profile_testing_policy();
+    uint8_t wire[55];
+    char hex[111], line[160];
+    tt_int_op(payment_profile_policy_encode(wire, sizeof(wire), &policy),
+              OP_EQ, 0);
+    base16_encode(hex, sizeof(hex), (const char *)wire, sizeof(wire));
+    tor_strlower(hex);
+    tor_snprintf(line, sizeof(line), "ElTorFoundationTerms %s", hex);
+    r = config_get_lines(line, &lines, 0);
+  }
+  tt_int_op(r, OP_EQ, 0);
+  v = options_trial_assign(lines, 0, &msg);
+  tt_int_op(v, OP_EQ, SETOPT_ERR_TRANSITION);
+  tt_str_op(msg, OP_EQ, "While Tor is running, changing "
+                        "ElTorFoundationTerms is not allowed");
+  tor_free(msg);
+  config_free_lines(lines);
+
   // We can't set the ORPort to nonsense: that's a validation error.
   r = config_get_lines("ORPort fractabling planished", &lines, 0);
   tt_int_op(r, OP_EQ, 0);
@@ -4218,6 +4315,7 @@ test_options_trial_assign(void *arg)
 #endif
 
 struct testcase_t options_tests[] = {
+  { "foundation_terms", test_options_foundation_terms, TT_FORK, NULL, NULL },
   { "validate", test_options_validate, TT_FORK, NULL, NULL },
   { "mem_dircache", test_have_enough_mem_for_dircache, TT_FORK, NULL, NULL },
   LOCAL_VALIDATE_TEST(uname_for_server),

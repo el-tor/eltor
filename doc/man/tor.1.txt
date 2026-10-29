@@ -3800,6 +3800,32 @@ For more information, please see https://2019.www.torproject.org/docs/tor-onion-
 
 The following options are used for running a testing Tor network.
 
+[[ElTorFoundation]] **ElTorFoundation** **0**|**1**::
+    Opt in to the experimental authenticated El Tor circuit foundation.
+    This option is immutable and currently requires **TestingTorNetwork 1**;
+    production advertisement remains blocked pending protocol review and live
+    acceptance. Application streams wait for daemon-owned negotiated circuits
+    and do not fall back to legacy circuits. The existing one-hop directory
+    bootstrap exception does not admit application streams. (Default: 0)
+
+[[ElTorFoundationTerms]] **ElTorFoundationTerms** __TermsHex__::
+    Immutable operator-selected v1 policy, exactly 110 lowercase hexadecimal
+    characters encoding the canonical 55-byte policy. The same terms are
+    signed in the descriptor and frozen before native handshake work; positive
+    prices do not authorize spending or replace durable payment verification.
+    The fields are version 1 (1 byte), mode 1 (1), count 10 (1), rate in msat
+    per round (8), round 60000 ms (4), funding lead 60000 ms (4), grace in ms
+    at most 60000 (4), paid quota bytes (8), finite maximum age in ms (8),
+    maximum periods at least 2 (4), initial handshake fee in msat (8), and
+    finite setup timeout in ms (4). All integers use network byte order.
+    Nonzero paid quota is currently rejected until native byte enforcement is
+    available. Zero quota means unlimited paid traffic, never unlimited free
+    traffic. Zero age, zero setup timeout, unknown fields, and noncanonical
+    encodings are rejected. Setting terms alone does not enable the feature.
+    Omission selects the existing zero-price candidate only on an isolated
+    testing network: 15000 ms grace, 1800000 ms age, 3 periods, 30000 ms setup,
+    and zero fee/quota. No production policy defaults are defined.
+
 //Out of order because it logically belongs first in this section.
 [[TestingTorNetwork]] **TestingTorNetwork** **0**|**1**::
     If set to 1, Tor adjusts default values of the configuration options below,

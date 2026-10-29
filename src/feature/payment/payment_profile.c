@@ -102,6 +102,25 @@ payment_profile_policy_decode(payment_profile_policy_t *out,
 }
 
 int
+payment_profile_policy_parse_hex(payment_profile_policy_t *out, const char *hex)
+{
+  uint8_t decoded[PAYMENT_PROFILE_TERMS_LEN] = {0};
+  if (!out) return PAYMENT_PROFILE_ERR_BODY;
+  memset(out, 0, sizeof(*out));
+  if (!hex || strlen(hex) != 2 * sizeof(decoded))
+    return PAYMENT_PROFILE_ERR_LENGTH;
+  for (size_t i = 0; i < 2 * sizeof(decoded); ++i) {
+    unsigned value;
+    if (hex[i] >= '0' && hex[i] <= '9') value = hex[i] - '0';
+    else if (hex[i] >= 'a' && hex[i] <= 'f') value = hex[i] - 'a' + 10;
+    else return PAYMENT_PROFILE_ERR_BODY;
+    if (!(i % 2)) decoded[i/2] = (uint8_t)(value << 4);
+    else decoded[i/2] |= (uint8_t)value;
+  }
+  return payment_profile_policy_decode(out, decoded, sizeof(decoded));
+}
+
+int
 payment_profile_ids_valid(const uint8_t ids[10][32])
 {
   if (!ids)
@@ -661,16 +680,8 @@ payment_profile_parse_capability(uint8_t terms[55],
       return -1;
     hex = argv[3];
   } else return -1;
-  if (strlen(hex) != 110) return -1;
-  for (size_t i = 0; i < 110; ++i) {
-    unsigned value;
-    if (hex[i] >= '0' && hex[i] <= '9') value = hex[i] - '0';
-    else if (hex[i] >= 'a' && hex[i] <= 'f') value = hex[i] - 'a' + 10;
-    else return -1;
-    if (!(i % 2)) decoded[i/2] = (uint8_t)(value << 4);
-    else decoded[i/2] |= (uint8_t)value;
-  }
-  if (payment_profile_policy_decode(&policy, decoded, sizeof(decoded)) != 0)
+  if (payment_profile_policy_parse_hex(&policy, hex) != 0 ||
+      payment_profile_policy_encode(decoded, sizeof(decoded), &policy) != 0)
     return -1;
   memcpy(terms, decoded, sizeof(decoded));
   return 1;
