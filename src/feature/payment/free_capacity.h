@@ -40,6 +40,7 @@ typedef struct free_capacity_t {
   uint64_t last_ms;
   uint64_t received_bytes;
   uint64_t sent_bytes;
+  uint64_t last_queue_ticket;
   uint32_t live_circuits;
   uint32_t queued_bytes;
 } free_capacity_t;
@@ -56,12 +57,19 @@ typedef struct free_capacity_circuit_t {
   uint64_t admitted_ms;
   uint64_t queue_time[FREE_CAPACITY_QUEUE_CELLS];
   uint32_t queue_size[FREE_CAPACITY_QUEUE_CELLS];
+  uint64_t queue_ticket[FREE_CAPACITY_QUEUE_CELLS];
   uint32_t queued_bytes;
-  uint8_t queue_head;
   uint8_t queue_count;
   bool active;
   bool closing;
 } free_capacity_circuit_t;
+
+/* Local reservation ticket, never serialized. The process-wide nonwrapping
+ * serial prevents a stale cell release from affecting a reused circuit. */
+typedef struct free_capacity_queue_ticket_t {
+  free_capacity_t *owner;
+  uint64_t serial;
+} free_capacity_queue_ticket_t;
 
 typedef enum free_capacity_result_t {
   FREE_CAPACITY_OK = 0,
@@ -111,15 +119,19 @@ free_capacity_result_t free_capacity_link_receive(
 free_capacity_result_t free_capacity_link_send(free_capacity_conn_t *connection,
                                               uint64_t bytes,
                                               uint64_t now_ms);
-/* Reserve queue memory BEFORE allocating/copying a cell. Queue reservation
- * does not charge send tokens: send() does that exactly once before writing.
- * Only remove the head after successful send, or close the entire circuit.
- * Actual buffer/metadata capacity must be included in allocation_bytes. */
+/* Reserve queue memory BEFORE allocating/copying a cell; retain ticket on the
+ * exact packed cell. The two Tor directional FIFOs share one 32-cell/byte cap,
+ * but may flush independently: remove by ticket, never by a combined FIFO.
+ * Reservation does not charge send tokens: send() does so once before writing.
+ * Remove only after successful send (or close/release the entire circuit).
+ * Actual buffer/metadata capacity must be included in allocation_bytes. Failed
+ * reservation clears ticket_out. Stale/foreign/double removes fail unchanged. */
 free_capacity_result_t free_capacity_queue_push(
     free_capacity_circuit_t *circuit, uint32_t allocation_bytes,
-    uint64_t now_ms);
-free_capacity_result_t free_capacity_queue_pop(free_capacity_circuit_t *circuit,
-                                              uint64_t now_ms);
+    uint64_t now_ms, free_capacity_queue_ticket_t *ticket_out);
+free_capacity_result_t free_capacity_queue_remove(
+    free_capacity_circuit_t *circuit,
+    const free_capacity_queue_ticket_t *ticket, uint64_t now_ms);
 /* Idempotent release on every circuit teardown; does not refill any bucket.
  * The process object must outlive its connections and circuits. */
 void free_capacity_release(free_capacity_circuit_t *circuit);

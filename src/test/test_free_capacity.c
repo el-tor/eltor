@@ -198,54 +198,113 @@ test_free_capacity_live_bound(void *arg)
 static void
 test_free_capacity_queue(void *arg)
 {
-  free_capacity_t owner;
+  free_capacity_t owner, foreign_owner;
   free_capacity_conn_t conn;
   free_capacity_circuit_t circ[8] = {{0}};
+  free_capacity_queue_ticket_t tickets[33] = {{0}};
+  free_capacity_queue_ticket_t previous, next, later, stale, fresh, foreign;
   (void)arg;
   free_capacity_init(&owner, 0);
+  free_capacity_init(&foreign_owner, 0);
   tt_int_op(free_capacity_conn_init(&conn, &owner, 0), OP_EQ,
             FREE_CAPACITY_OK);
   for (unsigned i = 0; i < 8; ++i)
     tt_int_op(free_capacity_admit(&conn, &circ[i], 0), OP_EQ,
               FREE_CAPACITY_OK);
   for (unsigned i = 0; i < 32; ++i)
-    tt_int_op(free_capacity_queue_push(&circ[0], 2053, 0), OP_EQ,
+    tt_int_op(free_capacity_queue_push(&circ[0], 2053, 0, &tickets[i]), OP_EQ,
               FREE_CAPACITY_OK);
-  tt_int_op(free_capacity_queue_push(&circ[0], 2053, 0), OP_EQ,
+  tt_uint_op(owner.queued_bytes, OP_EQ, 32 * 2053);
+  tt_int_op(free_capacity_queue_push(&circ[0], 2053, 0, &tickets[32]), OP_EQ,
             FREE_CAPACITY_CLOSE);
+  tt_u64_op(tickets[32].serial, OP_EQ, 0);
   tt_uint_op(circ[0].queue_count, OP_EQ, 32);
-  /* CLOSE latches: even draining a cell cannot revive an aborted queue. */
-  tt_int_op(free_capacity_queue_pop(&circ[0], 0), OP_EQ, FREE_CAPACITY_CLOSE);
+  tt_int_op(free_capacity_queue_remove(&circ[0], &tickets[0], 0), OP_EQ,
+            FREE_CAPACITY_CLOSE);
   free_capacity_release(&circ[0]);
   tt_uint_op(owner.queued_bytes, OP_EQ, 0);
-  for (unsigned i = 0; i < 32; ++i)
-    tt_int_op(free_capacity_queue_push(&circ[1], 2053, 0), OP_EQ,
-              FREE_CAPACITY_OK);
-  tt_int_op(free_capacity_queue_pop(&circ[1], 0), OP_EQ, FREE_CAPACITY_OK);
-  tt_int_op(free_capacity_queue_push(&circ[1], 2053, 1), OP_EQ,
+  /* Two independent Tor queues can flush in either order, releasing exactly
+   * that cell's allocation cost and preserving the oldest surviving time. */
+  tt_int_op(free_capacity_queue_push(&circ[1], 2053, 0, &previous), OP_EQ,
             FREE_CAPACITY_OK);
-  /* Ring wrap does not change the oldest queued cell. */
+  tt_int_op(free_capacity_queue_push(&circ[1], 4096, 1, &next), OP_EQ,
+            FREE_CAPACITY_OK);
+  tt_int_op(free_capacity_queue_push(&circ[1], 2054, 2, &later), OP_EQ,
+            FREE_CAPACITY_OK);
+  tt_int_op(free_capacity_queue_remove(&circ[1], &next, 3), OP_EQ,
+            FREE_CAPACITY_OK);
+  tt_uint_op(owner.queued_bytes, OP_EQ, 4107);
+  tt_uint_op(circ[1].queue_count, OP_EQ, 2);
+  tt_int_op(free_capacity_queue_remove(&circ[1], &next, 4), OP_EQ,
+            FREE_CAPACITY_BAD_STATE);
+  tt_uint_op(owner.queued_bytes, OP_EQ, 4107);
   tt_int_op(free_capacity_check(&circ[1], 4999), OP_EQ, FREE_CAPACITY_OK);
-  tt_int_op(free_capacity_check(&circ[1], 5000), OP_EQ, FREE_CAPACITY_CLOSE);
+  tt_int_op(free_capacity_queue_remove(&circ[1], &previous, 4999), OP_EQ,
+            FREE_CAPACITY_OK);
+  tt_uint_op(owner.queued_bytes, OP_EQ, 2054);
+  tt_int_op(free_capacity_check(&circ[1], 5001), OP_EQ, FREE_CAPACITY_OK);
+  tt_int_op(free_capacity_check(&circ[1], 5002), OP_EQ, FREE_CAPACITY_CLOSE);
   free_capacity_release(&circ[1]);
   tt_uint_op(owner.queued_bytes, OP_EQ, 0);
-  /* Reserve actual allocation capacity, not only payload; checked arithmetic
-   * rejects an oversized allocation without modifying either total. */
-  tt_int_op(free_capacity_queue_push(&circ[2], UINT32_MAX, 5000), OP_EQ,
+  tt_int_op(free_capacity_queue_push(&circ[2], UINT32_MAX, 5002, &fresh), OP_EQ,
             FREE_CAPACITY_CLOSE);
   tt_uint_op(owner.queued_bytes, OP_EQ, 0);
   tt_int_op(free_capacity_queue_push(&circ[3], FREE_CAPACITY_QUEUE_BYTES,
-                                   5000), OP_EQ, FREE_CAPACITY_OK);
-  tt_int_op(free_capacity_queue_push(&circ[4], 1, 5000), OP_EQ,
+                                   5002, &fresh), OP_EQ, FREE_CAPACITY_OK);
+  tt_int_op(free_capacity_queue_push(&circ[4], 1, 5002, &stale), OP_EQ,
             FREE_CAPACITY_CLOSE);
   tt_uint_op(circ[4].queue_count, OP_EQ, 0);
-  tt_int_op(free_capacity_queue_pop(&circ[3], 5000), OP_EQ, FREE_CAPACITY_OK);
-  tt_uint_op(owner.queued_bytes, OP_EQ, 0);
-  tt_int_op(free_capacity_queue_push(&circ[5], 2053, 5000), OP_EQ,
+  tt_int_op(free_capacity_queue_remove(&circ[3], &fresh, 5002), OP_EQ,
             FREE_CAPACITY_OK);
+  tt_uint_op(owner.queued_bytes, OP_EQ, 0);
+  tt_int_op(free_capacity_queue_push(&circ[5], 2053, 5002, &stale), OP_EQ,
+            FREE_CAPACITY_OK);
+  free_capacity_release(&circ[5]);
+  tt_int_op(free_capacity_admit(&conn, &circ[5], 5002), OP_EQ,
+            FREE_CAPACITY_OK);
+  tt_int_op(free_capacity_queue_push(&circ[5], 4096, 5002, &fresh), OP_EQ,
+            FREE_CAPACITY_OK);
+  tt_int_op(free_capacity_queue_remove(&circ[5], &stale, 100000), OP_EQ,
+            FREE_CAPACITY_BAD_STATE);
+  tt_u64_op(owner.last_ms, OP_EQ, 5002);
+  tt_uint_op(owner.queued_bytes, OP_EQ, 4096);
+  foreign = fresh;
+  foreign.owner = &foreign_owner;
+  tt_int_op(free_capacity_queue_remove(&circ[5], &foreign, 5002), OP_EQ,
+            FREE_CAPACITY_BAD_STATE);
+  tt_int_op(free_capacity_queue_remove(&circ[5], &fresh, 5002), OP_EQ,
+            FREE_CAPACITY_OK);
+  tt_uint_op(owner.queued_bytes, OP_EQ, 0);
  done:
   for (unsigned i = 0; i < 8; ++i)
     free_capacity_release(&circ[i]);
+}
+
+static void
+test_free_capacity_queue_ticket_exhaustion(void *arg)
+{
+  free_capacity_t owner;
+  free_capacity_conn_t conn;
+  free_capacity_circuit_t circ = {0};
+  free_capacity_queue_ticket_t ticket;
+  (void)arg;
+  free_capacity_init(&owner, 0);
+  tt_int_op(free_capacity_conn_init(&conn, &owner, 0), OP_EQ,
+            FREE_CAPACITY_OK);
+  tt_int_op(free_capacity_admit(&conn, &circ, 0), OP_EQ, FREE_CAPACITY_OK);
+  owner.last_queue_ticket = UINT64_MAX - 1;
+  tt_int_op(free_capacity_queue_push(&circ, 2053, 0, &ticket), OP_EQ,
+            FREE_CAPACITY_OK);
+  tt_u64_op(ticket.serial, OP_EQ, UINT64_MAX);
+  tt_int_op(free_capacity_queue_remove(&circ, &ticket, 0), OP_EQ,
+            FREE_CAPACITY_OK);
+  tt_int_op(free_capacity_queue_push(&circ, 2053, 0, &ticket), OP_EQ,
+            FREE_CAPACITY_CLOSE);
+  tt_u64_op(ticket.serial, OP_EQ, 0);
+  tt_uint_op(owner.queued_bytes, OP_EQ, 0);
+  tt_uint_op(circ.queue_count, OP_EQ, 0);
+ done:
+  free_capacity_release(&circ);
 }
 
 static void
@@ -348,6 +407,7 @@ struct testcase_t free_capacity_tests[] = {
   FREE_TEST(admission),
   FREE_TEST(live_bound),
   FREE_TEST(queue),
+  FREE_TEST(queue_ticket_exhaustion),
   FREE_TEST(clock_and_age),
   FREE_TEST(two_links),
   END_OF_TESTCASES

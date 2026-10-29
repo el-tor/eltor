@@ -142,14 +142,17 @@ free_capacity_check(free_capacity_circuit_t *circ, uint64_t now_ms)
   r = advance_owner(circ->owner, now_ms);
   if (r != FREE_CAPACITY_OK)
     return r;
-  if (circ->closing ||
-      now_ms - circ->admitted_ms >= FREE_CAPACITY_LIFETIME_MS ||
-      (circ->queue_count &&
-       now_ms - circ->queue_time[circ->queue_head] >=
-       FREE_CAPACITY_QUEUE_AGE_MS)) {
+  if (now_ms - circ->admitted_ms >= FREE_CAPACITY_LIFETIME_MS)
     circ->closing = true;
-    return FREE_CAPACITY_CLOSE;
+  /* The two directional FIFOs can flush in different orders. A bounded scan
+   * of outstanding tickets finds the actual oldest allocation in either. */
+  for (unsigned i = 0; i < FREE_CAPACITY_QUEUE_CELLS; ++i) {
+    if (circ->queue_ticket[i] &&
+        now_ms - circ->queue_time[i] >= FREE_CAPACITY_QUEUE_AGE_MS)
+      circ->closing = true;
   }
+  if (circ->closing)
+    return FREE_CAPACITY_CLOSE;
   bucket_refill(&circ->cells, now_ms);
   return FREE_CAPACITY_OK;
 }
@@ -234,44 +237,71 @@ free_capacity_send(free_capacity_circuit_t *circ, free_capacity_conn_t *conn,
 
 free_capacity_result_t
 free_capacity_queue_push(free_capacity_circuit_t *circ, uint32_t bytes,
-                         uint64_t now_ms)
+                         uint64_t now_ms,
+                         free_capacity_queue_ticket_t *ticket_out)
 {
-  free_capacity_result_t r = free_capacity_check(circ, now_ms);
+  free_capacity_result_t r;
   free_capacity_t *owner;
   unsigned index;
+  if (!ticket_out)
+    return FREE_CAPACITY_BAD_STATE;
+  memset(ticket_out, 0, sizeof(*ticket_out));
+  r = free_capacity_check(circ, now_ms);
   if (r != FREE_CAPACITY_OK)
     return r;
   if (!bytes)
     return FREE_CAPACITY_BAD_STATE;
   owner = circ->owner;
   if (circ->queue_count == FREE_CAPACITY_QUEUE_CELLS ||
-      bytes > FREE_CAPACITY_QUEUE_BYTES - owner->queued_bytes) {
+      bytes > FREE_CAPACITY_QUEUE_BYTES - owner->queued_bytes ||
+      owner->last_queue_ticket == UINT64_MAX) {
     circ->closing = true;
     return FREE_CAPACITY_CLOSE;
   }
-  index = (circ->queue_head + circ->queue_count) % FREE_CAPACITY_QUEUE_CELLS;
+  for (index = 0; index < FREE_CAPACITY_QUEUE_CELLS; ++index)
+    if (!circ->queue_ticket[index])
+      break;
+  /* The fixed count and slots are changed together under the caller's lock. */
+  if (index == FREE_CAPACITY_QUEUE_CELLS)
+    return FREE_CAPACITY_BAD_STATE;
   circ->queue_time[index] = now_ms;
   circ->queue_size[index] = bytes;
+  circ->queue_ticket[index] = ++owner->last_queue_ticket;
   ++circ->queue_count;
   circ->queued_bytes += bytes;
   owner->queued_bytes += bytes;
+  ticket_out->owner = owner;
+  ticket_out->serial = circ->queue_ticket[index];
   return FREE_CAPACITY_OK;
 }
 
 free_capacity_result_t
-free_capacity_queue_pop(free_capacity_circuit_t *circ, uint64_t now_ms)
+free_capacity_queue_remove(free_capacity_circuit_t *circ,
+                           const free_capacity_queue_ticket_t *ticket,
+                           uint64_t now_ms)
 {
-  free_capacity_result_t r = free_capacity_check(circ, now_ms);
+  free_capacity_result_t r;
+  unsigned index;
   uint32_t bytes;
+  if (!circ || !ticket || !ticket->serial || !ticket->owner ||
+      circ->owner != ticket->owner)
+    return FREE_CAPACITY_BAD_STATE;
+  /* Match before advancing the clock: an old callback must not mutate the
+   * clock, close a reused circuit, or release another cell's allocation. */
+  for (index = 0; index < FREE_CAPACITY_QUEUE_CELLS; ++index)
+    if (circ->queue_ticket[index] == ticket->serial)
+      break;
+  if (index == FREE_CAPACITY_QUEUE_CELLS)
+    return FREE_CAPACITY_BAD_STATE;
+  r = free_capacity_check(circ, now_ms);
   if (r != FREE_CAPACITY_OK)
     return r;
-  if (!circ->queue_count)
-    return FREE_CAPACITY_BAD_STATE;
-  bytes = circ->queue_size[circ->queue_head];
+  bytes = circ->queue_size[index];
   circ->owner->queued_bytes -= bytes;
   circ->queued_bytes -= bytes;
-  circ->queue_size[circ->queue_head] = 0;
-  circ->queue_head = (circ->queue_head + 1) % FREE_CAPACITY_QUEUE_CELLS;
+  circ->queue_ticket[index] = 0;
+  circ->queue_size[index] = 0;
+  circ->queue_time[index] = 0;
   --circ->queue_count;
   return FREE_CAPACITY_OK;
 }
