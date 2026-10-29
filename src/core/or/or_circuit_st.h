@@ -25,6 +25,7 @@ struct or_circuit_t {
   bool payment_export_requested;
   /** Circuit-local paid-hop keys; never daemon/control/wallet material. */
   payment_profile_keys_t *payment_keys;
+  struct payment_circuit_t *payment_profile;
 
   /** Pointer to an entry on the onion queue, if this circuit is waiting for a
    * chance to give an onionskin to a cpuworker. Used only in onion.c */

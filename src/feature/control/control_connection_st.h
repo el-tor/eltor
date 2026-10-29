@@ -19,6 +19,11 @@
 struct control_connection_t {
   connection_t base_;
 
+  /* Internal authority marker for inherited local controller descriptors. */
+  bool payment_local_fd;
+  /* Conservative unsent payment-event bound, cleared only on full drain. */
+  uint16_t payment_events_queued;
+
   uint64_t event_mask; /**< Bitfield: which events does this controller
                         * care about?
                         * EVENT_MAX_ is >31, so we need a 64 bit mask */

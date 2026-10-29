@@ -50,6 +50,7 @@
  * logic, which was originally circuit-focused.
  **/
 #include "feature/payment/relay_payments.h"
+#include "feature/payment/payment_circuit.h"
 #define CIRCUITLIST_PRIVATE
 #define OCIRC_EVENT_PRIVATE
 #include "lib/cc/torint.h"  /* TOR_PRIuSZ */
@@ -1263,6 +1264,7 @@ circuit_free_(circuit_t *circ)
 
     should_free = (ocirc->workqueue_entry == NULL);
 
+    payment_circuit_free(ocirc);
     payment_profile_keys_free(ocirc->payment_keys);
     relay_crypto_clear(&ocirc->crypto);
 
@@ -2291,6 +2293,7 @@ circuit_mark_for_close_, (circuit_t *circ, int reason, int line,
     }
   } else {
     or_circuit_t *or_circ = TO_OR_CIRCUIT(circ);
+    payment_circuit_close(or_circ);
     payment_profile_keys_free(or_circ->payment_keys);
     or_circ->payment_export_requested = false;
   }

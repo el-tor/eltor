@@ -78,6 +78,8 @@
 #include "core/or/policies.h"
 #include "core/or/reasons.h"
 #include "core/or/relay.h"
+#include "feature/payment/payment_circuit.h"
+#include "lib/time/compat_time.h"
 #include "core/crypto/relay_crypto.h"
 #include "feature/rend/rendcommon.h"
 #include "feature/nodelist/describe.h"
@@ -606,6 +608,12 @@ relay_send_command_from_edge_,(streamid_t stream_id, circuit_t *orig_circ,
     return -1;
   }
 
+  if (!CIRCUIT_IS_ORIGIN(circ) && relay_command == RELAY_COMMAND_DATA &&
+      payment_circuit_present(TO_OR_CIRCUIT(circ))) {
+    payment_circuit_tick(TO_OR_CIRCUIT(circ), monotime_absolute_msec());
+    if (!payment_circuit_paid_active(TO_OR_CIRCUIT(circ))) return -1;
+  }
+
   /* XXXX NM Split this function into a separate versions per circuit type? */
 
   tor_assert(circ);
@@ -672,6 +680,8 @@ relay_send_command_from_edge_,(streamid_t stream_id, circuit_t *orig_circ,
   if (cell_direction == CELL_DIRECTION_OUT) {
     origin_circuit_t *origin_circ = TO_ORIGIN_CIRCUIT(circ);
     if (origin_circ->remaining_relay_early_cells > 0 &&
+        !(relay_command >= RELAY_COMMAND_PAYMENT_RENEW &&
+          relay_command <= RELAY_COMMAND_PAYMENT_STARTED_STATUS) &&
         (relay_command == RELAY_COMMAND_EXTEND ||
          relay_command == RELAY_COMMAND_EXTEND2 ||
          cpath_layer != origin_circ->cpath)) {
@@ -1652,8 +1662,31 @@ handle_relay_msg(const relay_msg_t *msg, circuit_t *circ,
     return 0;
   }
 
+  if (!CIRCUIT_IS_ORIGIN(circ) &&
+      payment_circuit_present(TO_OR_CIRCUIT(circ)) &&
+      !(msg->command >= RELAY_COMMAND_PAYMENT_RENEW &&
+        msg->command <= RELAY_COMMAND_PAYMENT_STARTED_STATUS)) {
+    payment_circuit_tick(TO_OR_CIRCUIT(circ), monotime_absolute_msec());
+    if (circ->marked_for_close) return 0;
+    if (!payment_circuit_paid_active(TO_OR_CIRCUIT(circ)) &&
+        (msg->command == RELAY_COMMAND_DATA ||
+         msg->command == RELAY_COMMAND_BEGIN ||
+         msg->command == RELAY_COMMAND_BEGIN_DIR ||
+         msg->command == RELAY_COMMAND_RESOLVE))
+      return 0;
+  }
+
   /* Now handle all the other commands */
   switch (msg->command) {
+    case RELAY_COMMAND_PAYMENT_RENEW:
+    case RELAY_COMMAND_PAYMENT_RENEWED:
+    case RELAY_COMMAND_PAYMENT_COMMIT:
+    case RELAY_COMMAND_PAYMENT_COMMITTED:
+    case RELAY_COMMAND_PAYMENT_START_STATUS:
+    case RELAY_COMMAND_PAYMENT_STARTED_STATUS:
+      if (CIRCUIT_IS_ORIGIN(circ) || layer_hint) return 0;
+      return payment_circuit_handle_relay(TO_OR_CIRCUIT(circ), msg,
+                                          monotime_absolute_msec());
     case RELAY_COMMAND_CONFLUX_LINK:
       conflux_process_link(circ, msg);
       return 0;

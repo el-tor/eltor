@@ -165,6 +165,8 @@ extern struct testcase_t payment_profile_tests[];
 extern struct testcase_t free_capacity_tests[];
 extern struct testcase_t protocol_budget_tests[];
 extern struct testcase_t payment_schedule_tests[];
+extern struct testcase_t payment_circuit_tests[];
+extern struct testcase_t control_payment_tests[];
 extern struct testcase_t oom_tests[];
 extern struct testcase_t oos_tests[];
 extern struct testcase_t options_tests[];

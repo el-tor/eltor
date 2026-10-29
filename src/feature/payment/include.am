@@ -19,3 +19,6 @@ LIBTOR_APP_A_SOURCES += src/feature/payment/protocol_budget.c
 noinst_HEADERS += src/feature/payment/protocol_budget.h
 LIBTOR_APP_A_SOURCES += src/feature/payment/payment_schedule.c
 noinst_HEADERS += src/feature/payment/payment_schedule.h
+
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_circuit.c
+noinst_HEADERS += src/feature/payment/payment_circuit.h
