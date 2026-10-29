@@ -594,6 +594,18 @@ test_payment_profile_initial(void *arg)
   tt_int_op(payment_profile_decode(&m, PAYMENT_PROFILE_STARTED_STATUS, wire,
                                    463, keys.start_reply, keys.binding),
             OP_EQ, 0);
+  /* max_age=65000 can terminate ACTIVE round two before its nominal end. */
+  m.u.started.state = 3;
+  m.u.started.round = 2;
+  m.u.started.elapsed_ms = 61000;
+  m.u.started.round_remaining_ms = 59000;
+  m.u.started.enforcement_remaining_ms = 4000;
+  tt_int_op(payment_profile_encode(wire,463,&m,keys.start_reply,keys.binding),OP_EQ,0);
+  tt_int_op(payment_profile_decode(&m,PAYMENT_PROFILE_STARTED_STATUS,wire,463,
+                                   keys.start_reply,keys.binding),OP_EQ,0);
+  m.u.started.enforcement_remaining_ms = 119001;
+  tt_int_op(payment_profile_encode(wire,463,&m,keys.start_reply,keys.binding),OP_EQ,
+            PAYMENT_PROFILE_ERR_BODY);
  done:
   payment_profile_keys_clear(&keys);
 }
@@ -630,6 +642,37 @@ test_payment_profile_export_lifetime(void *arg)
   payment_profile_keys_free(keys);
 }
 
+static void
+test_payment_profile_capabilities(void *arg)
+{
+  uint8_t terms[55], expected[55];
+  const char *start[] = {"1", "226", "227", "228", "229", fixtures[0].terms};
+  const char *renew[] = {"1", "224", "225", fixtures[0].terms};
+  const char *free_cap[] = {"1", "2", "128", "600000"};
+  const char *future[] = {"2", "future"};
+  (void)arg;
+  tt_int_op(base16_decode((char *)expected,55,fixtures[0].terms,110), OP_EQ,55);
+  tt_int_op(payment_profile_parse_capability(terms,PAYMENT_CAPABILITY_START,6,start),OP_EQ,1);
+  tt_mem_op(terms,OP_EQ,expected,55);
+  tt_int_op(payment_profile_parse_capability(terms,PAYMENT_CAPABILITY_RENEW,4,renew),OP_EQ,1);
+  tt_mem_op(terms,OP_EQ,expected,55);
+  tt_int_op(payment_profile_parse_capability(terms,PAYMENT_CAPABILITY_FREE,4,free_cap),OP_EQ,1);
+  tt_int_op(payment_profile_parse_capability(terms,PAYMENT_CAPABILITY_START,2,future),OP_EQ,0);
+  tt_assert(fast_mem_is_zero((char *)terms,55));
+  start[1] = "0226";
+  tt_int_op(payment_profile_parse_capability(terms,PAYMENT_CAPABILITY_START,6,start),OP_EQ,-1);
+  start[1] = "226";
+  start[0] = "01";
+  tt_int_op(payment_profile_parse_capability(terms,PAYMENT_CAPABILITY_START,6,start),OP_EQ,-1);
+  start[0] = "1";
+  start[5] = "00";
+  tt_int_op(payment_profile_parse_capability(terms,PAYMENT_CAPABILITY_START,6,start),OP_EQ,-1);
+  tt_int_op(payment_profile_parse_capability(terms,PAYMENT_CAPABILITY_RENEW,3,renew),OP_EQ,-1);
+  free_cap[2] = "129";
+  tt_int_op(payment_profile_parse_capability(terms,PAYMENT_CAPABILITY_FREE,4,free_cap),OP_EQ,-1);
+ done: ;
+}
+
 #define PROFILE_TEST(name) \
   { #name, test_payment_profile_##name, 0, NULL, NULL }
 struct testcase_t payment_profile_tests[] = {
@@ -639,5 +682,6 @@ struct testcase_t payment_profile_tests[] = {
   PROFILE_TEST(policy),
   PROFILE_TEST(initial),
   PROFILE_TEST(export_lifetime),
+  PROFILE_TEST(capabilities),
   END_OF_TESTCASES
 };

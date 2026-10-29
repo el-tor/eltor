@@ -407,10 +407,10 @@ started_valid(const payment_profile_started_t *s)
         s->round_remaining_ms != PAYMENT_PROFILE_ROUND_MS-
                                  s->elapsed_ms%PAYMENT_PROFILE_ROUND_MS)
       return PAYMENT_PROFILE_ERR_BODY;
-    if (s->state == 3 &&
-        (s->enforcement_remaining_ms < s->round_remaining_ms ||
-         s->enforcement_remaining_ms-s->round_remaining_ms >
-           PAYMENT_PROFILE_ROUND_MS))
+    /* An accepted hard age may end before the nominal round. The origin
+     * validates the tighter bound against its pinned policy context. */
+    if (s->state == 3 && s->enforcement_remaining_ms >
+        s->round_remaining_ms + PAYMENT_PROFILE_ROUND_MS)
       return PAYMENT_PROFILE_ERR_BODY;
     if (s->state == 4 &&
         s->enforcement_remaining_ms > s->round_remaining_ms)
@@ -622,4 +622,47 @@ payment_profile_encode(uint8_t *out, size_t len,
   memwipe(&checked, 0, sizeof(checked));
   memwipe(w, 0, sizeof(w));
   return r;
+}
+
+int
+payment_profile_parse_capability(uint8_t terms[55],
+                                 payment_capability_kind_t kind,
+                                 int argc, const char *const *argv)
+{
+  uint8_t decoded[55];
+  payment_profile_policy_t policy;
+  if (!terms) return -1;
+  memset(terms, 0, 55);
+  if (argc < 1 || !argv || !argv[0] || !argv[0][0]) return -1;
+  if (argv[0][0] == '0' && argv[0][1]) return -1;
+  for (const char *p = argv[0]; *p; ++p)
+    if (*p < '0' || *p > '9') return -1;
+  if (strcmp(argv[0], "1")) return 0;
+  if (kind == PAYMENT_CAPABILITY_FREE) {
+    return argc == 4 && !strcmp(argv[1], "2") &&
+      !strcmp(argv[2], "128") && !strcmp(argv[3], "600000") ? 1 : -1;
+  }
+  const char *hex;
+  if (kind == PAYMENT_CAPABILITY_START) {
+    if (argc != 6 || strcmp(argv[1], "226") || strcmp(argv[2], "227") ||
+        strcmp(argv[3], "228") || strcmp(argv[4], "229")) return -1;
+    hex = argv[5];
+  } else if (kind == PAYMENT_CAPABILITY_RENEW) {
+    if (argc != 4 || strcmp(argv[1], "224") || strcmp(argv[2], "225"))
+      return -1;
+    hex = argv[3];
+  } else return -1;
+  if (strlen(hex) != 110) return -1;
+  for (size_t i = 0; i < 110; ++i) {
+    unsigned value;
+    if (hex[i] >= '0' && hex[i] <= '9') value = hex[i] - '0';
+    else if (hex[i] >= 'a' && hex[i] <= 'f') value = hex[i] - 'a' + 10;
+    else return -1;
+    if (!(i % 2)) decoded[i/2] = (uint8_t)(value << 4);
+    else decoded[i/2] |= (uint8_t)value;
+  }
+  if (payment_profile_policy_decode(&policy, decoded, sizeof(decoded)) != 0)
+    return -1;
+  memcpy(terms, decoded, sizeof(decoded));
+  return 1;
 }

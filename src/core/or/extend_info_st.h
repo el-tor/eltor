@@ -48,6 +48,12 @@ struct extend_info_t {
    * and we intend to use it.
    */
   bool enable_cgo;
+  /* Exact signed full-descriptor snapshot. Absent for microdescriptor-only
+   * paths; these flags do not themselves negotiate/admit any capacity. */
+  uint8_t payment_profile_terms[55];
+  bool payment_start_v1;
+  bool payment_renew_v1;
+  bool payment_free_v1;
 };
 
 #endif /* !defined(EXTEND_INFO_ST_H) */

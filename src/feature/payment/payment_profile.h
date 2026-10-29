@@ -172,4 +172,16 @@ int payment_profile_renew_check(const payment_profile_renew_t *request,
                                const uint8_t terms[32],
                                const uint8_t parent[32]);
 
+typedef enum {
+  PAYMENT_CAPABILITY_START,
+  PAYMENT_CAPABILITY_RENEW,
+  PAYMENT_CAPABILITY_FREE
+} payment_capability_kind_t;
+/* Parse signed-descriptor token arguments. 1 = understood, 0 = unknown version,
+ * -1 = malformed. No capability is usable until descriptor signatures pass.
+ * FREE writes zero terms; paid capabilities preserve the exact 55 bytes. */
+int payment_profile_parse_capability(uint8_t terms[55],
+                                    payment_capability_kind_t kind,
+                                    int argc, const char *const *argv);
+
 #endif /* !defined(TOR_PAYMENT_PROFILE_H) */

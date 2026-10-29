@@ -131,6 +131,12 @@ struct routerinfo_t {
   int PaymentInvervalRounds;
   int PaymentHandshakeFee;
   int PaymentBandwithQuota;
+  /* Trusted only after the enclosing descriptor signature is verified.
+   * Renewal requires start and matching exact terms; no microdesc fallback. */
+  uint8_t payment_profile_terms[55];
+  bool payment_start_v1;
+  bool payment_renew_v1;
+  bool payment_free_v1;
 
 };
 

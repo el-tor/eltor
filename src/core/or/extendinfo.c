@@ -164,6 +164,12 @@ extend_info_from_node(const node_t *node, int for_direct_connect,
                            ap.port,
                            &node->ri->pv,
                            for_exit);
+    if (info && info->supports_ntor_v3) {
+      memcpy(info->payment_profile_terms, node->ri->payment_profile_terms, 55);
+      info->payment_start_v1 = node->ri->payment_start_v1;
+      info->payment_renew_v1 = node->ri->payment_renew_v1;
+      info->payment_free_v1 = node->ri->payment_free_v1;
+    }
   } else if (valid_addr && node->rs && node->md) {
     info = extend_info_new(node->rs->nickname,
                            node->identity,

@@ -40,6 +40,7 @@
 #include "feature/relay/relay_find_addr.h"
 #include "feature/relay/relay_periodic.h"
 #include "feature/relay/router.h"
+#include "feature/payment/payment_profile.h"
 #include "feature/relay/routerkeys.h"
 #include "feature/relay/routermode.h"
 #include "feature/relay/selftest.h"
@@ -3143,6 +3144,28 @@ router_dump_router_to_string(routerinfo_t *router,
                            family_cert_base64);
     tor_cert_free(family_cert);
   } SMARTLIST_FOREACH_END(k_family_id);
+
+  /* Flags remain false until the complete runtime profile is enabled. Keep
+   * the exact policy inside the signed body, never an unsigned hint. */
+  if (router->payment_renew_v1 && !router->payment_start_v1)
+    goto err;
+  if (router->payment_start_v1) {
+    payment_profile_policy_t policy;
+    char terms[111];
+    if (payment_profile_policy_decode(&policy, router->payment_profile_terms,
+                                       55) != 0)
+      goto err;
+    base16_encode(terms, sizeof(terms),
+                  (const char *)router->payment_profile_terms, 55);
+    tor_strlower(terms);
+    smartlist_add_asprintf(chunks,
+                          "eltor-payment-start 1 226 227 228 229 %s\n", terms);
+    if (router->payment_renew_v1)
+      smartlist_add_asprintf(chunks,
+                            "eltor-payment-renew 1 224 225 %s\n", terms);
+  }
+  if (router->payment_free_v1)
+    smartlist_add_strdup(chunks, "eltor-free-capacity 1 2 128 600000\n");
 
   if (options->ContactInfo && strlen(options->ContactInfo)) {
     const char *ci = options->ContactInfo;
