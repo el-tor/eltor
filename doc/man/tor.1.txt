@@ -3829,6 +3829,63 @@ The following options are used for running a testing Tor network.
     testing network: 15000 ms grace, 1800000 ms age, 3 periods, 30000 ms setup,
     and zero fee/quota. No production policy defaults are defined.
 
+The following immutable foundation options lower local aggregate ceilings.
+Every value must be a positive integer no greater than its listed default.
+They share one process owner across circuits, connections and controllers;
+reapplying configuration does not refill buckets or reset live state. Lower
+limits cause bounded refusal and do not change signed per-circuit capability,
+paid terms, free lifetime, per-circuit burst/rate or queue age. These candidate
+defaults remain subject to measurement and the production enablement gate.
+Rates are per second; byte values count actual serialized Tor link bytes.
+
+[[ElTorFoundationMaxCircuits]] **ElTorFoundationMaxCircuits** __Integer__::
+    Maximum live resource-admitted circuit contexts. (Default: 4096)
+
+[[ElTorFoundationAdmissionRate]] **ElTorFoundationAdmissionRate** __Integer__::
+    Process-wide free-resource circuit admissions per second. (Default: 16)
+
+[[ElTorFoundationAdmissionBurst]] **ElTorFoundationAdmissionBurst** __Integer__::
+    Process-wide free-resource admission bucket capacity. (Default: 32)
+
+[[ElTorFoundationConnAdmissionRate]] **ElTorFoundationConnAdmissionRate** __Integer__::
+    Free-resource circuit admissions per OR connection per second. (Default: 4)
+
+[[ElTorFoundationConnAdmissionBurst]] **ElTorFoundationConnAdmissionBurst** __Integer__::
+    Free-resource admission bucket capacity per OR connection. (Default: 8)
+
+[[ElTorFoundationByteRate]] **ElTorFoundationByteRate** __Integer__::
+    Combined received and sent base-resource link bytes per second. (Default: 4194304)
+
+[[ElTorFoundationByteBurst]] **ElTorFoundationByteBurst** __Integer__::
+    Process-wide base-resource byte bucket capacity. (Default: 8388608)
+
+[[ElTorFoundationConnByteRate]] **ElTorFoundationConnByteRate** __Integer__::
+    Base-resource link bytes per OR connection per second. (Default: 1048576)
+
+[[ElTorFoundationConnByteBurst]] **ElTorFoundationConnByteBurst** __Integer__::
+    Base-resource byte bucket capacity per OR connection. (Default: 2097152)
+
+[[ElTorFoundationQueueBytes]] **ElTorFoundationQueueBytes** __Integer__::
+    Combined retained outgoing base-resource and inactive-paid queue bytes. (Default: 8388608)
+
+[[ElTorFoundationMaxSlots]] **ElTorFoundationMaxSlots** __Integer__::
+    Combined shared protocol operations, slots and retained tombstones. (Default: 4096)
+
+[[ElTorFoundationArenaBytes]] **ElTorFoundationArenaBytes** __Integer__::
+    Shared protocol allocation arena size in bytes. (Default: 67108864)
+
+[[ElTorFoundationCryptoRate]] **ElTorFoundationCryptoRate** __Integer__::
+    Expensive protocol and native setup attempts per second. (Default: 256)
+
+[[ElTorFoundationCryptoBurst]] **ElTorFoundationCryptoBurst** __Integer__::
+    Expensive-work attempt bucket capacity. (Default: 512)
+
+[[ElTorFoundationMaxRunning]] **ElTorFoundationMaxRunning** __Integer__::
+    Concurrent expensive protocol and native setup jobs. (Default: 32)
+
+[[ElTorFoundationMaxWaiting]] **ElTorFoundationMaxWaiting** __Integer__::
+    Queued expensive protocol and native setup jobs. (Default: 128)
+
 //Out of order because it logically belongs first in this section.
 [[TestingTorNetwork]] **TestingTorNetwork** **0**|**1**::
     If set to 1, Tor adjusts default values of the configuration options below,

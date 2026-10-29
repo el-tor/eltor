@@ -10,6 +10,7 @@ static struct {
   free_capacity_t free;
   protocol_budget_t protocol;
   protocol_budget_limits_t limits;
+  free_capacity_limits_t free_limits;
   protocol_budget_memory_t baseline;
   bool initialized, configured, exhausted;
   uint32_t operations;
@@ -22,7 +23,8 @@ initialize(void)
   if (resources.initialized)
     return;
   now_ms = monotime_absolute_msec();
-  free_capacity_init(&resources.free, now_ms);
+  (void)free_capacity_init_limits(&resources.free,
+      resources.configured ? &resources.free_limits : NULL, now_ms);
   /* configure() validates a copied profile before accepting it. */
   (void)protocol_budget_init(&resources.protocol,
       resources.configured ? &resources.limits : NULL, now_ms);
@@ -116,6 +118,31 @@ payment_resources_configure(const protocol_budget_limits_t *limits)
       protocol_budget_init(&validation, limits, 0) != PROTOCOL_BUDGET_OK)
     return -1;
   resources.limits = *limits;
+  free_capacity_default_limits(&resources.free_limits);
+  resources.configured = true;
+  return 0;
+}
+
+int
+payment_resources_configure_limits(const free_capacity_limits_t *free_limits,
+    const protocol_budget_limits_t *protocol_limits)
+{
+  free_capacity_t free_validation;
+  protocol_budget_t protocol_validation;
+  if (!free_limits || !protocol_limits ||
+      free_capacity_init_limits(&free_validation, free_limits, 0) < 0 ||
+      protocol_budget_init(&protocol_validation, protocol_limits, 0) !=
+        PROTOCOL_BUDGET_OK) return -1;
+  const free_capacity_limits_t *old_free = resources.initialized ?
+      &resources.free.limits : &resources.free_limits;
+  const protocol_budget_limits_t *old_protocol = resources.initialized ?
+      &resources.protocol.limits : &resources.limits;
+  if (resources.initialized || resources.configured)
+    return memcmp(old_free, free_limits, sizeof(*free_limits)) ||
+           memcmp(old_protocol, protocol_limits, sizeof(*protocol_limits)) ?
+           -1 : 0;
+  resources.free_limits = *free_limits;
+  resources.limits = *protocol_limits;
   resources.configured = true;
   return 0;
 }

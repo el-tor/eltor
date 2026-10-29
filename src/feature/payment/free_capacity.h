@@ -34,7 +34,22 @@ typedef struct free_capacity_bucket_t {
   uint32_t burst;
 } free_capacity_bucket_t;
 
+/* Lower process/link ceilings never change the advertised per-circuit profile. */
+typedef struct free_capacity_limits_t {
+  uint32_t max_circuits;
+  uint32_t admission_rate;
+  uint32_t admission_burst;
+  uint32_t conn_admission_rate;
+  uint32_t conn_admission_burst;
+  uint32_t byte_rate;
+  uint32_t byte_burst;
+  uint32_t conn_byte_rate;
+  uint32_t conn_byte_burst;
+  uint32_t queue_bytes;
+} free_capacity_limits_t;
+
 typedef struct free_capacity_t {
+  free_capacity_limits_t limits;
   free_capacity_bucket_t admissions;
   free_capacity_bucket_t bytes;
   uint64_t last_ms;
@@ -80,6 +95,10 @@ typedef enum free_capacity_result_t {
   FREE_CAPACITY_CLOCK_ERROR
 } free_capacity_result_t;
 
+void free_capacity_default_limits(free_capacity_limits_t *limits);
+/* Validate before clearing owner; invalid input leaves it untouched. */
+int free_capacity_init_limits(free_capacity_t *owner,
+    const free_capacity_limits_t *limits, uint64_t now_ms);
 void free_capacity_init(free_capacity_t *owner, uint64_t now_ms);
 free_capacity_result_t free_capacity_conn_init(free_capacity_conn_t *connection,
                                               free_capacity_t *owner,

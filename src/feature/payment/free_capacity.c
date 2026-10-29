@@ -80,14 +80,64 @@ advance(free_capacity_conn_t *conn, uint64_t now_ms)
 }
 
 void
+free_capacity_default_limits(free_capacity_limits_t *limits)
+{
+  limits->max_circuits = FREE_CAPACITY_MAX_CIRCUITS;
+  limits->admission_rate = FREE_CAPACITY_ADMISSION_RATE;
+  limits->admission_burst = FREE_CAPACITY_ADMISSION_BURST;
+  limits->conn_admission_rate = FREE_CAPACITY_CONN_ADMISSION_RATE;
+  limits->conn_admission_burst = FREE_CAPACITY_CONN_ADMISSION_BURST;
+  limits->byte_rate = FREE_CAPACITY_BYTE_RATE;
+  limits->byte_burst = FREE_CAPACITY_BYTE_BURST;
+  limits->conn_byte_rate = FREE_CAPACITY_CONN_BYTE_RATE;
+  limits->conn_byte_burst = FREE_CAPACITY_CONN_BYTE_BURST;
+  limits->queue_bytes = FREE_CAPACITY_QUEUE_BYTES;
+}
+
+int
+free_capacity_init_limits(free_capacity_t *owner,
+    const free_capacity_limits_t *limits, uint64_t now_ms)
+{
+  free_capacity_limits_t accepted;
+  if (!owner) return -1;
+  if (!limits) {
+    free_capacity_default_limits(&accepted);
+  } else {
+    accepted = *limits;
+  }
+  if (!accepted.max_circuits ||
+      accepted.max_circuits > FREE_CAPACITY_MAX_CIRCUITS) return -1;
+  if (!accepted.admission_rate ||
+      accepted.admission_rate > FREE_CAPACITY_ADMISSION_RATE) return -1;
+  if (!accepted.admission_burst ||
+      accepted.admission_burst > FREE_CAPACITY_ADMISSION_BURST) return -1;
+  if (!accepted.conn_admission_rate ||
+      accepted.conn_admission_rate > FREE_CAPACITY_CONN_ADMISSION_RATE) return -1;
+  if (!accepted.conn_admission_burst ||
+      accepted.conn_admission_burst > FREE_CAPACITY_CONN_ADMISSION_BURST) return -1;
+  if (!accepted.byte_rate ||
+      accepted.byte_rate > FREE_CAPACITY_BYTE_RATE) return -1;
+  if (!accepted.byte_burst ||
+      accepted.byte_burst > FREE_CAPACITY_BYTE_BURST) return -1;
+  if (!accepted.conn_byte_rate ||
+      accepted.conn_byte_rate > FREE_CAPACITY_CONN_BYTE_RATE) return -1;
+  if (!accepted.conn_byte_burst ||
+      accepted.conn_byte_burst > FREE_CAPACITY_CONN_BYTE_BURST) return -1;
+  if (!accepted.queue_bytes ||
+      accepted.queue_bytes > FREE_CAPACITY_QUEUE_BYTES) return -1;
+  memset(owner, 0, sizeof(*owner));
+  owner->limits = accepted;
+  owner->last_ms = now_ms;
+  bucket_init(&owner->admissions, accepted.admission_rate,
+              accepted.admission_burst, now_ms);
+  bucket_init(&owner->bytes, accepted.byte_rate, accepted.byte_burst, now_ms);
+  return 0;
+}
+
+void
 free_capacity_init(free_capacity_t *owner, uint64_t now_ms)
 {
-  memset(owner, 0, sizeof(*owner));
-  owner->last_ms = now_ms;
-  bucket_init(&owner->admissions, FREE_CAPACITY_ADMISSION_RATE,
-              FREE_CAPACITY_ADMISSION_BURST, now_ms);
-  bucket_init(&owner->bytes, FREE_CAPACITY_BYTE_RATE,
-              FREE_CAPACITY_BYTE_BURST, now_ms);
+  (void)free_capacity_init_limits(owner, NULL, now_ms);
 }
 
 free_capacity_result_t
@@ -100,10 +150,10 @@ free_capacity_conn_init(free_capacity_conn_t *conn, free_capacity_t *owner,
     return FREE_CAPACITY_CLOCK_ERROR;
   memset(conn, 0, sizeof(*conn));
   conn->owner = owner;
-  bucket_init(&conn->admissions, FREE_CAPACITY_CONN_ADMISSION_RATE,
-              FREE_CAPACITY_CONN_ADMISSION_BURST, now_ms);
-  bucket_init(&conn->bytes, FREE_CAPACITY_CONN_BYTE_RATE,
-              FREE_CAPACITY_CONN_BYTE_BURST, now_ms);
+  bucket_init(&conn->admissions, owner->limits.conn_admission_rate,
+              owner->limits.conn_admission_burst, now_ms);
+  bucket_init(&conn->bytes, owner->limits.conn_byte_rate,
+              owner->limits.conn_byte_burst, now_ms);
   return advance(conn, now_ms);
 }
 
@@ -117,7 +167,7 @@ free_capacity_admit(free_capacity_conn_t *conn,
   r = advance(conn, now_ms);
   if (r != FREE_CAPACITY_OK)
     return r;
-  if (conn->owner->live_circuits >= FREE_CAPACITY_MAX_CIRCUITS ||
+  if (conn->owner->live_circuits >= conn->owner->limits.max_circuits ||
       !bucket_fits(&conn->owner->admissions, 1) ||
       !bucket_fits(&conn->admissions, 1))
     return FREE_CAPACITY_REFUSE;
@@ -266,7 +316,7 @@ queue_push(free_capacity_circuit_t *circ, uint32_t bytes,
     return FREE_CAPACITY_BAD_STATE;
   owner = circ->owner;
   if (circ->queue_count == FREE_CAPACITY_QUEUE_CELLS ||
-      bytes > FREE_CAPACITY_QUEUE_BYTES - owner->queued_bytes ||
+      bytes > owner->limits.queue_bytes - owner->queued_bytes ||
       owner->last_queue_ticket == UINT64_MAX) {
     circ->closing = true;
     return FREE_CAPACITY_CLOSE;

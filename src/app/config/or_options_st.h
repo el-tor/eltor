@@ -875,6 +875,24 @@ struct or_options_t {
    * NULL selects the zero-price candidate only on an isolated test network. */
   char *ElTorFoundationTerms;
 
+  /** Immutable lower aggregate ceilings; never change signed per-circuit caps. */
+  int ElTorFoundationMaxCircuits;
+  int ElTorFoundationAdmissionRate;
+  int ElTorFoundationAdmissionBurst;
+  int ElTorFoundationConnAdmissionRate;
+  int ElTorFoundationConnAdmissionBurst;
+  int ElTorFoundationByteRate;
+  int ElTorFoundationByteBurst;
+  int ElTorFoundationConnByteRate;
+  int ElTorFoundationConnByteBurst;
+  int ElTorFoundationQueueBytes;
+  int ElTorFoundationMaxSlots;
+  int ElTorFoundationArenaBytes;
+  int ElTorFoundationCryptoRate;
+  int ElTorFoundationCryptoBurst;
+  int ElTorFoundationMaxRunning;
+  int ElTorFoundationMaxWaiting;
+
   /** Enable CONN_BW events.  Only altered on testing networks. */
   int TestingEnableConnBwEvent;
 

@@ -27,6 +27,10 @@ uint32_t payment_resources_operations_used(void);
 /* Configure smaller protocol ceilings before the first owner initialization.
  * Returns -1 after initialization or for any invalid/enlarged profile value. */
 int payment_resources_configure(const protocol_budget_limits_t *limits);
+/* Immutable operator configuration. Reapplying identical values is a no-op,
+ * including after initialization: buckets, counters and receipts never reset. */
+int payment_resources_configure_limits(const free_capacity_limits_t *free_limits,
+    const protocol_budget_limits_t *protocol_limits);
 /* Process shutdown only, after all circuit/control reservations are released.
  * Refuse to reset live resources. Return -1 if a caller still owns anything. */
 int payment_resources_free_all(void);
