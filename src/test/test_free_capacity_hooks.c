@@ -8,6 +8,7 @@
 #include "core/or/or.h"
 #include "feature/payment/free_capacity_hooks.h"
 #include "feature/payment/payment_resources.h"
+#include "feature/payment/payment_circuit.h"
 #include "core/or/channel.h"
 #include "core/or/channeltls.h"
 #include "core/or/circuitlist.h"
@@ -26,6 +27,12 @@
 #include "test/test.h"
 
 static bool paid_active;
+static bool
+mock_paid_bytes(or_circuit_t *circ, uint32_t bytes, uint64_t now_ms)
+{
+  (void)circ; (void)bytes; (void)now_ms;
+  return true; /* These tests isolate scheduling; financial tests use real keys. */
+}
 static bool
 mock_paid_active(const circuit_t *circ)
 {
@@ -87,6 +94,7 @@ static void
 test_free_hooks_send_and_paid(void *arg)
 {
   MOCK(free_capacity_paid_data_active, mock_paid_active);
+  MOCK(payment_circuit_account_bytes, mock_paid_bytes);
   paid_active = true;
   or_circuit_t *circ = NULL;
   or_connection_t previous = {0}, next = {0};
@@ -131,6 +139,7 @@ test_free_hooks_send_and_paid(void *arg)
   timers_shutdown();
   monotime_disable_test_mocking();
   UNMOCK(free_capacity_paid_data_active);
+  UNMOCK(payment_circuit_account_bytes);
 }
 
 static void
@@ -349,6 +358,7 @@ test_free_hooks_paid_grace_fifo(void *arg)
        scheduler_channel_has_waiting_cells_mock);
   MOCK(scheduler_release_channel, scheduler_release_channel_mock);
   MOCK(free_capacity_paid_data_active, mock_paid_active);
+  MOCK(payment_circuit_account_bytes, mock_paid_bytes);
   paid_active = true;
   monotime_enable_test_mocking();
   monotime_set_mock_time_nsec(INT64_C(1000000000));
@@ -436,6 +446,7 @@ test_free_hooks_paid_grace_fifo(void *arg)
   UNMOCK(scheduler_channel_has_waiting_cells);
   UNMOCK(scheduler_release_channel);
   UNMOCK(free_capacity_paid_data_active);
+  UNMOCK(payment_circuit_account_bytes);
 }
 
 static void
@@ -446,6 +457,7 @@ paid_grace_reject(bool age)
   cell_t cell = { .command = CELL_RELAY };
   (void)age;
   MOCK(free_capacity_paid_data_active, mock_paid_active);
+  MOCK(payment_circuit_account_bytes, mock_paid_bytes);
   paid_active = true;
   monotime_enable_test_mocking();
   monotime_set_mock_time_nsec(INT64_C(1000000000));
@@ -482,6 +494,7 @@ paid_grace_reject(bool age)
   (void)payment_resources_free_all();
   timers_shutdown(); monotime_disable_test_mocking();
   UNMOCK(free_capacity_paid_data_active);
+  UNMOCK(payment_circuit_account_bytes);
 }
 static void
 test_free_hooks_paid_grace_overflow(void *arg)

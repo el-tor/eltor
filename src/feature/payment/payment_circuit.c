@@ -36,6 +36,7 @@ struct payment_circuit_t {
   payment_schedule_t schedule;
   protocol_budget_memory_t memory;
   uint64_t revision, commit_ms, query_last_ms;
+  uint64_t quota_round, quota_used;
   uint8_t terms[32], initial_digest[32], binding[32];
   payment_circuit_charge_t fee;
   payment_allocation_t initial, active, next_allocation;
@@ -187,8 +188,13 @@ observe_schedule(payment_circuit_t *pc, payment_schedule_phase_t old_phase,
                  uint64_t old_round, uint64_t old_period)
 {
   consume_charges(pc);
-  if (pc->schedule.phase == PAYMENT_SCHEDULE_ACTIVE)
+  if (pc->schedule.phase == PAYMENT_SCHEDULE_ACTIVE) {
+    if (pc->quota_round != pc->schedule.current_round) {
+      pc->quota_round = pc->schedule.current_round;
+      pc->quota_used = 0;
+    }
     free_capacity_circuit_paid(TO_CIRCUIT(pc->circ));
+  }
   if (pc->schedule.active_period != old_period) {
     clear_allocation(&pc->active);
     pc->active = pc->next_allocation;
@@ -418,6 +424,24 @@ payment_circuit_data_active(const or_circuit_t *circ, uint64_t now_ms)
          projected.phase==PAYMENT_SCHEDULE_ACTIVE &&
          projected.current_round==pc->schedule.current_round &&
          projected.active_period==pc->schedule.active_period;
+}
+
+MOCK_IMPL(bool,
+payment_circuit_account_bytes, (or_circuit_t *circ, uint32_t bytes,
+                                 uint64_t now_ms))
+{
+  if (!payment_circuit_data_active(circ, now_ms)) return false;
+  payment_circuit_t *pc = circ->payment_profile;
+  uint64_t quota = pc->schedule.policy.paid_quota_bytes;
+  if (pc->quota_round != pc->schedule.current_round) return false;
+  if (!quota) return true; /* Unlimited paid only; no free budget mutation. */
+  if (pc->quota_used > quota || bytes > quota - pc->quota_used) {
+    if (!circ->base_.marked_for_close)
+      circuit_mark_for_close(TO_CIRCUIT(circ), END_CIRC_REASON_RESOURCELIMIT);
+    return false;
+  }
+  pc->quota_used += bytes;
+  return true;
 }
 
 static int

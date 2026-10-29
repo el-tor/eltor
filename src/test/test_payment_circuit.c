@@ -15,6 +15,7 @@
 #include "feature/control/control_payment.h"
 #include "lib/evloop/timers.h"
 #include "test/test.h"
+#include "test/fakechans.h"
 
 static uint8_t reply_wire[PAYMENT_PROFILE_WIRE_LEN];
 static unsigned reply_command, reply_count;
@@ -40,7 +41,7 @@ typedef struct test_fixture_t {
 } test_fixture_t;
 
 static int
-fixture_init_prices(test_fixture_t *f, bool zero)
+fixture_init_prices_quota(test_fixture_t *f, bool zero, uint64_t quota)
 {
   memset(f, 0, sizeof(*f));
   reply_count = reply_command = 0;
@@ -52,6 +53,7 @@ fixture_init_prices(test_fixture_t *f, bool zero)
   f->policy.max_age_ms = 1800000;
   f->policy.max_periods = 3;
   f->policy.setup_timeout_ms = 30000;
+  f->policy.paid_quota_bytes = quota;
   memset(f->keys.binding, 2, 32);
   memset(f->keys.renew_request, 3, 32);
   memset(f->keys.renew_reply, 4, 32);
@@ -67,6 +69,12 @@ fixture_init_prices(test_fixture_t *f, bool zero)
   payment_profile_initial_digest(f->a0, f->keys.binding, f->q, f->ids);
   return payment_circuit_attach(f->circ, &f->policy, f->ids, f->fee_hash,
                                  1000, 1000);
+}
+
+static int
+fixture_init_prices(test_fixture_t *f, bool zero)
+{
+  return fixture_init_prices_quota(f, zero, 0);
 }
 
 static int
@@ -503,6 +511,172 @@ run_free_candidate(bool committed)
   (void)payment_resources_free_all(); monotime_disable_test_mocking();
 }
 static void
+test_payment_circuit_quota_round(void *arg)
+{
+  (void)arg;
+  test_fixture_t f;
+  payment_circuit_charge_t first, second;
+  payment_profile_message_t start;
+  tt_int_op(fixture_init_prices_quota(&f, false, 4106), OP_EQ, 0);
+  tt_int_op(activate(&f, 2000), OP_EQ, 0);
+  tt_assert(payment_circuit_account_bytes(f.circ, 2053, 2000));
+  charge(&f, 1, &first); charge(&f, 2, &second);
+  start = start_request(&f);
+  tt_int_op(send_request(&f, &start, 3000), OP_EQ, 0);
+  tt_int_op(payment_circuit_authorize(f.circ, 1, &first, 3000), OP_EQ, 0);
+  tt_int_op(payment_circuit_authorize(f.circ, 2, &second, 3000), OP_EQ, 0);
+  payment_circuit_tick(f.circ, 3000);
+  tt_assert(payment_circuit_account_bytes(f.circ, 2053, 3000));
+  tt_assert(payment_circuit_account_bytes(f.circ, 0, 3000));
+  /* An independent timer must activate the newly funded round; a data-plane
+   * observation at the boundary cannot reset the counter itself. */
+  tt_assert(!payment_circuit_account_bytes(f.circ, 1, 62000));
+  tt_assert(!f.circ->base_.marked_for_close);
+  payment_circuit_tick(f.circ, 62000);
+  tt_assert(payment_circuit_account_bytes(f.circ, 4106, 62000));
+  tt_int_op(payment_circuit_authorize(f.circ, 2, &second, 62001), OP_EQ, 0);
+  payment_circuit_tick(f.circ, 62001);
+  tt_assert(!payment_circuit_account_bytes(f.circ, 1, 62001));
+  tt_assert(f.circ->base_.marked_for_close);
+  tt_assert(!payment_circuit_data_active(f.circ, 62001));
+ done:
+  fixture_clear();
+}
+
+static void
+test_payment_circuit_quota_u64(void *arg)
+{
+  (void)arg;
+  test_fixture_t f;
+  tt_int_op(fixture_init_prices_quota(&f, false,
+              UINT64_C(1) + UINT32_MAX), OP_EQ, 0);
+  tt_int_op(activate(&f, 2000), OP_EQ, 0);
+  tt_assert(payment_circuit_account_bytes(f.circ, UINT32_MAX, 2000));
+  tt_assert(payment_circuit_account_bytes(f.circ, 1, 2000));
+  tt_assert(!payment_circuit_account_bytes(f.circ, 1, 2000));
+  tt_assert(f.circ->base_.marked_for_close);
+ done:
+  fixture_clear();
+}
+
+static void
+test_payment_circuit_quota_renewal(void *arg)
+{
+  (void)arg;
+  test_fixture_t f;
+  payment_profile_message_t renew = { .command = PAYMENT_PROFILE_RENEW };
+  payment_circuit_snapshot_t snapshot;
+  uint8_t decision[16] = {2};
+  tt_int_op(fixture_init_prices_quota(&f, false, 4106), OP_EQ, 0);
+  tt_int_op(activate(&f, 2000), OP_EQ, 0);
+  tt_assert(payment_circuit_account_bytes(f.circ, 4105, 2000));
+  renew.u.renew.period = 1; renew.u.renew.first_round = 11;
+  renew.u.renew.activation_ms = 600000;
+  memset(renew.u.renew.nonce, 0x33, 16);
+  memcpy(renew.u.renew.terms, f.q, 32);
+  memcpy(renew.u.renew.parent, f.a0, 32);
+  for (size_t i = 0; i < 10; ++i) renew.u.renew.ids[i][0] = (uint8_t)(i+80);
+  tt_int_op(send_request(&f, &renew, 3000), OP_EQ, 0);
+  tt_int_op(payment_circuit_get_admission(f.circ, 1, 3000, &snapshot), OP_EQ, 0);
+  tt_int_op(payment_circuit_decide(f.circ, 1, snapshot.request_digest, decision,
+               PAYMENT_CIRCUIT_RESERVED, 3000), OP_EQ, 0);
+  tt_int_op(payment_circuit_decide(f.circ, 1, snapshot.request_digest, decision,
+               PAYMENT_CIRCUIT_RESERVED, 3001), OP_EQ, 0);
+  tt_int_op(send_request(&f, &renew, 3001), OP_EQ, 0);
+  tt_assert(payment_circuit_account_bytes(f.circ, 1, 3001));
+  tt_assert(!payment_circuit_account_bytes(f.circ, 1, 3001));
+  tt_assert(f.circ->base_.marked_for_close);
+ done:
+  fixture_clear();
+}
+
+static void
+test_payment_circuit_quota_grace(void *arg)
+{
+  (void)arg;
+  test_fixture_t f;
+  payment_circuit_charge_t second;
+  tt_int_op(fixture_init_prices_quota(&f, false, 2053), OP_EQ, 0);
+  tt_int_op(activate(&f, 2000), OP_EQ, 0);
+  tt_assert(payment_circuit_account_bytes(f.circ, 2053, 2000));
+  payment_circuit_tick(f.circ, 62000);
+  tt_assert(!payment_circuit_account_bytes(f.circ, 1, 62000));
+  tt_assert(!f.circ->base_.marked_for_close);
+  charge(&f, 2, &second);
+  tt_int_op(payment_circuit_authorize(f.circ, 2, &second, 65000), OP_EQ, 0);
+  tt_assert(payment_circuit_account_bytes(f.circ, 2053, 65000));
+  payment_circuit_tick(f.circ, 65001);
+  tt_assert(!payment_circuit_account_bytes(f.circ, 1, 65001));
+  tt_assert(f.circ->base_.marked_for_close);
+ done:
+  fixture_clear();
+}
+
+static void
+run_quota_wire(bool control_exhaustion, bool unlimited)
+{
+  test_fixture_t f;
+  or_connection_t previous = {0}, next = {0};
+  channel_tls_t *p = NULL, *n = NULL;
+  uint32_t wide, narrow;
+  monotime_enable_test_mocking();
+  monotime_set_mock_time_nsec(INT64_C(1000000000));
+  monotime_coarse_set_mock_time_nsec(INT64_C(1000000000));
+  tt_int_op(fixture_init_prices_quota(&f, false, unlimited ? 0 : 8208), OP_EQ, 0);
+  p = tor_realloc(new_fake_channel(), sizeof(*p));
+  n = tor_realloc(new_fake_channel(), sizeof(*n));
+  p->base_.magic = n->base_.magic = TLS_CHAN_MAGIC;
+  p->base_.wide_circ_ids = previous.wide_circ_ids = true;
+  n->base_.wide_circ_ids = next.wide_circ_ids = false;
+  p->conn = &previous; n->conn = &next;
+  previous.chan = p; next.chan = n;
+  circuit_set_p_circid_chan(f.circ, 10, &p->base_);
+  circuit_set_n_circid_chan(TO_CIRCUIT(f.circ), 20, &n->base_);
+  tt_int_op(free_capacity_circuit_admit(TO_CIRCUIT(f.circ), &previous), OP_EQ, 0);
+  monotime_set_mock_time_nsec(INT64_C(2000000000));
+  monotime_coarse_set_mock_time_nsec(INT64_C(2000000000));
+  tt_int_op(activate(&f, 2000), OP_EQ, 0);
+  wide = get_cell_network_size(true); narrow = get_cell_network_size(false);
+  tt_uint_op(wide, OP_EQ, 2053); tt_uint_op(narrow, OP_EQ, 2051);
+  unsigned count = unlimited ? 1024 : 1;
+  for (unsigned i = 0; i < count; ++i) {
+    /* The same forwarding cell incurs ingress+egress; both physical directions
+     * share the counter. Encrypted relay padding is indistinguishable here. */
+    tt_assert(free_capacity_wire_receive(&previous, 10, wide, true, CELL_RELAY));
+    tt_int_op(free_capacity_circuit_send(TO_CIRCUIT(f.circ), &n->base_),
+              OP_EQ, FREE_CAPACITY_OK);
+    tt_assert(free_capacity_wire_receive(&next, 20, narrow, true, CELL_RELAY));
+    tt_int_op(free_capacity_circuit_send_control(TO_CIRCUIT(f.circ), &p->base_,
+                                               true), OP_EQ, FREE_CAPACITY_OK);
+  }
+  tt_assert(!f.circ->base_.marked_for_close);
+  if (!unlimited) {
+    if (control_exhaustion)
+      tt_int_op(free_capacity_circuit_send_control(TO_CIRCUIT(f.circ),
+                      &p->base_, true), OP_EQ, FREE_CAPACITY_CLOSE);
+    else
+      tt_assert(!free_capacity_wire_receive(&previous, 10, wide, true,
+                                            CELL_PADDING));
+    tt_assert(f.circ->base_.marked_for_close);
+  }
+ done:
+  fixture_clear();
+  free_capacity_connection_free(&previous); free_capacity_connection_free(&next);
+  previous.chan = next.chan = NULL;
+  if (p) free_fake_channel(&p->base_);
+  if (n) free_fake_channel(&n->base_);
+  (void)payment_resources_free_all();
+  monotime_disable_test_mocking();
+}
+
+static void test_payment_circuit_quota_wire(void *arg)
+{ (void)arg; run_quota_wire(false, false); }
+static void test_payment_circuit_quota_control(void *arg)
+{ (void)arg; run_quota_wire(true, false); }
+static void test_payment_circuit_quota_unlimited(void *arg)
+{ (void)arg; run_quota_wire(false, true); }
+
+static void
 test_payment_circuit_free_candidate(void *arg)
 { (void)arg; run_free_candidate(false); }
 static void
@@ -520,5 +694,12 @@ struct testcase_t payment_circuit_tests[] = {
   CIRCUIT_TEST(zero_and_framing),
   CIRCUIT_TEST(free_candidate),
   CIRCUIT_TEST(free_paid_failure),
+  CIRCUIT_TEST(quota_round),
+  CIRCUIT_TEST(quota_u64),
+  CIRCUIT_TEST(quota_renewal),
+  CIRCUIT_TEST(quota_grace),
+  CIRCUIT_TEST(quota_wire),
+  CIRCUIT_TEST(quota_control),
+  CIRCUIT_TEST(quota_unlimited),
   END_OF_TESTCASES
 };

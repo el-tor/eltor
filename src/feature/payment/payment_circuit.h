@@ -4,6 +4,7 @@
 
 #include "feature/payment/payment_profile.h"
 #include "feature/payment/payment_schedule.h"
+#include "lib/testsupport/testsupport.h"
 
 struct or_circuit_t;
 struct relay_msg_t;
@@ -160,5 +161,11 @@ bool payment_circuit_paid_active(const struct or_circuit_t *circ);
 /* Read-only time-aware gate; due timer transitions may revoke permission but
  * cannot grant a new funded activation before the real timer advances. */
 bool payment_circuit_data_active(const struct or_circuit_t *, uint64_t now_ms);
+/* One actual physical ingress/egress charge. Includes headers and all cell
+ * kinds; caller must not charge again after the shared pre-pop send gate.
+ * Only a real new paid-round activation resets this counter. False forbids
+ * dispatch/write and requires closure, never a free fallback or silent drop. */
+MOCK_DECL(bool, payment_circuit_account_bytes,
+          (struct or_circuit_t *, uint32_t bytes, uint64_t now_ms));
 
 #endif /* !defined(TOR_PAYMENT_CIRCUIT_H) */

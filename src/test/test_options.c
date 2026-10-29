@@ -3794,7 +3794,7 @@ test_options_foundation_terms(void *arg)
   tdata->opt->ElTorFoundation = 0;
   tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, 0);
 
-  /* Unsupported quota cannot be advertised as if native enforcement exists. */
+  /* Exact nonzero quota reaches the same immutable policy as other fields. */
   policy.paid_quota_bytes = 1;
   tt_int_op(payment_profile_policy_encode(wire, sizeof(wire), &policy),
             OP_EQ, 0);
@@ -3802,10 +3802,9 @@ test_options_foundation_terms(void *arg)
   tor_strlower(hex);
   tor_free(tdata->opt->ElTorFoundationTerms);
   tdata->opt->ElTorFoundationTerms = tor_strdup(hex);
-  tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, -1);
-  tt_str_op(msg, OP_EQ, "ElTorFoundationTerms must be canonical finite v1 "
-    "policy terms with paid_quota_bytes 0; paid quota enforcement is unavailable.");
-  tor_free(msg);
+  tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, 0);
+  tt_int_op(options_get_payment_policy(tdata->opt, &actual), OP_EQ, 0);
+  tt_u64_op(actual.paid_quota_bytes, OP_EQ, 1);
   tor_free(tdata->opt->ElTorFoundationTerms);
   tdata->opt->ElTorFoundationTerms = tor_strdup("01");
   tt_int_op(options_get_payment_policy(tdata->opt, &actual), OP_EQ, -1);

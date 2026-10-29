@@ -3818,9 +3818,12 @@ The following options are used for running a testing Tor network.
     at most 60000 (4), paid quota bytes (8), finite maximum age in ms (8),
     maximum periods at least 2 (4), initial handshake fee in msat (8), and
     finite setup timeout in ms (4). All integers use network byte order.
-    Nonzero paid quota is currently rejected until native byte enforcement is
-    available. Zero quota means unlimited paid traffic, never unlimited free
-    traffic. Zero age, zero setup timeout, unknown fields, and noncanonical
+    Paid quota counts circuit-attributed serialized ingress and egress on both
+    physical links, including headers/control/padding; a forwarded cell counts
+    once per physical event. Exhaustion closes the circuit. The counter resets
+    only when a new authorized paid round actually activates. Zero quota means
+    unlimited paid traffic, never unlimited free traffic.
+    Zero age, zero setup timeout, unknown fields, and noncanonical
     encodings are rejected. Setting terms alone does not enable the feature.
     Omission selects the existing zero-price candidate only on an isolated
     testing network: 15000 ms grace, 1800000 ms age, 3 periods, 30000 ms setup,

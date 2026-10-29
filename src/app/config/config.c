@@ -2112,8 +2112,7 @@ options_get_payment_policy(const or_options_t *options,
   if (options->ElTorFoundationTerms) {
     payment_profile_policy_t parsed;
     if (payment_profile_policy_parse_hex(&parsed,
-                              options->ElTorFoundationTerms) != 0 ||
-        parsed.paid_quota_bytes) return -1;
+                              options->ElTorFoundationTerms) != 0) return -1;
     *out = parsed;
     return 0;
   }
@@ -4059,8 +4058,7 @@ options_validate_cb(const void *old_options_, void *options_, char **msg)
   payment_profile_policy_t foundation_policy;
   if (options->ElTorFoundationTerms &&
       options_get_payment_policy(options, &foundation_policy) < 0)
-    REJECT("ElTorFoundationTerms must be canonical finite v1 policy terms "
-           "with paid_quota_bytes 0; paid quota enforcement is unavailable.");
+    REJECT("ElTorFoundationTerms must be canonical finite v1 policy terms.");
   if (options->ElTorFoundation && !options->TestingTorNetwork)
     REJECT("ElTorFoundation requires TestingTorNetwork 1.");
 

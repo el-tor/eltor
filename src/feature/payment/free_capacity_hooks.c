@@ -362,6 +362,19 @@ free_capacity_circuit_free(circuit_t *circ)
 }
 
 static bool
+paid_wire_account(circuit_t *circ, uint32_t bytes)
+{
+  /* The origin cannot observe middle-hop physical charges; each relay owns
+   * its authenticated accepted policy and aggregate two-link counter. */
+  if (CIRCUIT_IS_ORIGIN(circ) ||
+      payment_circuit_account_bytes(TO_OR_CIRCUIT(circ), bytes,
+                                     monotime_absolute_msec())) return true;
+  if (!circ->marked_for_close)
+    circuit_mark_for_close(circ, END_CIRC_REASON_RESOURCELIMIT);
+  return false;
+}
+
+static bool
 wire_account(or_connection_t *conn, circid_t circid, uint32_t bytes,
              bool fixed, uint8_t command, bool receive)
 {
@@ -369,7 +382,8 @@ wire_account(or_connection_t *conn, circid_t circid, uint32_t bytes,
                                       TLS_CHAN_TO_BASE(conn->chan)) : NULL;
   free_capacity_result_t result;
   if (circ && circ->free_capacity && circ->free_capacity->paid) {
-    if (free_capacity_paid_data_active(circ)) return true;
+    if (free_capacity_paid_data_active(circ))
+      return paid_wire_account(circ, bytes);
     free_capacity_link_t *link = link_get(conn);
     bool unqueued_relay = !receive && fixed &&
       (command == CELL_RELAY || command == CELL_RELAY_EARLY);
@@ -476,6 +490,11 @@ free_capacity_circuit_send_control(circuit_t *circ, channel_t *chan,
   }
   bool active_paid = context->paid && free_capacity_paid_data_active(circ);
   if (active_paid) {
+    /* The packed-cell writer sees free_capacity_charged and must not debit
+     * again. This is the existing last pre-pop accounting boundary. A failed
+     * native write closes the circuit, so no credit is refunded/reused. */
+    if (!paid_wire_account(circ, get_cell_network_size(chan->wide_circ_ids)))
+      return FREE_CAPACITY_CLOSE;
     context->waiting = false;
     context->data_only = false;
     return FREE_CAPACITY_OK;
