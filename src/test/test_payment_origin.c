@@ -21,6 +21,10 @@
 #include "core/crypto/relay_crypto.h"
 #include "feature/payment/payment_origin.h"
 #include "feature/payment/payment_resources.h"
+#include "feature/payment/payment_workqueue.h"
+#include "core/crypto/onion_crypto.h"
+#include "core/crypto/onion_fast.h"
+#include "core/or/onion.h"
 #include "feature/payment/free_capacity_hooks.h"
 #include "feature/payment/payment_util.h"
 #include "feature/payment/payment_initial.h"
@@ -827,6 +831,100 @@ test_origin_ordinary_base(void *arg)
 }
 
 static void
+test_origin_setup_work_limits(void *arg)
+{
+  (void)arg;
+  origin_circuit_t *circs[4] = {0};
+  extend_info_t info = {0};
+  uint8_t skin[MAX_CREATE_LEN], retained[MAX_CREATE_LEN];
+  uint8_t reply[CREATED_FAST_LEN], server_keys[CPATH_KEY_MATERIAL_LEN];
+  uint8_t keys[MAX_RELAY_KEY_MATERIAL_LEN], nonce[DIGEST_LEN];
+  circuit_params_t params; payment_profile_export_t exported = {0};
+  const char *message = NULL;
+  char *material = NULL;
+  timers_initialize(); monotime_enable_test_mocking();
+  monotime_set_mock_time_nsec(INT64_C(1000000000));
+  monotime_coarse_set_mock_time_nsec(INT64_C(1000000000));
+  protocol_budget_limits_t limits;
+  protocol_budget_default_limits(&limits);
+  limits.crypto_rate = limits.crypto_burst = 1;
+  limits.max_running = 1;
+  tt_int_op(payment_resources_configure(&limits), OP_EQ, 0);
+  tt_int_op(payment_origin_configure_enabled(true), OP_EQ, 0);
+  info.supports_ntor_v3 = info.payment_free_v1 = true;
+  for (unsigned i = 0; i < 4; ++i) {
+    circs[i] = origin_circuit_new();
+    circs[i]->base_.purpose = CIRCUIT_PURPOSE_C_GENERAL;
+    circs[i]->build_state = tor_malloc_zero(sizeof(*circs[i]->build_state));
+    circs[i]->build_state->desired_path_len = 1;
+    circs[i]->build_state->onehop_tunnel = i < 2;
+    tt_int_op(cpath_append_hop(&circs[i]->cpath, &info), OP_EQ, 0);
+  }
+  protocol_budget_t *owner = payment_resources_protocol();
+  /* Even the descriptor-bootstrap exception shares attempted setup work. */
+  tt_int_op(payment_origin_prepare_base(circs[0]), OP_EQ, 0);
+  memset(skin, 0x5a, sizeof(skin));
+  int length = payment_origin_create_onionskin(circs[0], circs[0]->cpath,
+                      ONION_HANDSHAKE_TYPE_FAST, skin, sizeof(skin), NULL);
+  tt_int_op(length, OP_EQ, CREATE_FAST_LEN);
+  memcpy(retained, skin, sizeof(retained));
+  uint64_t deadline = circs[0]->payment_construction_deadline_ms;
+  tt_int_op(payment_origin_create_onionskin(circs[0], circs[0]->cpath,
+              ONION_HANDSHAKE_TYPE_FAST, skin, sizeof(skin), NULL), OP_EQ, -1);
+  tt_mem_op(skin, OP_EQ, retained, sizeof(skin)); /* no regenerated ciphertext */
+  tt_u64_op(owner->attempts_started, OP_EQ, 1);
+  tt_u64_op(circs[0]->payment_construction_deadline_ms, OP_EQ, deadline);
+  memset(skin, 0x6b, sizeof(skin)); memcpy(retained, skin, sizeof(skin));
+  tt_int_op(payment_origin_create_onionskin(circs[1], circs[1]->cpath,
+              ONION_HANDSHAKE_TYPE_FAST, skin, sizeof(skin), NULL), OP_EQ, PAYMENT_ORIGIN_WORK_REFUSED);
+  tt_mem_op(skin, OP_EQ, retained, sizeof(skin));
+  tt_uint_op(circs[1]->cpath->handshake_state.tag, OP_EQ, 0);
+  tt_uint_op(owner->running, OP_EQ, 0); tt_uint_op(owner->waiting, OP_EQ, 0);
+  tt_uint_op(owner->slots, OP_EQ, 0);
+  monotime_set_mock_time_nsec(INT64_C(2000000000));
+  tt_int_op(payment_origin_create_onionskin(circs[1], circs[1]->cpath,
+              ONION_HANDSHAKE_TYPE_FAST, skin, sizeof(skin), NULL),
+            OP_EQ, CREATE_FAST_LEN);
+  tt_int_op(fast_server_handshake(skin, reply, server_keys,
+                                  sizeof(server_keys)), OP_EQ, 0);
+  /* Dummy generation has no independent lane or fresh attempt bucket. */
+  tt_int_op(payment_origin_prepare_base(circs[2]), OP_EQ, -1);
+  tt_assert(!circs[2]->payment_base_only);
+  tt_assert(!circs[2]->cpath->payment_export_requested);
+  tt_u64_op(owner->attempts_started, OP_EQ, 2);
+  monotime_set_mock_time_nsec(INT64_C(3000000000));
+  tt_int_op(payment_origin_prepare_base(circs[3]), OP_EQ, 0);
+  tt_assert(circs[3]->payment_base_only);
+  material = tor_strdup(circs[3]->payhashes);
+  tt_int_op(payment_origin_prepare_base(circs[3]), OP_EQ, 0);
+  tt_str_op(material, OP_EQ, circs[3]->payhashes);
+  tor_free(material);
+  tt_u64_op(owner->attempts_started, OP_EQ, 3);
+  size_t keylen = sizeof(keys);
+  memset(keys, 0x5a, sizeof(keys));
+  tt_int_op(payment_origin_finish_onionskin(circs[1], circs[1]->cpath,
+                reply, sizeof(reply), keys, &keylen, nonce, &params,
+                &message, &exported), OP_EQ, PAYMENT_ORIGIN_WORK_REFUSED);
+  tt_uint_op(keylen, OP_EQ, 0);
+  tt_assert(safe_mem_is_zero(keys, sizeof(keys)));
+  /* Delayed CREATED verification cannot obtain a separate crypto bucket. */
+  monotime_set_mock_time_nsec(INT64_C(4000000000)); keylen = sizeof(keys);
+  tt_int_op(payment_origin_finish_onionskin(circs[1], circs[1]->cpath,
+                reply, sizeof(reply), keys, &keylen, nonce, &params,
+                &message, &exported), OP_EQ, 0);
+  tt_uint_op(keylen, OP_EQ, sizeof(server_keys));
+  tt_mem_op(keys, OP_EQ, server_keys, sizeof(server_keys));
+  tt_u64_op(owner->attempts_started, OP_EQ, 4);
+  tt_uint_op(owner->running, OP_EQ, 0); tt_uint_op(owner->waiting, OP_EQ, 0);
+  tt_uint_op(owner->slots, OP_EQ, 0);
+ done:
+  tor_free(material);
+  circuit_free_all(); (void)payment_origin_free_all(); control_payment_free_all();
+  (void)payment_workqueue_free_all(); (void)payment_resources_free_all();
+  timers_shutdown(); monotime_disable_test_mocking();
+}
+
+static void
 test_origin_paid_first(void *arg)
 {
   (void)arg;
@@ -955,6 +1053,7 @@ struct testcase_t payment_origin_tests[]={
   {"free_construction",test_origin_free_construction,TT_FORK,NULL,NULL},
   {"reachability",test_origin_reachability,TT_FORK,NULL,NULL},
   {"ordinary_base",test_origin_ordinary_base,TT_FORK,NULL,NULL},
+  {"setup_work_limits",test_origin_setup_work_limits,TT_FORK,NULL,NULL},
   {"paid_first",test_origin_paid_first,TT_FORK,NULL,NULL},
 #ifdef HAVE_MODULE_RELAY
   {"reachability_descriptor",test_origin_reachability_descriptor,TT_FORK,NULL,NULL},

@@ -29,6 +29,13 @@ bool payment_work_result_timely(const payment_work_t *);
 bool payment_work_complete(payment_work_t *);
 /* Unqueued reservation failure only, after any caller buffer has been freed. */
 void payment_work_release(payment_work_t *);
+/* Synchronous main-loop setup uses the SAME FIFO/attempt/concurrency owner.
+ * If not started immediately, cancel its waiting entry before returning. The
+ * stack arg is never retained. Each invocation is one bounded attempted step;
+ * callback failure still spends attempt credit. False means refuse/discard,
+ * including a result completing beyond its original deadline. */
+bool payment_work_run_sync(size_t retained_bytes, uint64_t deadline_ms,
+                           int (*run)(void *), void *arg, int *result);
 void payment_work_dispatch(void);
 int payment_workqueue_free_all(void);
 #endif

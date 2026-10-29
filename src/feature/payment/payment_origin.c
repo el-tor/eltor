@@ -8,6 +8,7 @@
 #include "core/or/extend_info_st.h"
 #include "core/or/relay_msg_st.h"
 #include "core/crypto/onion_ntor_v3.h"
+#include "core/crypto/onion_crypto.h"
 #include "core/or/onion.h"
 #include "core/or/circuitlist.h"
 #include "core/or/circuitbuild.h"
@@ -16,6 +17,7 @@
 #include "feature/payment/payment_origin.h"
 #include "feature/payment/payment_initial.h"
 #include "feature/payment/payment_resources.h"
+#include "feature/payment/payment_workqueue.h"
 #include "feature/payment/free_capacity_hooks.h"
 #include "feature/control/control_payment.h"
 #include "lib/crypt_ops/crypto_util.h"
@@ -325,7 +327,43 @@ payment_origin_reserve_construction(origin_circuit_t *circ)
   if (payment_resources_reserve(&circ->payment_construction_memory, cost) !=
       PROTOCOL_BUDGET_OK) return -1;
   circ->payment_construction_hops = (uint16_t)hops;
+  circ->payment_construction_deadline_ms =
+    saturating_add(monotime_absolute_msec(), FREE_CAPACITY_LIFETIME_MS);
   return 0;
+}
+
+static uint64_t
+origin_work_deadline(const origin_circuit_t *circ, const crypt_path_t *hop)
+{
+  uint64_t deadline = circ->payment_construction_deadline_ms;
+  uint64_t wait = saturating_add(monotime_absolute_msec(),
+                                 payment_resources_protocol()->limits.max_wait_ms);
+  if (hop && hop->payment_profile &&
+      hop->payment_profile->setup_deadline_ms < deadline)
+    deadline = hop->payment_profile->setup_deadline_ms;
+  return MIN(deadline, wait);
+}
+
+typedef struct base_generation_t {
+  uint8_t *raw;
+  const uint8_t (*prior_ids)[10][32];
+  unsigned hop;
+} base_generation_t;
+
+static int
+generate_base_step(void *arg)
+{
+  base_generation_t *step = arg;
+  uint8_t *raw = step->raw;
+  crypto_rand((char *)raw + 32, 352);
+  if (!payment_profile_ids_valid((const uint8_t (*)[32])(raw + 64))) return 0;
+  for (unsigned prior = 0; prior < step->hop; ++prior)
+    for (unsigned a = 0; a < 10; ++a)
+      for (unsigned b = 0; b < 10; ++b)
+        if (tor_memeq(step->prior_ids[prior][a], raw + 64 + 32*b, 32))
+          return 0;
+  return crypto_digest256((char *)raw, (const char *)raw + 32, 32,
+                           DIGEST_SHA256) < 0 ? -1 : 1;
 }
 
 static int
@@ -352,29 +390,23 @@ prepare_base_material(origin_circuit_t *circ)
       payment_resources_reserve(&circ->payment_construction_memory, cost) !=
         PROTOCOL_BUDGET_OK) return -1;
   circ->payment_construction_hops = (uint16_t)hops;
+  circ->payment_construction_deadline_ms =
+    saturating_add(monotime_absolute_msec(), FREE_CAPACITY_LIFETIME_MS);
   circ->payhashes = tor_malloc_zero(capacity);
   circ->payment_payhash_capacity = capacity;
   uint8_t raw[384] = {0}, ids[16][10][32] = {{{0}}};
   for (unsigned i = 0; i < hops; ++i) {
-    bool fresh = false;
-    for (unsigned attempt = 0; attempt < 4 && !fresh; ++attempt) {
-      crypto_rand((char *)raw + 32, sizeof(raw) - 32);
-      fresh = payment_profile_ids_valid((const uint8_t (*)[32])(raw + 64));
-      for (unsigned prior = 0; prior < i && fresh; ++prior)
-        for (unsigned a = 0; a < 10 && fresh; ++a)
-          for (unsigned b = 0; b < 10; ++b)
-            if (tor_memeq(ids[prior][a], raw + 64 + 32*b, 32)) {
-              fresh = false;
-              break;
-            }
+    int generated = 0;
+    base_generation_t step = { raw, ids, i };
+    for (unsigned attempt = 0; attempt < 4 && !generated; ++attempt) {
+      if (!payment_work_run_sync(sizeof(raw)+sizeof(ids)+sizeof(step),
+            origin_work_deadline(circ, NULL), generate_base_step, &step,
+            &generated)) generated = -1;
     }
-    if (!fresh) {
+    if (generated != 1) {
       memwipe(raw, 0, sizeof(raw)); memwipe(ids, 0, sizeof(ids));
-      return -1; /* Caller closes; receipt remains through actual graph free. */
-    }
-    if (crypto_digest256((char *)raw, (const char *)raw + 32, 32,
-                          DIGEST_SHA256) < 0) {
-      memwipe(raw, 0, sizeof(raw)); memwipe(ids, 0, sizeof(ids));
+      /* No onionskin has been published. Close caller; retain the graph lease
+       * until its actual free, including this partially allocated backing. */
       return -1;
     }
     memcpy(ids[i], raw + 64, sizeof(ids[i]));
@@ -385,6 +417,104 @@ prepare_base_material(origin_circuit_t *circ)
   memwipe(raw, 0, sizeof(raw)); memwipe(ids, 0, sizeof(ids));
   circ->payment_base_only = true;
   return 0;
+}
+
+typedef struct origin_create_t {
+  crypt_path_t *hop;
+  int type;
+  uint8_t *out;
+  size_t capacity;
+  const char *payload;
+} origin_create_t;
+
+static int
+create_origin_step(void *arg)
+{
+  origin_create_t *create = arg;
+  return onion_skin_create(create->type, create->hop->extend_info,
+             &create->hop->handshake_state, create->out, create->capacity,
+             create->payload, create->hop->payment_export_requested);
+}
+
+int
+payment_origin_create_onionskin(origin_circuit_t *circ, crypt_path_t *hop,
+                                 int type, uint8_t *out, size_t capacity,
+                                 const char *payload)
+{
+  if (!circ || !hop || !hop->extend_info || !out || !capacity ||
+      capacity > MAX_CREATE_LEN || circ->base_.marked_for_close) return -1;
+  origin_create_t create = {hop, type, out, capacity, payload};
+  if (!origin_enabled) return create_origin_step(&create);
+  if (hop->handshake_state.tag) return -1;
+  /* The directory/bootstrap exception shares these limits too. Persistent
+   * handshake backing remains charged by the graph lease after this job ends. */
+  if (payment_origin_reserve_construction(circ) < 0)
+    return PAYMENT_ORIGIN_WORK_REFUSED;
+  int result;
+  size_t retained = sizeof(create)+capacity+
+    onion_ntor3_client_state_memory_cost()+PAYMENT_ORIGIN_NATIVE_CRYPTO_RESERVE;
+  if (!payment_work_run_sync(retained, origin_work_deadline(circ, hop),
+                              create_origin_step, &create, &result)) {
+    /* An executed but late result must never be transmitted/installed. */
+    if (hop->handshake_state.tag) {
+      onion_handshake_state_release(&hop->handshake_state);
+      memset(&hop->handshake_state, 0, sizeof(hop->handshake_state));
+      memwipe(out, 0, capacity);
+    }
+    return PAYMENT_ORIGIN_WORK_REFUSED;
+  }
+  return result;
+}
+
+typedef struct origin_finish_t {
+  crypt_path_t *hop;
+  const uint8_t *reply;
+  size_t reply_len;
+  uint8_t *keys;
+  size_t *keylen;
+  uint8_t *nonce;
+  circuit_params_t *params;
+  const char **msg;
+  payment_profile_export_t *payment;
+} origin_finish_t;
+
+static int
+finish_origin_step(void *arg)
+{
+  origin_finish_t *finish = arg;
+  return onion_skin_client_handshake(finish->hop->handshake_state.tag,
+      &finish->hop->handshake_state, finish->reply, finish->reply_len,
+      finish->keys, finish->keylen, finish->nonce, finish->params,
+      finish->msg, finish->payment);
+}
+
+int
+payment_origin_finish_onionskin(origin_circuit_t *circ, crypt_path_t *hop,
+    const uint8_t *reply, size_t reply_len, uint8_t *keys, size_t *keylen,
+    uint8_t *nonce, circuit_params_t *params, const char **msg,
+    payment_profile_export_t *payment)
+{
+  if (!circ || !hop || !reply || !keys || !keylen || !nonce || !params ||
+      !msg || !payment || reply_len > MAX_CREATED_LEN ||
+      *keylen > MAX_RELAY_KEY_MATERIAL_LEN || circ->base_.marked_for_close)
+    return -1;
+  origin_finish_t finish = {hop, reply, reply_len, keys, keylen, nonce,
+                            params, msg, payment};
+  if (!origin_enabled) return finish_origin_step(&finish);
+  size_t key_capacity = *keylen;
+  size_t retained = sizeof(finish)+reply_len+key_capacity+DIGEST_LEN+
+    sizeof(*params)+sizeof(*payment)+PAYMENT_ORIGIN_NATIVE_CRYPTO_RESERVE;
+  int result;
+  if (!circ->payment_construction_memory.active ||
+      !payment_work_run_sync(retained, origin_work_deadline(circ, hop),
+                              finish_origin_step, &finish, &result)) {
+    memwipe(keys, 0, key_capacity); *keylen = 0;
+    memwipe(nonce, 0, DIGEST_LEN); memset(params, 0, sizeof(*params));
+    payment_profile_export_clear(payment);
+    *msg = "Origin setup resource limit";
+    return PAYMENT_ORIGIN_WORK_REFUSED;
+  }
+  return result;
 }
 
 int

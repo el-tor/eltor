@@ -339,6 +339,8 @@ struct origin_circuit_t {
   protocol_budget_memory_t payment_construction_memory;
   size_t payment_payhash_capacity;
   uint16_t payment_construction_hops;
+  /* Pinned on the first constructor reservation, never reset by setup retry. */
+  uint64_t payment_construction_deadline_ms;
   /* Local maintenance owner only; no wire purpose bit or paid authority.
    * Irreversible until actual free, and never eligible for application use. */
   bool payment_internal_free;

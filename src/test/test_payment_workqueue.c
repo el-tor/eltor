@@ -261,8 +261,67 @@ static void test_tiny_allocation_and_start_failure(void *arg) {
   timers_shutdown(); monotime_disable_test_mocking();
 }
 
+typedef struct sync_probe_t {
+  unsigned calls;
+  int result;
+  bool expire;
+} sync_probe_t;
+
+static int
+sync_probe(void *arg)
+{
+  sync_probe_t *probe = arg;
+  ++probe->calls;
+  if (probe->expire) tiny_time(5000);
+  return probe->result;
+}
+
+static void
+test_native_synchronous_admission(void *arg)
+{
+  (void)arg;
+  native_test_job_t older = {0};
+  sync_probe_t probe = {0};
+  int result = 123;
+  native_init();
+  protocol_budget_limits_t limits;
+  protocol_budget_default_limits(&limits);
+  limits.crypto_rate = limits.crypto_burst = 1;
+  limits.max_running = 1;
+  tt_int_op(payment_resources_configure(&limits), OP_EQ, 0);
+  protocol_budget_t *owner = payment_resources_protocol();
+  probe.result = -1; /* Primitive failure consumes the same shared attempt. */
+  tt_assert(payment_work_run_sync(64, 5000, sync_probe, &probe, &result));
+  tt_int_op(result, OP_EQ, -1); tt_uint_op(probe.calls, OP_EQ, 1);
+  tt_u64_op(owner->attempts_started, OP_EQ, 1);
+  tt_assert(!payment_work_run_sync(64, 5000, sync_probe, &probe, &result));
+  tt_uint_op(probe.calls, OP_EQ, 1);
+  tt_uint_op(owner->running, OP_EQ, 0); tt_uint_op(owner->waiting, OP_EQ, 0);
+  tt_uint_op(owner->slots, OP_EQ, 0); /* No callback/stack argument retained. */
+  tiny_time(1100);
+  tt_int_op(native_prepare(&older, 0, 5000), OP_EQ, 0); /* older FIFO waiter */
+  tiny_time(2000);
+  tt_assert(!payment_work_run_sync(64, 5000, sync_probe, &probe, &result));
+  tt_uint_op(older.starts, OP_EQ, 1); tt_uint_op(probe.calls, OP_EQ, 1);
+  tt_uint_op(owner->running, OP_EQ, 1); tt_uint_op(owner->waiting, OP_EQ, 0);
+  tt_assert(native_complete(&older));
+  tiny_time(3000); probe.result = 77;
+  tt_assert(payment_work_run_sync(64, 5000, sync_probe, &probe, &result));
+  tt_int_op(result, OP_EQ, 77); tt_uint_op(probe.calls, OP_EQ, 2);
+  tiny_time(4000); probe.expire = true;
+  tt_assert(!payment_work_run_sync(64, 4001, sync_probe, &probe, &result));
+  tt_int_op(result, OP_EQ, 77); /* Late primitive output is not published. */
+  tt_uint_op(probe.calls, OP_EQ, 3);
+  tt_uint_op(owner->running, OP_EQ, 0); tt_uint_op(owner->waiting, OP_EQ, 0);
+  tt_uint_op(owner->slots, OP_EQ, 0);
+  tt_u64_op(owner->attempts_started, OP_EQ, 4);
+ done:
+  native_cleanup(&older, 1);
+}
+
 struct testcase_t payment_workqueue_tests[]={
   {"fifo",test_native_fifo,TT_FORK,NULL,NULL},
+  {"synchronous_admission",test_native_synchronous_admission,TT_FORK,NULL,NULL},
   {"credit_and_expiry",test_native_credit_and_expiry,TT_FORK,NULL,NULL},
   {"failure_and_deadline",test_native_failure_and_deadline,TT_FORK,NULL,NULL},
   {"tiny_overload_and_cancel",test_tiny_overload_and_cancel,TT_FORK,NULL,NULL},

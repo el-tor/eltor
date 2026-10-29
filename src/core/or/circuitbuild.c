@@ -1096,16 +1096,13 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
     cc.handshake_type = ONION_HANDSHAKE_TYPE_NTOR_V3;
   }
 
-  len = onion_skin_create(cc.handshake_type,
-                          circ->cpath->extend_info,
-                          &circ->cpath->handshake_state,
-                          cc.onionskin,
-                          sizeof(cc.onionskin),
-                          hop_payhash,
-                          circ->cpath->payment_export_requested);
+  len = payment_origin_create_onionskin(circ, circ->cpath, cc.handshake_type,
+                                        cc.onionskin, sizeof(cc.onionskin),
+                                        hop_payhash);
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create (first hop) failed.");
-    return - END_CIRC_REASON_INTERNAL;
+    return len == PAYMENT_ORIGIN_WORK_REFUSED ?
+      -END_CIRC_REASON_RESOURCELIMIT : -END_CIRC_REASON_INTERNAL;
   }
   cc.handshake_len = len;
 
@@ -1295,16 +1292,15 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
     return -END_CIRC_REASON_TORPROTOCOL;
   if (hop->payment_export_requested)
     ec.create_cell.handshake_type = ONION_HANDSHAKE_TYPE_NTOR_V3;
-  len = onion_skin_create(ec.create_cell.handshake_type,
-                          hop->extend_info,
-                          &hop->handshake_state,
-                          ec.create_cell.onionskin,
-                          sizeof(ec.create_cell.onionskin), 
-                          hop_payhash,
-                          hop->payment_export_requested);
+  len = payment_origin_create_onionskin(circ, hop,
+                                        ec.create_cell.handshake_type,
+                                        ec.create_cell.onionskin,
+                                        sizeof(ec.create_cell.onionskin),
+                                        hop_payhash);
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create failed.");
-    return - END_CIRC_REASON_INTERNAL;
+    return len == PAYMENT_ORIGIN_WORK_REFUSED ?
+      -END_CIRC_REASON_RESOURCELIMIT : -END_CIRC_REASON_INTERNAL;
   }
   ec.create_cell.handshake_len = len;
 
@@ -1435,18 +1431,18 @@ circuit_finish_handshake(origin_circuit_t *circ,
   {
     const char *msg = NULL;
 
-    if (onion_skin_client_handshake(hop->handshake_state.tag,
-                                    &hop->handshake_state,
+    int handshake_result = payment_origin_finish_onionskin(circ, hop,
                                     reply->reply, reply->handshake_len,
                                     (uint8_t*)keys, &keylen,
                                     (uint8_t*)hop->rend_circ_nonce,
-                                    &params,
-                                    &msg, &payment_result) < 0) {
+                                    &params, &msg, &payment_result);
+    if (handshake_result < 0) {
       if (msg)
         log_warn(LD_CIRC,"onion_skin_client_handshake failed: %s", msg);
       memwipe(keys, 0, sizeof(keys));
       payment_profile_export_clear(&payment_result);
-      return -END_CIRC_REASON_TORPROTOCOL;
+      return handshake_result == PAYMENT_ORIGIN_WORK_REFUSED ?
+        -END_CIRC_REASON_RESOURCELIMIT : -END_CIRC_REASON_TORPROTOCOL;
     }
   }
 

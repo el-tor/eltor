@@ -4,6 +4,7 @@
 #include "feature/payment/payment_workqueue.h"
 #include "feature/payment/payment_resources.h"
 #include "lib/malloc/malloc.h"
+#include "lib/log/util_bug.h"
 #include "lib/crypt_ops/crypto_util.h"
 #include "lib/evloop/timers.h"
 #include "lib/time/compat_time.h"
@@ -214,4 +215,56 @@ payment_workqueue_free_all(void)
   timer_free(work_timer);
   payment_resources_release(&work_timer_memory);
   return 0;
+}
+
+
+typedef struct synchronous_work_t {
+  int (*run)(void *);
+  void *arg;
+  int result;
+  bool done, timely;
+} synchronous_work_t;
+
+static int
+synchronous_start(payment_work_t *work, void *arg)
+{
+  synchronous_work_t *sync = arg;
+  sync->result = sync->run(sync->arg);
+  sync->timely = payment_work_complete(work);
+  sync->done = true;
+  /* Completion already freed work. Never ask the dispatcher to drop it. */
+  return 0;
+}
+
+static void
+synchronous_drop(void *arg)
+{
+  synchronous_work_t *sync = arg;
+  sync->done = true;
+}
+
+bool
+payment_work_run_sync(size_t retained_bytes, uint64_t deadline_ms,
+                       int (*run)(void *), void *arg, int *result)
+{
+  if (!run || !result || retained_bytes > SIZE_MAX-sizeof(synchronous_work_t))
+    return false;
+  synchronous_work_t sync = { .run = run, .arg = arg };
+  payment_work_t *work = payment_work_reserve(NULL, PROTOCOL_BUDGET_NATIVE_SETUP,
+                              retained_bytes+sizeof(sync), deadline_ms);
+  if (!work) return false;
+  if (payment_work_queue(work, synchronous_start, synchronous_drop, &sync) < 0) {
+    payment_work_release(work);
+    return false;
+  }
+  if (!sync.done) {
+    /* Queueing may start older work first, but never leapfrog it. Only WAITING
+     * work can remain here: a synchronous start always completes before return.
+     * Retaining the stack callback beyond this return would be invalid. */
+    tor_assert(payment_work_cancel(work));
+    return false;
+  }
+  if (!sync.timely) return false;
+  *result = sync.result;
+  return true;
 }
