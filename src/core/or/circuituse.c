@@ -249,7 +249,7 @@ circuit_is_acceptable(const origin_circuit_t *origin_circ,
 /** Return 1 if circuit <b>a</b> is better than circuit <b>b</b> for
  * <b>conn</b>, and return 0 otherwise. Used by circuit_get_best.
  */
-static int
+STATIC int
 circuit_is_better(const origin_circuit_t *oa, const origin_circuit_t *ob,
                   const entry_connection_t *conn)
 {
@@ -257,6 +257,15 @@ circuit_is_better(const origin_circuit_t *oa, const origin_circuit_t *ob,
   const circuit_t *b = TO_CIRCUIT(ob);
   const uint8_t purpose = ENTRY_TO_CONN(conn)->purpose;
   int a_bits, b_bits;
+
+  /* Both candidates already passed circuit_is_acceptable(), including purpose,
+   * exit policy and stream isolation. Prefer actually authenticated paid
+   * capacity over a bounded base path for new streams; never activate, convert
+   * or move an existing stream as a consequence of this ranking. */
+  const uint64_t now_ms = monotime_absolute_msec();
+  const bool a_paid = payment_origin_data_active(oa, now_ms);
+  const bool b_paid = payment_origin_data_active(ob, now_ms);
+  if (a_paid != b_paid) return a_paid;
 
   /* If one of the circuits was allowed to live due to relaxing its timeout,
    * it is definitely worse (it's probably a much slower path). */
@@ -349,6 +358,7 @@ circuit_get_best(const entry_connection_t *conn,
   origin_circuit_t *best=NULL;
   struct timeval now;
   time_t now_sec;
+  bool preferred_conflux = false;
 
   tor_assert(conn);
 
@@ -366,7 +376,8 @@ circuit_get_best(const entry_connection_t *conn,
   // purposes. We don't have onion service conflux support at the moment.
   if (purpose == CIRCUIT_PURPOSE_C_GENERAL &&
       (best = conflux_get_circ_for_conn(conn, now_sec, need_internal))) {
-    return best;
+    if (payment_origin_data_active(best, monotime_absolute_msec())) return best;
+    preferred_conflux = true;
   }
 
   SMARTLIST_FOREACH_BEGIN(circuit_get_global_list(), circuit_t *, circ) {
@@ -382,8 +393,16 @@ circuit_get_best(const entry_connection_t *conn,
     /* now this is an acceptable circ to hand back. but that doesn't
      * mean it's the *best* circ to hand back. try to decide.
      */
-    if (!best || circuit_is_better(origin_circ,best,conn))
+    /* Preserve legacy conflux preference unless an independently acceptable
+     * authenticated paid path is available. A base conflux path cannot bypass
+     * paid-first selection. */
+    if (preferred_conflux &&
+        !payment_origin_data_active(origin_circ, monotime_absolute_msec()))
+      continue;
+    if (!best || circuit_is_better(origin_circ,best,conn)) {
       best = origin_circ;
+      preferred_conflux = false;
+    }
   }
   SMARTLIST_FOREACH_END(circ);
 

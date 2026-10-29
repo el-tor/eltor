@@ -330,6 +330,23 @@ free_capacity_circuit_confirm(circuit_t *circ)
   return 0;
 }
 
+bool
+free_capacity_circuit_ready(const circuit_t *circ, uint64_t now_ms)
+{
+  if (!circ || circ->marked_for_close || !circ->free_capacity) return false;
+  const free_capacity_context_t *context = circ->free_capacity;
+  const free_capacity_circuit_t *limit = &context->limit;
+  if (!context->confirmed || context->paid || !limit->active || limit->closing ||
+      !limit->owner || now_ms < limit->owner->last_ms ||
+      now_ms < limit->admitted_ms ||
+      now_ms - limit->admitted_ms >= FREE_CAPACITY_LIFETIME_MS) return false;
+  for (unsigned i = 0; i < FREE_CAPACITY_QUEUE_CELLS; ++i)
+    if (limit->queue_ticket[i] && (now_ms < limit->queue_time[i] ||
+        now_ms - limit->queue_time[i] >= FREE_CAPACITY_QUEUE_AGE_MS))
+      return false;
+  return true;
+}
+
 int
 free_capacity_circuit_admit(circuit_t *circ, or_connection_t *conn)
 {

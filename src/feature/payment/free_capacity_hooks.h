@@ -19,6 +19,9 @@ int free_capacity_circuit_setup_received(circuit_t *, channel_t *);
 int free_capacity_circuit_confirm(circuit_t *);
 int free_capacity_circuit_admit(circuit_t *, or_connection_t *);
 void free_capacity_circuit_free(circuit_t *);
+/* Read-only admission/lifetime gate. Does not refill buckets or grant paid
+ * authority; all-hop authenticated ACK checks remain with the origin. */
+bool free_capacity_circuit_ready(const circuit_t *, uint64_t now_ms);
 /* Irreversible transition after independently verified paid activation. Keeps
  * original counters/old queue receipts; never grants a later free fallback. */
 void free_capacity_circuit_paid(circuit_t *);

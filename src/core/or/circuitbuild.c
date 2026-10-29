@@ -1078,6 +1078,9 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
     cc.handshake_type = ONION_HANDSHAKE_TYPE_FAST;
   }
   
+  if (payment_origin_prepare_base(circ) < 0)
+    return -END_CIRC_REASON_RESOURCELIMIT;
+
   char hop_payhash_buf[PAYMENT_PAYHASH_SIZE] = {0};
   const char *tmp = payment_util_get_first_hop_payhash(circ);
   if (tmp) {
@@ -1273,7 +1276,7 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   const char *hop_payhash = NULL;
   if (payment && payment->wire_format) {
     hop_payhash = payment->wire_format;
-  } else if (circ->payment_internal_free &&
+  } else if (circ->payment_base_only &&
       payment_util_get_hop_payhash(circ, hop, internal_payhash,
                                    sizeof(internal_payhash))) {
     hop_payhash = internal_payhash;

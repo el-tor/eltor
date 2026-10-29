@@ -342,6 +342,9 @@ struct origin_circuit_t {
   /* Local maintenance owner only; no wire purpose bit or paid authority.
    * Irreversible until actual free, and never eligible for application use. */
   bool payment_internal_free;
+  /* Immutable local base-only constructor ownership; never encoded on wire,
+   * never a paid ACTIVE claim, and never set on an existing paid circuit. */
+  bool payment_base_only;
 
   char *payhashes;
 

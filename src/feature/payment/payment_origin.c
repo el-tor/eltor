@@ -153,6 +153,7 @@ payment_origin_pin(origin_circuit_t *circ, crypt_path_t *hop,
                    const char *payload, size_t payload_len, uint64_t now_ms)
 {
   if (!circ || !hop || circ->base_.marked_for_close) return PAYMENT_ORIGIN_CLOSED;
+  if (circ->payment_base_only) return PAYMENT_ORIGIN_UNSUPPORTED;
   if (hop->payment_profile || hop->payment_keys) return PAYMENT_ORIGIN_CONFLICT;
   bool member = false;
   crypt_path_t *path = circ->cpath;
@@ -327,31 +328,24 @@ payment_origin_reserve_construction(origin_circuit_t *circ)
   return 0;
 }
 
-int
-payment_origin_prepare_reachability(origin_circuit_t *circ)
+static int
+prepare_base_material(origin_circuit_t *circ)
 {
-  if (!origin_enabled) return 0;
-  if (!circ || circ->base_.marked_for_close ||
-      circ->base_.purpose != CIRCUIT_PURPOSE_TESTING || !circ->build_state ||
-      !circ->build_state->is_internal || circ->build_state->onehop_tunnel ||
+  if (!circ || circ->base_.marked_for_close || !circ->build_state ||
       !circ->cpath) return -1;
-  if (circ->payment_internal_free)
+  if (circ->payment_base_only)
     return payment_origin_reserve_construction(circ);
   if (circ->payhashes || circ->relay_payments ||
       circ->payment_construction_memory.active) return -1;
   const crypt_path_t *hop = circ->cpath;
   unsigned hops = 0;
-  bool any_paid = false, all_paid = true;
   do {
     if (!hop || !hop->extend_info || ++hops > 16 ||
         hop->state != CPATH_STATE_CLOSED ||
         !hop->extend_info->payment_free_v1 ||
         !hop->extend_info->supports_ntor_v3) return -1;
-    any_paid |= hop->extend_info->payment_start_v1;
-    all_paid &= hop->extend_info->payment_start_v1;
     hop = hop->next;
   } while (hop != circ->cpath);
-  if (any_paid && !all_paid) return -1;
   size_t cost, capacity = hops * 768u + 1u;
   if (payment_origin_construction_cost(circ, &cost) < 0 ||
       construction_add(&cost, capacity) < 0 ||
@@ -389,6 +383,34 @@ payment_origin_prepare_reachability(origin_circuit_t *circ)
   }
   tor_strlower(circ->payhashes);
   memwipe(raw, 0, sizeof(raw)); memwipe(ids, 0, sizeof(ids));
+  circ->payment_base_only = true;
+  return 0;
+}
+
+int
+payment_origin_prepare_base(origin_circuit_t *circ)
+{
+  if (!origin_enabled) return 0;
+  if (!circ || !circ->build_state || circ->base_.marked_for_close) return -1;
+  if (circ->payment_base_only) return prepare_base_material(circ);
+  /* Explicit paid constructors retain their immutable accepted material. A
+   * failed/committed paid path is never converted into a free circuit. */
+  if (circ->payhashes || circ->relay_payments) return 0;
+  /* Bootstrap precedes full authenticated descriptor availability. This narrow
+   * existing directory-only exception cannot carry application streams. */
+  if (circ->base_.purpose == CIRCUIT_PURPOSE_C_GENERAL &&
+      circ->build_state->onehop_tunnel) return 0;
+  return prepare_base_material(circ);
+}
+
+int
+payment_origin_prepare_reachability(origin_circuit_t *circ)
+{
+  if (!origin_enabled) return 0;
+  if (!circ || circ->base_.purpose != CIRCUIT_PURPOSE_TESTING ||
+      !circ->build_state || !circ->build_state->is_internal ||
+      circ->build_state->onehop_tunnel) return -1;
+  if (prepare_base_material(circ) < 0) return -1;
   circ->payment_internal_free = true;
   return 0;
 }
@@ -420,7 +442,8 @@ payment_origin_prepare_handshake(origin_circuit_t *circ, crypt_path_t *hop,
     p=p->next;
   } while (p && p!=circ->cpath && ++hops<16);
   if (!selected) return -1; /* Explicit selection never falls back to legacy. */
-  if (!supported || p!=circ->cpath || hops>=16 || (any_paid && !all_paid))
+  if (!supported || p!=circ->cpath || hops>=16 ||
+      (!circ->payment_base_only && any_paid && !all_paid))
     return -1;
   if (!payload) return -1;
   payment_initial_material_t material={0};
@@ -432,7 +455,7 @@ payment_origin_prepare_handshake(origin_circuit_t *circ, crypt_path_t *hop,
       free_capacity_circuit_prepare_channel(TO_CIRCUIT(circ),circ->base_.n_chan)<0)
     return -1;
   hop->payment_export_requested = true;
-  if (!hop->extend_info->payment_start_v1 || circ->payment_internal_free) {
+  if (!hop->extend_info->payment_start_v1 || circ->payment_base_only) {
     control_payment_init();
     if (control_payment_register(TO_CIRCUIT(circ),CONTROL_PAYMENT_ORIGIN,
                              (uint16_t)circuit_get_cpath_len(circ),false)<0) {
@@ -685,7 +708,7 @@ bool
 payment_origin_present(const origin_circuit_t *circ)
 {
   if (!circ) return false;
-  if (circ->payment_internal_free) return true;
+  if (circ->payment_base_only) return true;
   const crypt_path_t *hop=circ->cpath;
   unsigned count=0;
   if (hop) do {
@@ -723,7 +746,7 @@ payment_origin_streams_ready(const origin_circuit_t *circ, uint64_t now_ms)
     return false;
   const crypt_path_t *hop=circ->cpath;
   unsigned count=0;
-  bool resource_only=circ->base_.free_capacity!=NULL;
+  bool resource_only=free_capacity_circuit_ready(&circ->base_,now_ms);
   if (hop) do {
     if (++count>16) return false;
     if (hop->payment_profile) return payment_origin_data_active(circ,now_ms);

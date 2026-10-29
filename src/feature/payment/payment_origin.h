@@ -93,6 +93,10 @@ payment_origin_result_t payment_origin_pin(struct origin_circuit_t *circ,
 int payment_origin_prepare_handshake(struct origin_circuit_t *circ,
     struct crypt_path_t *hop, const char *payload, uint64_t now_ms);
 int payment_origin_configure_enabled(bool enabled);
+/* Native purpose-independent bounded base construction. Missing explicit paid
+ * material is replaced with fresh uniform dummy fields before the first skin.
+ * Local base-only ownership cannot acquire paid authority or reset on retry. */
+int payment_origin_prepare_base(struct origin_circuit_t *circ);
 /* Native internal relay reachability only. Creates fresh uniform per-hop
  * construction under the same bounded free admission; never COMMITs or pays. */
 int payment_origin_prepare_reachability(struct origin_circuit_t *circ);

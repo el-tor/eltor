@@ -112,6 +112,8 @@ STATIC int needs_circuits_for_build(int num);
 
 STATIC int circuit_get_open_circ_or_launch(entry_connection_t *conn,
     uint8_t desired_circuit_purpose, origin_circuit_t **circp);
+STATIC int circuit_is_better(const origin_circuit_t *, const origin_circuit_t *,
+                            const entry_connection_t *);
 STATIC origin_circuit_t *circuit_get_best(const entry_connection_t *conn,
                                           int must_be_open,
                                           uint8_t purpose,
