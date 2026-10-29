@@ -341,6 +341,8 @@ struct origin_circuit_t {
   uint16_t payment_construction_hops;
   /* Pinned on the first constructor reservation, never reset by setup retry. */
   uint64_t payment_construction_deadline_ms;
+  /* Explicit financial constructor: original setup clock, never a CBT probe. */
+  bool payment_owned_construction;
   /* Local maintenance owner only; no wire purpose bit or paid authority.
    * Irreversible until actual free, and never eligible for application use. */
   bool payment_internal_free;

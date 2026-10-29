@@ -691,6 +691,17 @@ circuit_expire_building(void)
         victim->marked_for_close)     /* don't mess with marked circs */
       continue;
 
+    /* An explicitly accepted foundation build has its own original finite
+     * setup budget. CBT measurement conversion would destroy that ownership. */
+    uint64_t foundation_deadline;
+    if (victim->state != CIRCUIT_STATE_OPEN &&
+        payment_origin_build_deadline(TO_ORIGIN_CIRCUIT(victim),
+                                      &foundation_deadline)) {
+      if (monotime_absolute_msec() >= foundation_deadline)
+        circuit_mark_for_close(victim, END_CIRC_REASON_TIMEOUT);
+      continue;
+    }
+
     /* If we haven't yet started the first hop, it means we don't have
      * any orconns available, and thus have not started counting time yet
      * for this circuit. See circuit_deliver_create_cell() and uses of

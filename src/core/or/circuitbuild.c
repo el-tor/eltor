@@ -908,6 +908,7 @@ int
 circuit_timeout_want_to_count_circ(const origin_circuit_t *circ)
 {
   return !circ->has_opened
+          && !payment_origin_build_deadline(circ, NULL)
           && circ->build_state->desired_path_len >= DEFAULT_ROUTE_LEN
           && circuit_get_cpath_opened_len(circ) <= DEFAULT_ROUTE_LEN;
 }

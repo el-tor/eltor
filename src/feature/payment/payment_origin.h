@@ -121,6 +121,11 @@ payment_origin_result_t payment_origin_handshake_complete(
 /* Read-only conservative path gate. Every pinned hop must have authenticated
  * ACTIVE status and positive round, enforcement and hard-age budgets. */
 bool payment_origin_present(const struct origin_circuit_t *);
+/* Freeze the approved full-path setup deadline before first-channel work.
+ * No effect outside the selected profile; no activation or replacement work. */
+int payment_origin_prepare_owned_construction(struct origin_circuit_t *);
+bool payment_origin_build_deadline(const struct origin_circuit_t *,
+                                  uint64_t *deadline_out);
 bool payment_origin_data_active(const struct origin_circuit_t *, uint64_t now_ms);
 /* Test foundation mode excludes legacy application circuits; authenticated
  * resource-only circuits remain eligible. A pinned financial profile requires

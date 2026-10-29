@@ -361,6 +361,11 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     first_node = 0;
   });
 
+  if (zero_circ && payment_origin_prepare_owned_construction(circ) < 0) {
+    control_write_endreply(conn, 551, "Foundation construction refused");
+    goto done;
+  }
+
   // 7. Handle new circuit creation vs extending existing circuit
   if (zero_circ) {
     // Handle new circuit creation

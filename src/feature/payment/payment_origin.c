@@ -158,6 +158,8 @@ payment_origin_pin(origin_circuit_t *circ, crypt_path_t *hop,
                    const char *payload, size_t payload_len, uint64_t now_ms)
 {
   if (!circ || !hop || circ->base_.marked_for_close) return PAYMENT_ORIGIN_CLOSED;
+  if (circ->payment_owned_construction &&
+      now_ms >= circ->payment_construction_deadline_ms) return PAYMENT_ORIGIN_EXPIRED;
   if (circ->payment_base_only) return PAYMENT_ORIGIN_UNSUPPORTED;
   if (hop->payment_profile || hop->payment_keys) return PAYMENT_ORIGIN_CONFLICT;
   bool member = false;
@@ -206,6 +208,9 @@ payment_origin_pin(origin_circuit_t *circ, crypt_path_t *hop,
   h->circ = circ; h->hop = hop; h->policy = policy;
   h->constructed_ms = now_ms;
   h->setup_deadline_ms = now_ms+policy.setup_timeout_ms;
+  if (circ->payment_owned_construction &&
+      circ->payment_construction_deadline_ms < h->setup_deadline_ms)
+    h->setup_deadline_ms = circ->payment_construction_deadline_ms;
   h->hard_deadline_ms = h->setup_deadline_ms+policy.max_age_ms;
   memcpy(h->ids, material.ids, sizeof(h->ids));
   payment_initial_clear(&material);
@@ -332,6 +337,45 @@ payment_origin_reserve_construction(origin_circuit_t *circ)
   circ->payment_construction_hops = (uint16_t)hops;
   circ->payment_construction_deadline_ms =
     saturating_add(monotime_absolute_msec(), FREE_CAPACITY_LIFETIME_MS);
+  return 0;
+}
+
+bool
+payment_origin_build_deadline(const origin_circuit_t *circ, uint64_t *deadline)
+{
+  if (!circ || !circ->payment_owned_construction) return false;
+  if (deadline) *deadline = circ->payment_construction_deadline_ms;
+  return true;
+}
+
+int
+payment_origin_prepare_owned_construction(origin_circuit_t *circ)
+{
+  if (!origin_enabled) return 0;
+  if (!circ || !circ->cpath || !circ->payhashes ||
+      !circ->any_hop_from_controller || circ->payment_base_only ||
+      circ->payment_internal_free) return -1;
+  if (circ->payment_owned_construction) return 0;
+  uint64_t setup_ms = UINT64_MAX;
+  const crypt_path_t *hop = circ->cpath;
+  unsigned count = 0;
+  do {
+    payment_profile_policy_t policy;
+    const extend_info_t *info = hop->extend_info;
+    if (++count > 16 || !info || !info->supports_ntor_v3 ||
+        !info->payment_free_v1 || !info->payment_start_v1 ||
+        payment_profile_policy_decode(&policy, info->payment_profile_terms,
+                                       PAYMENT_PROFILE_TERMS_LEN)) return -1;
+    if (policy.setup_timeout_ms < setup_ms) setup_ms = policy.setup_timeout_ms;
+    hop = hop->next;
+  } while (hop && hop != circ->cpath);
+  if (!hop || payment_origin_reserve_construction(circ) < 0) return -1;
+  uint64_t began = circ->payment_construction_deadline_ms-
+                   FREE_CAPACITY_LIFETIME_MS;
+  uint64_t deadline = saturating_add(began, setup_ms);
+  if (deadline < circ->payment_construction_deadline_ms)
+    circ->payment_construction_deadline_ms = deadline;
+  circ->payment_owned_construction = true;
   return 0;
 }
 
