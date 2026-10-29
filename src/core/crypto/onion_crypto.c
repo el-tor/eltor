@@ -112,6 +112,7 @@ server_onion_keys_free_(server_onion_keys_t *keys)
 void
 onion_handshake_state_release(onion_handshake_state_t *state)
 {
+  state->payment_export_requested = false;
   switch (state->tag) {
   case ONION_HANDSHAKE_TYPE_TAP:
     break;
@@ -148,10 +149,14 @@ onion_skin_create(int type,
                   onion_handshake_state_t *state_out,
                   uint8_t *onion_skin_out,
                   size_t onion_skin_out_maxlen,
-                  const char *eltor_payhash)
+                  const char *eltor_payhash,
+                  bool payment_export_requested)
 {
   int r = -1;
 
+  state_out->payment_export_requested = payment_export_requested;
+  if (payment_export_requested && type != ONION_HANDSHAKE_TYPE_NTOR_V3)
+    return -1;
   circuit_params_init(&state_out->chosen_params);
 
   switch (type) {
@@ -234,7 +239,8 @@ onion_skin_create(int type,
                           NTOR3_VERIFICATION_ARGS,
                           msg, msg_len,
                           &state_out->u.ntor3,
-                          &onion_skin, &onion_skin_len);
+                          &onion_skin, &onion_skin_len,
+                          payment_export_requested);
                             
     log_notice(LD_GENERAL, "ELTOR CLIENT: NTOR3 create returned status=%d, onion_skin_len=%zu", status, onion_skin_len);
               
@@ -245,6 +251,7 @@ onion_skin_create(int type,
     }
     IF_BUG_ONCE(onion_skin_len > onion_skin_out_maxlen) {
       tor_free(onion_skin);
+      ntor3_handshake_state_free(state_out->u.ntor3);
       return -1;
     }
     memcpy(onion_skin_out, onion_skin, onion_skin_len);
@@ -427,8 +434,14 @@ onion_skin_server_handshake(int type,
                       uint8_t *rend_nonce_out,
                       circuit_params_t *params_out,
                       uint64_t *p_circuit_id,
-                      uint64_t *n_circuit_id)
+                      uint64_t *n_circuit_id,
+                      bool payment_export_requested,
+                      payment_profile_export_t *payment_out)
 {
+  payment_profile_export_clear(payment_out);
+  if (payment_export_requested &&
+      (type != ONION_HANDSHAKE_TYPE_NTOR_V3 || !payment_out))
+    return -1;
   int r = -1;
 
   relay_crypto_alg_t relay_alg = RELAY_CRYPTO_ALG_TOR1;
@@ -489,6 +502,7 @@ onion_skin_server_handshake(int type,
     size_t reply_msg_len = 0;
 
     ntor3_server_handshake_state_t *state = NULL;
+    payment_profile_export_t payment_result = {0};
 
     if (onion_skin_ntor3_server_handshake_part1(
                keys->curve25519_key_map,
@@ -497,7 +511,8 @@ onion_skin_server_handshake(int type,
                onion_skin, onionskin_len,
                NTOR3_VERIFICATION_ARGS,
                &client_msg, &client_msg_len,
-               &state, p_circuit_id, n_circuit_id) < 0) {
+               &state, p_circuit_id, n_circuit_id,
+               payment_export_requested) < 0) {
       return -1;
     }
 
@@ -518,6 +533,8 @@ onion_skin_server_handshake(int type,
     keys_out_needed = relay_crypto_key_material_len(relay_alg);
 
     if (BUG(*keys_len_out < keys_out_needed)) {
+      ntor3_server_handshake_state_free(state);
+      tor_free(reply_msg);
       return -1;
     }
     size_t keys_tmp_len = keys_out_needed + DIGEST_LEN;
@@ -530,16 +547,22 @@ onion_skin_server_handshake(int type,
                NTOR3_VERIFICATION_ARGS,
                reply_msg, reply_msg_len,
                &server_handshake, &server_handshake_len,
-               keys_tmp, keys_tmp_len) < 0) {
+               keys_tmp, keys_tmp_len, &payment_result) < 0) {
       tor_free(reply_msg);
       ntor3_server_handshake_state_free(state);
+      payment_profile_export_clear(&payment_result);
+      memwipe(keys_tmp, 0, keys_tmp_len);
       return -1;
     }
     tor_free(reply_msg);
 
-    if (server_handshake_len > reply_out_maxlen) {
+    if (server_handshake_len > reply_out_maxlen ||
+        payment_result.valid != payment_export_requested) {
+      memwipe(server_handshake, 0, server_handshake_len);
       tor_free(server_handshake);
       ntor3_server_handshake_state_free(state);
+      payment_profile_export_clear(&payment_result);
+      memwipe(keys_tmp, 0, keys_tmp_len);
       return -1;
     }
 
@@ -551,6 +574,9 @@ onion_skin_server_handshake(int type,
     tor_free(server_handshake);
     ntor3_server_handshake_state_free(state);
 
+    if (payment_out)
+      *payment_out = payment_result;
+    payment_profile_export_clear(&payment_result);
     r = (int) server_handshake_len;
   }
     break;
@@ -635,9 +661,13 @@ onion_skin_client_handshake(int type,
                       uint8_t *keys_out, size_t *keys_len_out,
                       uint8_t *rend_authenticator_out,
                       circuit_params_t *params_out,
-                      const char **msg_out)
+                      const char **msg_out,
+                      payment_profile_export_t *payment_out)
 {
-  if (handshake_state->tag != type)
+  payment_profile_export_clear(payment_out);
+  if (handshake_state->tag != type ||
+      (handshake_state->payment_export_requested &&
+       (type != ONION_HANDSHAKE_TYPE_NTOR_V3 || !payment_out)))
     return -1;
 
   memcpy(params_out, &handshake_state->chosen_params,
@@ -692,31 +722,42 @@ onion_skin_client_handshake(int type,
     uint8_t *keys_tmp = tor_malloc(keys_tmp_len);
     uint8_t *server_msg = NULL;
     size_t server_msg_len = 0;
+    payment_profile_export_t payment_result = {0};
     int r = onion_ntor3_client_handshake(
               handshake_state->u.ntor3,
               reply, reply_len,
               NTOR3_VERIFICATION_ARGS,
               keys_tmp, keys_tmp_len,
-              &server_msg, &server_msg_len);
+              &server_msg, &server_msg_len, &payment_result);
     if (r < 0) {
+      memwipe(keys_tmp, 0, keys_tmp_len);
       tor_free(keys_tmp);
       tor_free(server_msg);
+      payment_profile_export_clear(&payment_result);
       return -1;
     }
 
     if (negotiate_v3_ntor_client_circ_params(server_msg,
                                              server_msg_len,
-                                             params_out) < 0) {
+                                             params_out) < 0 ||
+        payment_result.valid != handshake_state->payment_export_requested) {
+      memwipe(keys_tmp, 0, keys_tmp_len);
       tor_free(keys_tmp);
+      memwipe(server_msg, 0, server_msg_len);
       tor_free(server_msg);
+      payment_profile_export_clear(&payment_result);
       return -1;
     }
+    memwipe(server_msg, 0, server_msg_len);
     tor_free(server_msg);
 
     memcpy(keys_out, keys_tmp, keys_out_needed);
     memcpy(rend_authenticator_out, keys_tmp + keys_out_needed, DIGEST_LEN);
     memwipe(keys_tmp, 0, keys_tmp_len);
     tor_free(keys_tmp);
+    if (payment_out)
+      *payment_out = payment_result;
+    payment_profile_export_clear(&payment_result);
 
     return 0;
   }

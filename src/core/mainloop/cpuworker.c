@@ -183,6 +183,8 @@ typedef struct cpuworker_request_t {
    * A copy of this relay's consensus params that are relevant to
    * the circuit, for use in negotiation. */
   circuit_params_t circ_ns_params;
+  /** False until future authenticated payment-profile negotiation. */
+  bool payment_export_requested;
 
   /** The circuit ID for this handshake. */
   circid_t circuit_id;
@@ -222,6 +224,7 @@ typedef struct cpuworker_reply_t {
   uint8_t keys[MAX_RELAY_KEY_MATERIAL_LEN];
   /** Length of the generated key material. */
   size_t keys_len;
+  payment_profile_export_t payment_result;
   /** Input to use for authenticating introduce1 cells. */
   uint8_t rend_auth_material[DIGEST_LEN];
   /** Negotiated circuit parameters. */
@@ -471,6 +474,12 @@ cpuworker_onion_handshake_replyfn(void *work_)
     goto done_processing;
   }
 
+  if (payment_profile_export_take(&circ->payment_keys, &rpl.payment_result,
+                                    circ->payment_export_requested) < 0) {
+    circuit_mark_for_close(TO_CIRCUIT(circ), END_CIRC_REASON_INTERNAL);
+    goto done_processing;
+  }
+
   log_debug(LD_OR,"onionskin_answer succeeded. Yay.");
 
  done_processing:
@@ -519,11 +528,13 @@ cpuworker_onion_handshake_threadfn(void *state_, void *work_)
                                   rpl.rend_auth_material,
                                   &rpl.circ_params,
                                   &circuit_id_64,
-                                  &n_circuit_id_64);
+                                  &n_circuit_id_64,
+                                  req.payment_export_requested,
+                                  &rpl.payment_result);
   if (n < 0) {
     /* failure */
     log_debug(LD_OR,"onion_skin_server_handshake failed.");
-    memset(&rpl, 0, sizeof(rpl));
+    memwipe(&rpl, 0, sizeof(rpl));
     rpl.success = 0;
   } else {
     /* success */
@@ -649,6 +660,7 @@ assign_onionskin_to_cpuworker(or_circuit_t *circ,
   req.circ_ns_params.sendme_inc_cells = congestion_control_sendme_inc();
 
   /* Copy the circuit ID for payment processing */
+  req.payment_export_requested = circ->payment_export_requested;
   req.circuit_id = circ->p_circ_id;
   req.n_circuit_id = TO_CIRCUIT(circ)->n_circ_id;
 

@@ -667,8 +667,39 @@ test_clist_mark_for_close_chan_wait(void *arg)
   tor_free(chan);
 }
 
+static void
+test_clist_payment_key_lifetime(void *arg)
+{
+  (void)arg;
+  origin_circuit_t *origin = origin_circuit_new();
+  or_circuit_t *relay = or_circuit_new(0, NULL);
+  origin->base_.purpose = CIRCUIT_PURPOSE_CONTROLLER;
+  relay->base_.purpose = CIRCUIT_PURPOSE_OR;
+  crypt_path_t *hop = tor_malloc_zero(sizeof(*hop));
+  hop->magic = CRYPT_PATH_MAGIC;
+  hop->next = hop->prev = hop;
+  origin->cpath = hop;
+  /* No normal runtime path enables these staging flags yet. */
+  hop->payment_export_requested = relay->payment_export_requested = true;
+  hop->payment_keys = tor_malloc_zero(sizeof(*hop->payment_keys));
+  relay->payment_keys = tor_malloc_zero(sizeof(*relay->payment_keys));
+  memset(hop->payment_keys, 0x7b, sizeof(*hop->payment_keys));
+  memset(relay->payment_keys, 0x8c, sizeof(*relay->payment_keys));
+  circuit_mark_for_close(TO_CIRCUIT(origin), END_CIRC_REASON_DESTROYED);
+  circuit_mark_for_close(TO_CIRCUIT(relay), END_CIRC_REASON_DESTROYED);
+  tt_ptr_op(hop->payment_keys, OP_EQ, NULL);
+  tt_ptr_op(relay->payment_keys, OP_EQ, NULL);
+  tt_assert(!hop->payment_export_requested);
+  tt_assert(!relay->payment_export_requested);
+ done:
+  /* Real teardown also covers direct-free/shutdown paths. */
+  circuit_free_all();
+}
+
 struct testcase_t circuitlist_tests[] = {
   { "maps", test_clist_maps, TT_FORK, NULL, NULL },
+  { "payment_key_lifetime", test_clist_payment_key_lifetime,
+    TT_FORK, NULL, NULL },
   { "rend_token_maps", test_rend_token_maps, TT_FORK, NULL, NULL },
   { "pick_circid", test_pick_circid, TT_FORK, NULL, NULL },
   { "hs_circuitmap_isolation", test_hs_circuitmap_isolation,

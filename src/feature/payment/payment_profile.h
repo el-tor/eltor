@@ -3,6 +3,8 @@
 #define TOR_PAYMENT_PROFILE_H
 
 #include <stddef.h>
+#include <stdbool.h>
+#include "lib/malloc/malloc.h"
 #include "lib/cc/torint.h"
 
 /* Inactive codecs for the draft paid-hop v1 profile. These constants do not
@@ -54,6 +56,23 @@ typedef struct payment_profile_keys_t {
   uint8_t start_request[32];
   uint8_t start_reply[32];
 } payment_profile_keys_t;
+
+/* Dedicated crypto result: valid only after authenticated handshake and
+ * parameter negotiation. It is never traffic-key output or RPC data. */
+typedef struct payment_profile_export_t {
+  payment_profile_keys_t keys;
+  bool valid;
+} payment_profile_export_t;
+
+void payment_profile_export_clear(payment_profile_export_t *result);
+/* Move a successful, explicitly requested result into circuit-local storage.
+ * Clears result on success or failure, never replaces existing keys. */
+int payment_profile_export_take(payment_profile_keys_t **destination,
+                                payment_profile_export_t *result,
+                                bool requested);
+void payment_profile_keys_free_(payment_profile_keys_t *keys);
+#define payment_profile_keys_free(keys) \
+  FREE_AND_NULL(payment_profile_keys_t, payment_profile_keys_free_, (keys))
 
 typedef struct payment_profile_renew_t {
   uint64_t period, first_round, activation_ms;

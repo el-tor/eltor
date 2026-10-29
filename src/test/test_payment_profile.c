@@ -598,6 +598,38 @@ test_payment_profile_initial(void *arg)
   payment_profile_keys_clear(&keys);
 }
 
+static void
+test_payment_profile_export_lifetime(void *arg)
+{
+  (void)arg;
+  payment_profile_export_t result = {0}, zero = {0};
+  payment_profile_keys_t *keys = NULL;
+  memset(&result.keys, 0x5a, sizeof(result.keys));
+  result.valid = true;
+  tt_int_op(payment_profile_export_take(&keys, &result, false), OP_EQ, -1);
+  tt_ptr_op(keys, OP_EQ, NULL);
+  tt_mem_op(&result, OP_EQ, &zero, sizeof(zero));
+  tt_int_op(payment_profile_export_take(&keys, &result, false), OP_EQ, 0);
+  tt_ptr_op(keys, OP_EQ, NULL);
+  tt_int_op(payment_profile_export_take(&keys, &result, true), OP_EQ, -1);
+  memset(&result.keys, 0x5a, sizeof(result.keys));
+  result.valid = true;
+  tt_int_op(payment_profile_export_take(&keys, &result, true), OP_EQ, 0);
+  tt_assert(keys);
+  tt_int_op(keys->renew_request[0], OP_EQ, 0x5a);
+  tt_mem_op(&result, OP_EQ, &zero, sizeof(zero));
+  memset(&result.keys, 0x6b, sizeof(result.keys));
+  result.valid = true;
+  tt_int_op(payment_profile_export_take(&keys, &result, true), OP_EQ, -1);
+  tt_int_op(keys->renew_request[0], OP_EQ, 0x5a);
+  tt_mem_op(&result, OP_EQ, &zero, sizeof(zero));
+  payment_profile_keys_free(keys);
+  tt_ptr_op(keys, OP_EQ, NULL);
+ done:
+  payment_profile_export_clear(&result);
+  payment_profile_keys_free(keys);
+}
+
 #define PROFILE_TEST(name) \
   { #name, test_payment_profile_##name, 0, NULL, NULL }
 struct testcase_t payment_profile_tests[] = {
@@ -606,5 +638,6 @@ struct testcase_t payment_profile_tests[] = {
   PROFILE_TEST(replies),
   PROFILE_TEST(policy),
   PROFILE_TEST(initial),
+  PROFILE_TEST(export_lifetime),
   END_OF_TESTCASES
 };

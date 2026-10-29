@@ -88,6 +88,7 @@
 #include "trunnel/subproto_request.h"
 
 #include "feature/payment/payment_util.h"
+#include "lib/crypt_ops/crypto_util.h"
 #include "feature/payment/relay_payments.h"
 #include <stdio.h>
 #include <string.h>
@@ -1082,7 +1083,8 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
                           &circ->cpath->handshake_state,
                           cc.onionskin,
                           sizeof(cc.onionskin),
-                          hop_payhash);
+                          hop_payhash,
+                          circ->cpath->payment_export_requested);
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create (first hop) failed.");
     return - END_CIRC_REASON_INTERNAL;
@@ -1270,7 +1272,8 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
                           &hop->handshake_state,
                           ec.create_cell.onionskin,
                           sizeof(ec.create_cell.onionskin), 
-                          hop_payhash);
+                          hop_payhash,
+                          hop->payment_export_requested);
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create failed.");
     return - END_CIRC_REASON_INTERNAL;
@@ -1379,7 +1382,8 @@ int
 circuit_finish_handshake(origin_circuit_t *circ,
                          const created_cell_t *reply)
 {
-  char keys[MAX_RELAY_KEY_MATERIAL_LEN];
+  char keys[MAX_RELAY_KEY_MATERIAL_LEN] = {0};
+  payment_profile_export_t payment_result = {0};
   crypt_path_t *hop;
   int rv;
 
@@ -1410,18 +1414,26 @@ circuit_finish_handshake(origin_circuit_t *circ,
                                     (uint8_t*)keys, &keylen,
                                     (uint8_t*)hop->rend_circ_nonce,
                                     &params,
-                                    &msg) < 0) {
+                                    &msg, &payment_result) < 0) {
       if (msg)
         log_warn(LD_CIRC,"onion_skin_client_handshake failed: %s", msg);
+      memwipe(keys, 0, sizeof(keys));
+      payment_profile_export_clear(&payment_result);
       return -END_CIRC_REASON_TORPROTOCOL;
     }
   }
 
   onion_handshake_state_release(&hop->handshake_state);
-  if (cpath_init_circuit_crypto(params.crypto_alg,
-                                hop, keys, keylen)<0) {
+  int crypto_result = cpath_init_circuit_crypto(params.crypto_alg,
+                                                hop, keys, keylen);
+  memwipe(keys, 0, sizeof(keys));
+  if (crypto_result < 0) {
+    payment_profile_export_clear(&payment_result);
     return -END_CIRC_REASON_TORPROTOCOL;
   }
+  if (payment_profile_export_take(&hop->payment_keys, &payment_result,
+                                   hop->payment_export_requested) < 0)
+    return -END_CIRC_REASON_TORPROTOCOL;
   hop->relay_cell_format = params.cell_fmt;
 
   if (params.cc_enabled) {

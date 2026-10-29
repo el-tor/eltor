@@ -163,6 +163,8 @@ extern struct testcase_t nodelist_tests[];
 extern struct testcase_t ntor_v3_tests[];
 extern struct testcase_t payment_profile_tests[];
 extern struct testcase_t free_capacity_tests[];
+extern struct testcase_t protocol_budget_tests[];
+extern struct testcase_t payment_schedule_tests[];
 extern struct testcase_t oom_tests[];
 extern struct testcase_t oos_tests[];
 extern struct testcase_t options_tests[];

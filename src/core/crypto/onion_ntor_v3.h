@@ -19,6 +19,7 @@
 #include "lib/crypt_ops/crypto_ed25519.h"
 #include "lib/malloc/malloc.h"
 #include "core/or/or.h"
+#include "feature/payment/payment_profile.h"
 
 /**
  * Client-side state held while an ntor v3 handshake is in progress.
@@ -47,7 +48,8 @@ int onion_skin_ntor3_create(const ed25519_public_key_t *relay_id,
                             const size_t message_len,
                             ntor3_handshake_state_t **handshake_state_out,
                             uint8_t **onion_skin_out,
-                            size_t *onion_skin_len_out);
+                            size_t *onion_skin_len_out,
+                            bool payment_export_requested);
 
 int onion_ntor3_client_handshake(
                              const ntor3_handshake_state_t *handshake_state,
@@ -58,7 +60,8 @@ int onion_ntor3_client_handshake(
                              uint8_t *keys_out,
                              size_t keys_out_len,
                              uint8_t **message_out,
-                             size_t *message_len_out);
+                             size_t *message_len_out,
+                             payment_profile_export_t *payment_out);
 
 struct di_digest256_map_t;
 int onion_skin_ntor3_server_handshake_part1(
@@ -73,7 +76,8 @@ int onion_skin_ntor3_server_handshake_part1(
                 size_t *client_message_len_out,
                 ntor3_server_handshake_state_t **state_out,
                 uint64_t *p_circuit_id,
-                uint64_t *n_circuit_id);
+                uint64_t *n_circuit_id,
+                bool payment_export_requested);
 
 int onion_skin_ntor3_server_handshake_part2(
                 const ntor3_server_handshake_state_t *state,
@@ -84,7 +88,8 @@ int onion_skin_ntor3_server_handshake_part2(
                 uint8_t **handshake_out,
                 size_t *handshake_len_out,
                 uint8_t *keys_out,
-                size_t keys_out_len);
+                size_t keys_out_len,
+                payment_profile_export_t *payment_out);
 
 #ifdef ONION_NTOR_V3_PRIVATE
 struct ntor3_handshake_state_t {
@@ -96,6 +101,9 @@ struct ntor3_handshake_state_t {
   curve25519_public_key_t relay_key;
   /** Shared secret (Bx). */
   uint8_t bx[CURVE25519_OUTPUT_LEN];
+  /** Exact client HDATA, retained only for the gated payment exporter. */
+  uint8_t *payment_client_hdata;
+  size_t payment_client_hdata_len;
   /** MAC of the client's encrypted message data (MAC) */
   uint8_t msg_mac[DIGEST256_LEN];
 };
@@ -110,6 +118,9 @@ struct ntor3_server_handshake_state_t {
 
   /** Shared secret (Xb) */
   uint8_t xb[CURVE25519_OUTPUT_LEN];
+  /** Exact authenticated client HDATA for the gated payment exporter. */
+  uint8_t *payment_client_hdata;
+  size_t payment_client_hdata_len;
   /** MAC of the client's encrypted message data */
   uint8_t msg_mac[DIGEST256_LEN];
 };
@@ -124,7 +135,8 @@ STATIC int onion_skin_ntor3_create_nokeygen(
                         const size_t message_len,
                         ntor3_handshake_state_t **handshake_state_out,
                         uint8_t **onion_skin_out,
-                        size_t *onion_skin_len_out);
+                        size_t *onion_skin_len_out,
+                            bool payment_export_requested);
 
 STATIC int onion_skin_ntor3_server_handshake_part2_nokeygen(
                 const curve25519_keypair_t *relay_keypair_y,
@@ -136,7 +148,8 @@ STATIC int onion_skin_ntor3_server_handshake_part2_nokeygen(
                 uint8_t **handshake_out,
                 size_t *handshake_len_out,
                 uint8_t *keys_out,
-                size_t keys_out_len);
+                size_t keys_out_len,
+                payment_profile_export_t *payment_out);
 
 #endif
 

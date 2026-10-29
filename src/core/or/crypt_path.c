@@ -161,6 +161,7 @@ cpath_free(crypt_path_t *victim)
   if (!victim)
     return;
 
+  payment_profile_keys_free(victim->payment_keys);
   relay_crypto_clear(&victim->pvt_crypto);
   onion_handshake_state_release(&victim->handshake_state);
   extend_info_free(victim->extend_info);

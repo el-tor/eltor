@@ -21,6 +21,11 @@ struct onion_queue_t;
 struct or_circuit_t {
   circuit_t base_;
 
+  /** Initially false staging gate; no runtime producer enables it yet. */
+  bool payment_export_requested;
+  /** Circuit-local paid-hop keys; never daemon/control/wallet material. */
+  payment_profile_keys_t *payment_keys;
+
   /** Pointer to an entry on the onion queue, if this circuit is waiting for a
    * chance to give an onionskin to a cpuworker. Used only in onion.c */
   struct onion_queue_t *onionqueue_entry;

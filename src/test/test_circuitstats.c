@@ -1971,7 +1971,7 @@ test_circuitstats_firsthop_progress(void *arg)
   crypt_path_t *hop = circ->cpath->next;
   int len = onion_skin_create(ONION_HANDSHAKE_TYPE_FAST, hop->extend_info,
                               &hop->handshake_state, cbt_last_create.onionskin,
-                              sizeof(cbt_last_create.onionskin), NULL);
+                              sizeof(cbt_last_create.onionskin), NULL, false);
   tt_int_op(len, OP_GT, 0);
   hop->state = CPATH_STATE_AWAITING_KEYS;
   tt_int_op(fast_server_handshake(cbt_last_create.onionskin, reply.reply,

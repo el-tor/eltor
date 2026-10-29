@@ -721,5 +721,7 @@ struct testgroup_t testgroups[] = {
   { "payment/", payment_tests },
   { "payment_profile/", payment_profile_tests },
   { "free_capacity/", free_capacity_tests },
+  { "protocol_budget/", protocol_budget_tests },
+  { "payment_schedule/", payment_schedule_tests },
   END_OF_GROUPS
 };

@@ -134,6 +134,38 @@ payment_profile_keys_clear(payment_profile_keys_t *keys)
     memwipe(keys, 0, sizeof(*keys));
 }
 
+void
+payment_profile_export_clear(payment_profile_export_t *result)
+{
+  if (result)
+    memwipe(result, 0, sizeof(*result));
+}
+
+void
+payment_profile_keys_free_(payment_profile_keys_t *keys)
+{
+  if (!keys)
+    return;
+  payment_profile_keys_clear(keys);
+  tor_free(keys);
+}
+
+int
+payment_profile_export_take(payment_profile_keys_t **destination,
+                            payment_profile_export_t *result, bool requested)
+{
+  if (!result)
+    return -1;
+  int ret = -1;
+  if (destination && !*destination && result->valid == requested) {
+    if (requested)
+      *destination = tor_memdup(&result->keys, sizeof(result->keys));
+    ret = 0;
+  }
+  payment_profile_export_clear(result);
+  return ret;
+}
+
 int
 payment_profile_derive_keys(payment_profile_keys_t *out,
                            const uint8_t seed[32],

@@ -26,6 +26,8 @@ struct onion_handshake_state_t {
   /** Initial circuit parameters (selected during first stage of negotiation;
    * may be changed based on response from relay). */
   circuit_params_t chosen_params;
+  /** Initially false staging gate, distinct from wire negotiation. */
+  bool payment_export_requested;
   union {
     struct fast_handshake_state_t *fast;
     struct ntor_handshake_state_t *ntor;
@@ -56,6 +58,11 @@ struct crypt_path_t {
   /** Current state of the handshake as performed with the OR at this
    * step. */
   onion_handshake_state_t handshake_state;
+
+  /** Initially false; only verified profile negotiation may enable this. */
+  bool payment_export_requested;
+  /** Derived paid-hop keys, allocated only with an explicit profile gate. */
+  payment_profile_keys_t *payment_keys;
 
   /** Negotiated key material shared with the OR at this step. */
   char rend_circ_nonce[DIGEST_LEN];/* KH in tor-spec.txt */

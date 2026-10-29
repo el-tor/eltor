@@ -385,7 +385,7 @@ command_process_create_cell(cell_t *cell, channel_t *chan)
                                        rend_circ_nonce,
                                        &params,
                                        &circuit_id_64,
-                                       &n_circuit_id_64);
+                                       &n_circuit_id_64, false, NULL);
     tor_free(create_cell);
     if (len < 0 || keylen != sizeof(keys)) {
       log_warn(LD_OR,"Failed to generate key material. Closing.");

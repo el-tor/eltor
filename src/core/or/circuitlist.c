@@ -1263,6 +1263,7 @@ circuit_free_(circuit_t *circ)
 
     should_free = (ocirc->workqueue_entry == NULL);
 
+    payment_profile_keys_free(ocirc->payment_keys);
     relay_crypto_clear(&ocirc->crypto);
 
     if (ocirc->rend_splice) {
@@ -2276,6 +2277,22 @@ circuit_mark_for_close_, (circuit_t *circ, int reason, int line,
     if (!(orig_reason & END_CIRC_REASON_FLAG_REMOTE))
       log_warn(LD_BUG, "Reason %d out of range at %s:%d", reason, file, line);
     reason = END_CIRC_REASON_NONE;
+  }
+
+  if (CIRCUIT_IS_ORIGIN(circ)) {
+    crypt_path_t *head = TO_ORIGIN_CIRCUIT(circ)->cpath;
+    if (head) {
+      crypt_path_t *hop = head;
+      do {
+        payment_profile_keys_free(hop->payment_keys);
+        hop->payment_export_requested = false;
+        hop = hop->next;
+      } while (hop && hop != head);
+    }
+  } else {
+    or_circuit_t *or_circ = TO_OR_CIRCUIT(circ);
+    payment_profile_keys_free(or_circ->payment_keys);
+    or_circ->payment_export_requested = false;
   }
 
   circ->marked_for_close = line;
