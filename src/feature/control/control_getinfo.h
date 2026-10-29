@@ -20,6 +20,8 @@ int handle_control_getinfo(control_connection_t *conn,
                            const struct control_cmd_args_t *args);
 
 #ifdef CONTROL_GETINFO_PRIVATE
+STATIC int getinfo_helper_eltor_resources(control_connection_t *,
+    const char *, char **, const char **);
 STATIC int getinfo_helper_onions(
     control_connection_t *control_conn,
     const char *question,

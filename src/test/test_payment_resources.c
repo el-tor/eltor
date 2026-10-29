@@ -1,5 +1,6 @@
 /* Copyright (c) 2026, The El Tor Project. */
 /* See LICENSE for licensing information. */
+#define CONTROL_GETINFO_PRIVATE
 #include "orconfig.h"
 #include "core/or/or.h"
 #include "core/or/origin_circuit_st.h"
@@ -11,6 +12,11 @@
 #include "feature/payment/payment_origin.h"
 #include "feature/payment/relay_payments.h"
 #include "feature/payment/payment_resources.h"
+#include "feature/control/control_getinfo.h"
+#include "feature/control/control_connection_st.h"
+#include "feature/control/control.h"
+#include "feature/control/control_proto.h"
+#include "feature/control/control_cmd_args_st.h"
 #include "lib/time/compat_time.h"
 #include "lib/evloop/timers.h"
 #include "test/test.h"
@@ -264,7 +270,85 @@ test_payment_resources_constructor_graph(void *arg)
 
 #define RESOURCE_TEST(name) \
   { #name, test_payment_resources_##name, TT_FORK, NULL, NULL }
+static int snapshot_reply_code, snapshot_reply_count;
+static void
+snapshot_capture_reply(control_connection_t *conn, int code, int separator,
+                         const char *body)
+{
+  (void)conn; (void)separator; (void)body;
+  snapshot_reply_code = code; ++snapshot_reply_count;
+}
+
+static void
+test_payment_resources_snapshot(void *arg)
+{
+  (void)arg;
+  payment_resource_snapshot_t before, after;
+  protocol_budget_memory_t memory = {0};
+  control_connection_t conn = {0};
+  char *answer = NULL; const char *error = NULL;
+  smartlist_t *questions = NULL;
+  monotime_enable_test_mocking();
+  monotime_set_mock_time_nsec(INT64_C(1000000000));
+  payment_resources_snapshot(&before);
+  tt_assert(!before.initialized); tt_uint_op(before.arena_used, OP_EQ, 0);
+  tt_int_op(getinfo_helper_eltor_resources(NULL, "eltor/resource-status",
+                                          &answer, &error), OP_EQ, -1);
+  tt_ptr_op(answer, OP_EQ, NULL);
+  conn.payment_local_fd = true; /* Authentication state is still required. */
+  tt_int_op(getinfo_helper_eltor_resources(&conn, "eltor/resource-status",
+                                          &answer, &error), OP_EQ, -1);
+  conn.base_.state = CONTROL_CONN_STATE_OPEN; conn.payment_local_fd = false;
+  tt_int_op(tor_addr_parse(&conn.base_.addr, "192.0.2.1"), OP_EQ, AF_INET);
+  tt_int_op(getinfo_helper_eltor_resources(&conn, "eltor/resource-status",
+                                          &answer, &error), OP_EQ, -1);
+  conn.payment_local_fd = true;
+  tt_int_op(getinfo_helper_eltor_resources(&conn, "eltor/resource-status",
+                                          &answer, &error), OP_EQ, 0);
+  tt_uint_op(strlen(answer), OP_LT, 1024); tor_free(answer);
+  payment_resources_snapshot(&after);
+  tt_mem_op(&before, OP_EQ, &after, sizeof(before)); /* No lazy initialization. */
+  tt_int_op(payment_resources_reserve(&memory, 256), OP_EQ, 0);
+  protocol_budget_t *owner = payment_resources_protocol();
+  owner->crypto_credit_milli = 1;
+  payment_resources_snapshot(&before);
+  monotime_set_mock_time_nsec(INT64_C(5000000000));
+  tt_int_op(getinfo_helper_eltor_resources(&conn, "eltor/resource-status",
+                                          &answer, &error), OP_EQ, 0);
+  tt_uint_op(strlen(answer), OP_LT, 1024);
+  payment_resources_snapshot(&after);
+  tt_mem_op(&before, OP_EQ, &after, sizeof(before)); /* No refill/clock advance. */
+  tt_u64_op(owner->crypto_credit_milli, OP_EQ, 1);
+  tt_u64_op(owner->last_ms, OP_EQ, 1000);
+  tor_free(answer);
+  /* Largest representable counters/limits still fit the fixed response cap. */
+  memset(&after.free_limits, 0xff, sizeof(after.free_limits));
+  memset(&after.protocol_limits, 0xff, sizeof(after.protocol_limits));
+  after.received_bytes = after.sent_bytes = after.attempts_started = UINT64_MAX;
+  after.admission_credit_milli = after.byte_credit_milli =
+    after.crypto_credit_milli = UINT64_MAX;
+  after.live_circuits = after.queued_bytes = after.slots = after.arena_used =
+    after.reservations = after.running = after.waiting = after.operations = UINT32_MAX;
+  answer = payment_resources_format_snapshot(&after);
+  tt_uint_op(strlen(answer), OP_LT, 1024);
+  questions = smartlist_new();
+  smartlist_add(questions, (char *)"eltor/resource-status");
+  smartlist_add(questions, (char *)"eltor/resource-status");
+  struct control_cmd_args_t args = { .args = questions };
+  snapshot_reply_count = snapshot_reply_code = 0;
+  MOCK(control_write_reply, snapshot_capture_reply);
+  tt_int_op(handle_control_getinfo(&conn, &args), OP_EQ, 0);
+  tt_int_op(snapshot_reply_code, OP_EQ, 512);
+  tt_int_op(snapshot_reply_count, OP_EQ, 1);
+ done:
+  UNMOCK(control_write_reply);
+  smartlist_free(questions);
+  tor_free(answer); (void)payment_resources_release(&memory);
+  (void)payment_resources_free_all(); monotime_disable_test_mocking();
+}
+
 struct testcase_t payment_resources_tests[] = {
+  {"snapshot",test_payment_resources_snapshot,TT_FORK,NULL,NULL},
   RESOURCE_TEST(shared_memory),
   RESOURCE_TEST(operations),
   RESOURCE_TEST(accessors),

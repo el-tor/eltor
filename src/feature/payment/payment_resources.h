@@ -31,6 +31,20 @@ int payment_resources_configure(const protocol_budget_limits_t *limits);
  * including after initialization: buckets, counters and receipts never reset. */
 int payment_resources_configure_limits(const free_capacity_limits_t *free_limits,
     const protocol_budget_limits_t *protocol_limits);
+/* Main-loop aggregate observation only. Does not initialize/refill/expire an
+ * owner, allocate slots, advance work, or touch circuit/payment identities. */
+typedef struct payment_resource_snapshot_t {
+  free_capacity_limits_t free_limits;
+  protocol_budget_limits_t protocol_limits;
+  uint64_t received_bytes, sent_bytes, attempts_started;
+  uint64_t admission_credit_milli, byte_credit_milli, crypto_credit_milli;
+  uint32_t live_circuits, queued_bytes, slots, arena_used, reservations;
+  uint32_t running, waiting, operations;
+  bool initialized, exhausted;
+} payment_resource_snapshot_t;
+void payment_resources_snapshot(payment_resource_snapshot_t *out);
+/* Fixed schema, bounded to 1024 bytes, no identifiers/keys or dynamic rows. */
+char *payment_resources_format_snapshot(const payment_resource_snapshot_t *);
 /* Process shutdown only, after all circuit/control reservations are released.
  * Refuse to reset live resources. Return -1 if a caller still owns anything. */
 int payment_resources_free_all(void);

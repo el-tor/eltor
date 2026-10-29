@@ -3,7 +3,9 @@
 #include "orconfig.h"
 #include "feature/payment/payment_resources.h"
 #include "lib/time/compat_time.h"
+#include "lib/string/printf.h"
 #include <stdbool.h>
+#include <inttypes.h>
 #include <string.h>
 
 static struct {
@@ -161,4 +163,69 @@ payment_resources_free_all(void)
   (void)payment_resources_release(&resources.baseline);
   memset(&resources, 0, sizeof(resources));
   return 0;
+}
+
+
+void
+payment_resources_snapshot(payment_resource_snapshot_t *out)
+{
+  if (!out) return;
+  memset(out, 0, sizeof(*out));
+  out->initialized = resources.initialized;
+  out->exhausted = resources.exhausted;
+  if (resources.initialized) {
+    out->free_limits = resources.free.limits;
+    out->protocol_limits = resources.protocol.limits;
+  } else if (resources.configured) {
+    out->free_limits = resources.free_limits;
+    out->protocol_limits = resources.limits;
+  } else {
+    free_capacity_default_limits(&out->free_limits);
+    protocol_budget_default_limits(&out->protocol_limits);
+  }
+  out->received_bytes = resources.free.received_bytes;
+  out->sent_bytes = resources.free.sent_bytes;
+  out->attempts_started = resources.protocol.attempts_started;
+  out->admission_credit_milli = resources.free.admissions.credit_milli;
+  out->byte_credit_milli = resources.free.bytes.credit_milli;
+  out->crypto_credit_milli = resources.protocol.crypto_credit_milli;
+  out->live_circuits = resources.free.live_circuits;
+  out->queued_bytes = resources.free.queued_bytes;
+  out->slots = resources.protocol.slots;
+  out->arena_used = resources.protocol.arena_used;
+  out->reservations = resources.protocol.memory_reservations;
+  out->running = resources.protocol.running;
+  out->waiting = resources.protocol.waiting;
+  out->operations = resources.operations;
+}
+
+char *
+payment_resources_format_snapshot(const payment_resource_snapshot_t *s)
+{
+  if (!s) return NULL;
+  char *answer;
+  tor_asprintf(&answer,
+    "FORMAT 1\nSTATE %u %u\nFREE %u %u %u %u\n"
+    "LINK_BYTES %"PRIu64" %"PRIu64"\n"
+    "ADMISSION %"PRIu64" %u %u %u %u\n"
+    "TRAFFIC %"PRIu64" %u %u %u %u\n"
+    "PROTOCOL %u %u %u %u %u\n"
+    "WORK %u %u %u %u %"PRIu64" %"PRIu64" %u %u\n"
+    "OPERATIONS %u %u",
+    (unsigned)s->initialized, (unsigned)s->exhausted,
+    s->live_circuits, s->free_limits.max_circuits,
+    s->queued_bytes, s->free_limits.queue_bytes,
+    s->received_bytes, s->sent_bytes, s->admission_credit_milli,
+    s->free_limits.admission_rate, s->free_limits.admission_burst,
+    s->free_limits.conn_admission_rate, s->free_limits.conn_admission_burst,
+    s->byte_credit_milli, s->free_limits.byte_rate, s->free_limits.byte_burst,
+    s->free_limits.conn_byte_rate, s->free_limits.conn_byte_burst,
+    s->slots, s->protocol_limits.max_slots, s->arena_used,
+    s->protocol_limits.arena_bytes, s->reservations,
+    s->running, s->protocol_limits.max_running,
+    s->waiting, s->protocol_limits.max_waiting,
+    s->attempts_started, s->crypto_credit_milli,
+    s->protocol_limits.crypto_rate, s->protocol_limits.crypto_burst,
+    s->operations, PAYMENT_RESOURCES_OPERATIONS);
+  return answer;
 }
