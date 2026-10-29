@@ -14,6 +14,14 @@
 
 #ifdef HAVE_MODULE_RELAY
 
+#ifdef SELFTEST_PRIVATE
+#include "lib/testsupport/testsupport.h"
+struct extend_info_t;
+struct routerinfo_t;
+STATIC struct extend_info_t *selftest_extend_info_from_router(
+                                      const struct routerinfo_t *, int family);
+#endif
+
 struct or_options_t;
 #define router_all_orports_seem_reachable(opts) \
   router_orport_seems_reachable((opts),0)

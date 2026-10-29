@@ -19,6 +19,9 @@
 #include "feature/payment/free_capacity_hooks.h"
 #include "feature/control/control_payment.h"
 #include "lib/crypt_ops/crypto_util.h"
+#include "lib/crypt_ops/crypto_rand.h"
+#include "lib/crypt_ops/crypto_digest.h"
+#include "lib/encoding/binascii.h"
 #include "lib/ctime/di_ops.h"
 #include "lib/evloop/timers.h"
 #include "lib/time/compat_time.h"
@@ -325,11 +328,80 @@ payment_origin_reserve_construction(origin_circuit_t *circ)
 }
 
 int
+payment_origin_prepare_reachability(origin_circuit_t *circ)
+{
+  if (!origin_enabled) return 0;
+  if (!circ || circ->base_.marked_for_close ||
+      circ->base_.purpose != CIRCUIT_PURPOSE_TESTING || !circ->build_state ||
+      !circ->build_state->is_internal || circ->build_state->onehop_tunnel ||
+      !circ->cpath) return -1;
+  if (circ->payment_internal_free)
+    return payment_origin_reserve_construction(circ);
+  if (circ->payhashes || circ->relay_payments ||
+      circ->payment_construction_memory.active) return -1;
+  const crypt_path_t *hop = circ->cpath;
+  unsigned hops = 0;
+  bool any_paid = false, all_paid = true;
+  do {
+    if (!hop || !hop->extend_info || ++hops > 16 ||
+        hop->state != CPATH_STATE_CLOSED ||
+        !hop->extend_info->payment_free_v1 ||
+        !hop->extend_info->supports_ntor_v3) return -1;
+    any_paid |= hop->extend_info->payment_start_v1;
+    all_paid &= hop->extend_info->payment_start_v1;
+    hop = hop->next;
+  } while (hop != circ->cpath);
+  if (any_paid && !all_paid) return -1;
+  size_t cost, capacity = hops * 768u + 1u;
+  if (payment_origin_construction_cost(circ, &cost) < 0 ||
+      construction_add(&cost, capacity) < 0 ||
+      payment_resources_reserve(&circ->payment_construction_memory, cost) !=
+        PROTOCOL_BUDGET_OK) return -1;
+  circ->payment_construction_hops = (uint16_t)hops;
+  circ->payhashes = tor_malloc_zero(capacity);
+  circ->payment_payhash_capacity = capacity;
+  uint8_t raw[384] = {0}, ids[16][10][32] = {{{0}}};
+  for (unsigned i = 0; i < hops; ++i) {
+    bool fresh = false;
+    for (unsigned attempt = 0; attempt < 4 && !fresh; ++attempt) {
+      crypto_rand((char *)raw + 32, sizeof(raw) - 32);
+      fresh = payment_profile_ids_valid((const uint8_t (*)[32])(raw + 64));
+      for (unsigned prior = 0; prior < i && fresh; ++prior)
+        for (unsigned a = 0; a < 10 && fresh; ++a)
+          for (unsigned b = 0; b < 10; ++b)
+            if (tor_memeq(ids[prior][a], raw + 64 + 32*b, 32)) {
+              fresh = false;
+              break;
+            }
+    }
+    if (!fresh) {
+      memwipe(raw, 0, sizeof(raw)); memwipe(ids, 0, sizeof(ids));
+      return -1; /* Caller closes; receipt remains through actual graph free. */
+    }
+    if (crypto_digest256((char *)raw, (const char *)raw + 32, 32,
+                          DIGEST_SHA256) < 0) {
+      memwipe(raw, 0, sizeof(raw)); memwipe(ids, 0, sizeof(ids));
+      return -1;
+    }
+    memcpy(ids[i], raw + 64, sizeof(ids[i]));
+    base16_encode(circ->payhashes + i*768u, capacity - i*768u,
+                   (const char *)raw, sizeof(raw));
+  }
+  tor_strlower(circ->payhashes);
+  memwipe(raw, 0, sizeof(raw)); memwipe(ids, 0, sizeof(ids));
+  circ->payment_internal_free = true;
+  return 0;
+}
+
+int
 payment_origin_prepare_handshake(origin_circuit_t *circ, crypt_path_t *hop,
                                   const char *payload, uint64_t now_ms)
 {
   if (!origin_enabled) return 0;
   if (!circ || !hop || !hop->extend_info || !circ->cpath) return -1;
+  if (circ->payment_internal_free &&
+      (circ->base_.purpose != CIRCUIT_PURPOSE_TESTING || !circ->build_state ||
+       !circ->build_state->is_internal)) return -1;
   if (!payload) {
     /* Directory bootstrap uses a purpose-limited one-hop tunnel before full
      * signed descriptors or daemon-owned foundation circuits are available. */
@@ -360,7 +432,7 @@ payment_origin_prepare_handshake(origin_circuit_t *circ, crypt_path_t *hop,
       free_capacity_circuit_prepare_channel(TO_CIRCUIT(circ),circ->base_.n_chan)<0)
     return -1;
   hop->payment_export_requested = true;
-  if (!hop->extend_info->payment_start_v1) {
+  if (!hop->extend_info->payment_start_v1 || circ->payment_internal_free) {
     control_payment_init();
     if (control_payment_register(TO_CIRCUIT(circ),CONTROL_PAYMENT_ORIGIN,
                              (uint16_t)circuit_get_cpath_len(circ),false)<0) {
@@ -613,6 +685,7 @@ bool
 payment_origin_present(const origin_circuit_t *circ)
 {
   if (!circ) return false;
+  if (circ->payment_internal_free) return true;
   const crypt_path_t *hop=circ->cpath;
   unsigned count=0;
   if (hop) do {
@@ -646,7 +719,8 @@ payment_origin_data_active(const origin_circuit_t *circ, uint64_t now_ms)
 bool
 payment_origin_streams_ready(const origin_circuit_t *circ, uint64_t now_ms)
 {
-  if (!circ || circ->base_.marked_for_close) return false;
+  if (!circ || circ->base_.marked_for_close || circ->payment_internal_free)
+    return false;
   const crypt_path_t *hop=circ->cpath;
   unsigned count=0;
   bool resource_only=circ->base_.free_capacity!=NULL;

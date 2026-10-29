@@ -339,6 +339,9 @@ struct origin_circuit_t {
   protocol_budget_memory_t payment_construction_memory;
   size_t payment_payhash_capacity;
   uint16_t payment_construction_hops;
+  /* Local maintenance owner only; no wire purpose bit or paid authority.
+   * Irreversible until actual free, and never eligible for application use. */
+  bool payment_internal_free;
 
   char *payhashes;
 

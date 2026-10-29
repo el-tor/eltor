@@ -93,6 +93,9 @@ payment_origin_result_t payment_origin_pin(struct origin_circuit_t *circ,
 int payment_origin_prepare_handshake(struct origin_circuit_t *circ,
     struct crypt_path_t *hop, const char *payload, uint64_t now_ms);
 int payment_origin_configure_enabled(bool enabled);
+/* Native internal relay reachability only. Creates fresh uniform per-hop
+ * construction under the same bounded free admission; never COMMITs or pays. */
+int payment_origin_prepare_reachability(struct origin_circuit_t *circ);
 int payment_origin_resource_complete(struct origin_circuit_t *,
     struct crypt_path_t *, bool admitted, uint64_t now_ms);
 /* Called only after authenticated handshake + traffic-key installation. */

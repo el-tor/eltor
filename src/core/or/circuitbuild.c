@@ -511,6 +511,12 @@ circuit_establish_circuit_with_guard(uint8_t purpose, extend_info_t *exit_ei,
     return NULL;
   }
 
+  if (purpose == CIRCUIT_PURPOSE_TESTING &&
+      payment_origin_prepare_reachability(circ) < 0) {
+    circuit_mark_for_close(TO_CIRCUIT(circ), END_CIRC_REASON_RESOURCELIMIT);
+    return NULL;
+  }
+
   circuit_event_status(circ, CIRC_EVENT_LAUNCHED, 0);
 
   err_reason = circuit_handle_first_hop_with_guard(circ, guard_state);
@@ -1263,9 +1269,14 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   }
 
   const relay_payment_item_t *payment = relay_payments_find_by_hop_num(circ->relay_payments, hop_num);
+  char internal_payhash[PAYMENT_PAYHASH_SIZE] = {0};
   const char *hop_payhash = NULL;
   if (payment && payment->wire_format) {
     hop_payhash = payment->wire_format;
+  } else if (circ->payment_internal_free &&
+      payment_util_get_hop_payhash(circ, hop, internal_payhash,
+                                   sizeof(internal_payhash))) {
+    hop_payhash = internal_payhash;
   }
 
   // Add debugging to show we have the payment hash

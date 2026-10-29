@@ -1,6 +1,7 @@
 /* Copyright (c) 2026, The El Tor Project. */
 /* See LICENSE for licensing information. */
 #define CHANNEL_OBJECT_PRIVATE
+#define SELFTEST_PRIVATE
 #include "orconfig.h"
 #include "core/or/or.h"
 #include "core/or/origin_circuit_st.h"
@@ -21,8 +22,14 @@
 #include "feature/payment/payment_origin.h"
 #include "feature/payment/payment_resources.h"
 #include "feature/payment/free_capacity_hooks.h"
+#include "feature/payment/payment_util.h"
+#include "feature/payment/payment_initial.h"
+#include "lib/crypt_ops/crypto_digest.h"
 #include "feature/control/control_payment.h"
 #include "feature/control/control.h"
+#include "feature/relay/selftest.h"
+#include "feature/nodelist/routerinfo_st.h"
+#include "core/or/extendinfo.h"
 #include "core/mainloop/connection.h"
 #include "feature/control/control_proto.h"
 #include "feature/control/control_connection_st.h"
@@ -577,6 +584,153 @@ test_origin_no_application_fallback(void *arg)
   (void)payment_resources_free_all(); timers_shutdown();
 }
 
+#ifdef HAVE_MODULE_RELAY
+static void
+test_origin_reachability_descriptor(void *arg)
+{
+  (void)arg;
+  routerinfo_t router = {0};
+  extend_info_t *info = NULL;
+  curve25519_public_key_t onion_key = {{1}};
+  payment_profile_policy_t policy = payment_profile_testing_policy();
+  router.onion_curve25519_pkey = &onion_key;
+  router.nickname = (char *)"synthetic";
+  router.protocol_list = (char *)"Relay=1-5";
+  router.ipv4_orport = 9001;
+  tt_int_op(tor_addr_parse(&router.ipv4_addr, "127.0.0.1"), OP_EQ, AF_INET);
+  router.payment_start_v1 = router.payment_renew_v1 = router.payment_free_v1 = true;
+  policy.rate_msat = 1500;
+  tt_int_op(payment_profile_policy_encode(router.payment_profile_terms, 55,
+                                          &policy), OP_EQ, 0);
+  /* The synthetic marker isolates propagation; signed descriptor validation
+   * itself is covered by the dir/formats_rsa_ed25519 regression. */
+  router.cache_info.signed_descriptor_body = (char *)"synthetic local descriptor";
+  info = selftest_extend_info_from_router(&router, AF_INET);
+  tt_assert(info);
+  tt_assert(info->supports_ntor_v3 && info->payment_free_v1 &&
+            info->payment_start_v1 && info->payment_renew_v1);
+  tt_mem_op(info->payment_profile_terms, OP_EQ, router.payment_profile_terms, 55);
+  tt_assert(!info->use_congestion_control);
+  extend_info_free(info); info = NULL;
+  router.cache_info.signed_descriptor_body = NULL;
+  info = selftest_extend_info_from_router(&router, AF_INET);
+  tt_assert(info); tt_assert(!info->payment_free_v1);
+  extend_info_free(info); info = NULL;
+  router.cache_info.signed_descriptor_body = (char *)"synthetic local descriptor";
+  router.protocol_list = (char *)"Relay=1";
+  info = selftest_extend_info_from_router(&router, AF_INET);
+  tt_assert(info); tt_assert(!info->payment_free_v1 && !info->supports_ntor_v3);
+ done:
+  extend_info_free(info);
+}
+#endif
+
+static void
+test_origin_reachability(void *arg)
+{
+  (void)arg;
+  origin_circuit_t *circ = NULL;
+  extend_info_t info = {0};
+  or_connection_t conn = {0}; channel_tls_t chan = {0};
+  protocol_budget_memory_t fill = {0};
+  char payload[782], retained[3*768+1];
+  uint8_t decoded[384], hash[32], ids[3][10][32];
+  entry_connection_t entry = {0}; socks_request_t socks = {0};
+  timers_initialize(); monotime_enable_test_mocking();
+  monotime_set_mock_time_nsec(INT64_C(1000000000));
+  monotime_coarse_set_mock_time_nsec(INT64_C(1000000000));
+  circ = origin_circuit_new();
+  circ->base_.purpose = CIRCUIT_PURPOSE_C_GENERAL;
+  circ->build_state = tor_malloc_zero(sizeof(*circ->build_state));
+  circ->build_state->desired_path_len = 3;
+  circ->build_state->is_internal = true;
+  info.supports_ntor_v3 = info.payment_free_v1 = true;
+  info.payment_start_v1 = info.payment_renew_v1 = true;
+  for (unsigned i = 0; i < 3; ++i)
+    tt_int_op(cpath_append_hop(&circ->cpath, &info), OP_EQ, 0);
+  tt_int_op(payment_origin_configure_enabled(true), OP_EQ, 0);
+  tt_int_op(payment_origin_prepare_reachability(circ), OP_EQ, -1);
+  circ->base_.purpose = CIRCUIT_PURPOSE_TESTING;
+  circ->cpath->next->extend_info->payment_free_v1 = false;
+  tt_int_op(payment_origin_prepare_reachability(circ), OP_EQ, -1);
+  tt_ptr_op(circ->payhashes, OP_EQ, NULL);
+  tt_assert(!circ->payment_construction_memory.active);
+  circ->cpath->next->extend_info->payment_free_v1 = true;
+  protocol_budget_t *owner = payment_resources_protocol();
+  tt_int_op(payment_resources_reserve(&fill,
+                   owner->limits.arena_bytes - owner->arena_used), OP_EQ, 0);
+  tt_int_op(payment_origin_prepare_reachability(circ), OP_EQ, -1);
+  tt_ptr_op(circ->payhashes, OP_EQ, NULL);
+  tt_assert(!circ->payment_construction_memory.active);
+  tt_int_op(payment_resources_release(&fill), OP_EQ, 0);
+  tt_int_op(payment_origin_prepare_reachability(circ), OP_EQ, 0);
+  tt_assert(circ->payment_internal_free);
+  tt_uint_op(circ->payment_construction_hops, OP_EQ, 3);
+  tt_uint_op(circ->payment_payhash_capacity, OP_EQ, sizeof(retained));
+  tt_uint_op(strlen(circ->payhashes), OP_EQ, sizeof(retained)-1);
+  memcpy(retained, circ->payhashes, sizeof(retained));
+  uint32_t memory = owner->arena_used;
+  tt_int_op(payment_origin_prepare_reachability(circ), OP_EQ, 0);
+  tt_mem_op(circ->payhashes, OP_EQ, retained, sizeof(retained));
+  tt_uint_op(owner->arena_used, OP_EQ, memory);
+  chan.base_.magic = TLS_CHAN_MAGIC; chan.base_.wide_circ_ids = true;
+  chan.conn = &conn; circ->base_.n_chan = &chan.base_;
+  crypt_path_t *hop = circ->cpath;
+  for (unsigned i = 0; i < 3; ++i, hop = hop->next) {
+    payment_initial_material_t material;
+    tt_int_op(payment_util_get_hop_payhash(circ, hop, payload, sizeof(payload)),
+              OP_EQ, 1);
+    tt_int_op(payment_initial_parse(&material, (const uint8_t *)payload,
+                                    strlen(payload)), OP_EQ, 0);
+    tt_int_op(base16_decode((char *)decoded, sizeof(decoded), payload+13, 768),
+              OP_EQ, sizeof(decoded));
+    tt_int_op(crypto_digest256((char *)hash, (const char *)decoded+32, 32,
+                               DIGEST_SHA256), OP_EQ, 0);
+    tt_mem_op(hash, OP_EQ, decoded, 32);
+    memcpy(ids[i], material.ids, sizeof(ids[i]));
+    for (unsigned prior = 0; prior < i; ++prior)
+      for (unsigned a = 0; a < 10; ++a)
+        for (unsigned b = 0; b < 10; ++b)
+          tt_mem_op(ids[prior][a], OP_NE, ids[i][b], 32);
+    payment_initial_clear(&material);
+    tt_int_op(payment_origin_prepare_handshake(circ, hop, payload, 1000),
+              OP_EQ, 0);
+    tt_ptr_op(hop->payment_profile, OP_EQ, NULL); /* no financial authority */
+    hop->payment_keys = tor_malloc_zero(sizeof(*hop->payment_keys));
+    tt_int_op(payment_origin_resource_complete(circ, hop, true, 1000), OP_EQ, 0);
+    hop->state = CPATH_STATE_OPEN;
+  }
+  tt_uint_op(payment_resources_free()->live_circuits, OP_EQ, 1);
+  payment_origin_registration_t registration;
+  tt_int_op(payment_origin_get_registration(circ, 1, 1000, &registration),
+            OP_EQ, PAYMENT_ORIGIN_UNSUPPORTED);
+  for (unsigned i = 0; i < 128; ++i)
+    tt_int_op(free_capacity_circuit_send(TO_CIRCUIT(circ), &chan.base_),
+              OP_EQ, FREE_CAPACITY_OK);
+  tt_int_op(free_capacity_circuit_send(TO_CIRCUIT(circ), &chan.base_),
+            OP_EQ, FREE_CAPACITY_WAIT);
+  tt_assert(!payment_origin_streams_ready(circ, 1000));
+  /* Even an unrelated local purpose mutation cannot turn a retained internal
+   * owner into an application circuit or cannibalization candidate. */
+  circ->base_.purpose = CIRCUIT_PURPOSE_C_GENERAL;
+  circ->base_.state = CIRCUIT_STATE_OPEN;
+  tt_ptr_op(circuit_find_to_cannibalize(CIRCUIT_PURPOSE_C_INTRODUCING, NULL,
+                                      CIRCLAUNCH_IS_INTERNAL), OP_EQ, NULL);
+  ENTRY_TO_CONN(&entry)->state = AP_CONN_STATE_CONTROLLER_WAIT;
+  entry.socks_request = &socks;
+  tt_int_op(connection_ap_handshake_attach_chosen_circuit(&entry, circ, NULL),
+            OP_EQ, 0);
+  tt_ptr_op(ENTRY_TO_EDGE_CONN(&entry)->on_circuit, OP_EQ, NULL);
+  tt_int_op(payment_origin_prepare_handshake(circ, circ->cpath, payload, 1000),
+            OP_EQ, -1);
+ done:
+  (void)payment_resources_release(&fill);
+  if (circ) circ->base_.n_chan = NULL;
+  circuit_free_all(); (void)payment_origin_free_all(); control_payment_free_all();
+  free_capacity_connection_free(&conn); (void)payment_resources_free_all();
+  timers_shutdown(); monotime_disable_test_mocking();
+}
+
 static void
 test_origin_renew_active_requires_status(void *arg)
 {
@@ -672,6 +826,10 @@ struct testcase_t payment_origin_tests[]={
   {"authenticated_conflict",test_origin_authenticated_conflict,TT_FORK,NULL,NULL},
   {"no_application_fallback",test_origin_no_application_fallback,TT_FORK,NULL,NULL},
   {"free_construction",test_origin_free_construction,TT_FORK,NULL,NULL},
+  {"reachability",test_origin_reachability,TT_FORK,NULL,NULL},
+#ifdef HAVE_MODULE_RELAY
+  {"reachability_descriptor",test_origin_reachability_descriptor,TT_FORK,NULL,NULL},
+#endif
   {"missing_resource_ack",test_origin_missing_resource_ack,TT_FORK,NULL,NULL},
   END_OF_TESTCASES
 };
