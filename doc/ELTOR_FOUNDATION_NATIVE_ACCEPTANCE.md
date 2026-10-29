@@ -85,6 +85,41 @@ circuit. Ordinary `testnet.sh verify` transmission therefore needs a separately
 provisioned foundation client coordinator and all-hop activation; the native
 probe alone must not be reported as that transmission test.
 
+### Chutney's shared-loopback exit enclave
+
+All relays in this fixture share `127.0.0.1`. Tor's existing exit-enclave
+optimization can choose an arbitrary relay at that address for the local
+verification destination, independently of the already activated foundation
+path ending at `test004r`. The resulting stream is pinned to a different
+`<fingerprint>.exit` and correctly cannot attach to the active path. Historical
+unconfirmed probe circuits do not grant application eligibility or fix this
+destination mismatch.
+
+For a coordinated transmission test with the standalone foundation client
+controller active, inspect `GETINFO stream-status`, the active circuit's final
+hop, and `GETINFO address-mappings/control` on authenticated client `005c`.
+If this exact same-IP ambiguity occurs, preserve the original mapping and
+temporarily map only the loopback verification sink to the approved exit:
+
+```text
+MAPADDRESS 127.0.0.1=127.0.0.1.<test004r-fingerprint>.exit
+```
+
+Read the fingerprint from `chutney/net/nodes/004r/fingerprint`; do not substitute
+an arbitrary exit. Run one `./testnet.sh verify` with exclusive ownership of its
+temporary port `4747`. Restore the original mapping immediately afterward. If
+there was no original mapping, remove the temporary entry with:
+
+```text
+MAPADDRESS 127.0.0.1=127.0.0.1
+```
+
+Confirm `GETINFO address-mappings/control` equals the saved result. This is a
+scoped fixture destination choice matching the approved path and configured
+`ExitNodes`; it does not change funding, isolation, path ownership, capability
+negotiation, or the native application eligibility gate. Public HTTPS probes do
+not have this same-IP enclave ambiguity.
+
 The generated TCP controls are `127.0.0.1:8055` through `8059`, then `8061`
 through `8063`; standalone client `005c` uses control `8060` and SOCKS `9060`.
 Controllers requiring password authentication may use a separately generated
@@ -135,3 +170,12 @@ wallets, app resources and unrelated generated settings were preserved.
 Raw logs, temporary auth material and constructor proofs remain private runtime
 artifacts. These observations are integration evidence, not an independent
 cryptographic review, paid settlement result or permission to enable production.
+
+A subsequent coordinated run with the standalone foundation client controller
+active initially stalled on an enclave-selected `test008m` exit while its
+approved path ended at `test004r`. One scoped mapping as described above made
+`testnet.sh verify` exit successfully with `Transmission: Success` and successful
+data verification. The original empty control mapping was then restored exactly
+and port `4747` released. No native code, payment authorization or circuit gate
+was changed for that diagnostic. This local zero-price transport result remains
+separate from production settlement and privacy acceptance.
