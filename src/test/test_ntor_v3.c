@@ -5,11 +5,13 @@
 
 #include "orconfig.h"
 #define ONION_NTOR_V3_PRIVATE
+#define CONTROL_EVENTS_PRIVATE
 #include "core/or/or.h"
 #include "core/or/or_connection_st.h"
 #include "feature/payment/free_capacity_hooks.h"
 #include "feature/payment/payment_resources.h"
 #include "feature/payment/payment_initial.h"
+#include "feature/control/control_events.h"
 #include "lib/evloop/timers.h"
 #include "test/test.h"
 #include "test/test_helpers.h"
@@ -741,12 +743,104 @@ test_ntor3_payment_extend_isolation(void *arg)
   memwipe(proof, 0, sizeof(proof));
 }
 
+static unsigned legacy_payment_events;
+static char *legacy_payment_event;
+static void
+capture_legacy_payment_event(uint16_t event, char *message)
+{
+  (void)event;
+  if (strstr(message, "650 EVENT_PAYMENT_ID_HASH_RECEIVED ")) {
+    ++legacy_payment_events;
+    tor_free(legacy_payment_event);
+    legacy_payment_event = tor_strdup(message);
+  }
+  tor_free(message);
+}
+
+/* A missing resource field cannot route enabled-mode bootstrap proof material
+ * into the profile-off legacy observer. The old observer remains unchanged
+ * when the worker's immutable eligibility input says foundation is disabled. */
+static void
+test_ntor3_legacy_event_isolation(void *arg)
+{
+  (void)arg;
+  curve25519_keypair_t relay_key;
+  server_onion_keys_t server = {0};
+  extend_info_t info = {0};
+  onion_handshake_state_t client = {0};
+  payment_profile_export_t server_export = {0}, client_export = {0};
+  payment_initial_material_t material = {0};
+  circuit_params_t ns = {0}, negotiated = {0}, client_params = {0};
+  uint8_t skin[CELL_PAYLOAD_SIZE], reply[CELL_PAYLOAD_SIZE];
+  uint8_t keys[100], client_keys[100], nonce[DIGEST_LEN];
+  uint64_t previous_id = 12, next_id = 13;
+  congestion_control_set_cc_disabled();
+  get_options_mutable()->AlwaysCongestionControl = 0;
+  MOCK(queue_control_event_string, capture_legacy_payment_event);
+  tt_int_op(curve25519_keypair_generate(&relay_key, 0), OP_EQ, 0);
+  memset(info.ed_identity.pubkey, 0x4c, 32);
+  info.curve25519_onion_key = relay_key.pubkey;
+  info.supports_ntor_v3 = info.payment_free_v1 = true;
+  server.my_ed_identity = info.ed_identity;
+  server.junk_keypair = &relay_key;
+  dimap_add_entry(&server.curve25519_key_map,
+                 relay_key.pubkey.public_key, &relay_key);
+  for (unsigned mode = 0; mode < 3; ++mode) {
+    bool enabled = mode != 0, requested = mode == 2;
+    legacy_payment_events = 0;
+    tor_free(legacy_payment_event);
+    ns.eltor_resource_eligible = enabled;
+    int skin_len = onion_skin_create(ONION_HANDSHAKE_TYPE_NTOR_V3, &info,
+        &client, skin, sizeof(skin), ntor_test_initial_payload(), requested);
+    tt_int_op(skin_len, OP_GT, 0);
+    size_t keylen = sizeof(keys);
+    int reply_len = onion_skin_server_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,
+        skin, skin_len, &server, &ns, reply, sizeof(reply), keys, &keylen,
+        nonce, &negotiated, &previous_id, &next_id, enabled,
+        &server_export, &material);
+    tt_int_op(reply_len, OP_GT, 0);
+    tt_int_op(legacy_payment_events, OP_EQ, enabled ? 0 : 1);
+    if (!enabled) {
+      tt_assert(legacy_payment_event);
+      tt_assert(strstr(legacy_payment_event, "P_CIRC_ID=12 N_CIRC_ID=13"));
+      tt_assert(strstr(legacy_payment_event, ntor_test_initial_payload() + 13));
+    } else {
+      tt_ptr_op(legacy_payment_event, OP_EQ, NULL);
+    }
+    tt_int_op(negotiated.eltor_resource_admitted, OP_EQ, requested);
+    tt_int_op(material.valid, OP_EQ, requested);
+    tt_int_op(server_export.valid, OP_EQ, requested);
+    size_t client_keylen = sizeof(client_keys);
+    client_params = client.chosen_params;
+    tt_int_op(onion_skin_client_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,
+        &client, reply, reply_len, client_keys, &client_keylen, nonce,
+        &client_params, NULL, &client_export), OP_EQ, 0);
+    tt_int_op(keylen, OP_EQ, client_keylen);
+    tt_mem_op(keys, OP_EQ, client_keys, keylen);
+    tt_int_op(client_export.valid, OP_EQ, requested);
+    onion_handshake_state_release(&client);
+    payment_profile_export_clear(&server_export);
+    payment_profile_export_clear(&client_export);
+    payment_initial_clear(&material);
+  }
+ done:
+  UNMOCK(queue_control_event_string);
+  tor_free(legacy_payment_event);
+  onion_handshake_state_release(&client);
+  payment_profile_export_clear(&server_export);
+  payment_profile_export_clear(&client_export);
+  payment_initial_clear(&material);
+  dimap_free(server.curve25519_key_map, NULL);
+}
+
 struct testcase_t ntor_v3_tests[] = {
   { "testvecs", test_ntor3_testvecs, 0, NULL, NULL, },
   { "testvecs_payment_export", test_ntor3_testvecs_payment,
     0, NULL, NULL, },
   { "resource_rejections", test_ntor3_resource_rejections,TT_FORK,NULL,NULL },
   { "payment_extend_isolation", test_ntor3_payment_extend_isolation,
+    TT_FORK, NULL, NULL },
+  { "legacy_event_isolation", test_ntor3_legacy_event_isolation,
     TT_FORK, NULL, NULL },
   { "payment_export", test_ntor3_payment_export, TT_FORK, NULL, NULL, },
   { "payment_origin_install", test_ntor3_payment_origin_install,

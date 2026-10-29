@@ -612,8 +612,11 @@ onion_skin_server_handshake(int type,
       circuit_params_init(params_out);
       return -1;
       }
-    } else {
-      /* Legacy observers receive only non-foundation constructions. */
+    } else if (!our_ns_params->eltor_resource_eligible) {
+      /* Legacy observers receive only profile-off constructions. The frozen
+       * eligibility input also covers foundation's bounded bootstrap-only
+       * handshakes; absence of field 224 must not restore a legacy financial
+       * observer or publish decrypted proof material. */
       const char prefix[]="eltor_payhash";
       const uint8_t *found=tor_memmem(client_msg,client_msg_len,prefix,
                                        sizeof(prefix)-1);
