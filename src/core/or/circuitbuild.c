@@ -1310,7 +1310,10 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
     uint8_t command = 0;
     uint16_t payload_len=0;
     uint8_t payload[RELAY_PAYLOAD_SIZE_MAX];
-    if (extend_cell_format(&command, &payload_len, payload, &ec, hop_payhash)<0) {
+    int formatted = hop->payment_export_requested ?
+      extend_cell_format_foundation(&command, &payload_len, payload, &ec) :
+      extend_cell_format(&command, &payload_len, payload, &ec, hop_payhash);
+    if (formatted < 0) {
       log_warn(LD_CIRC,"Couldn't format extend cell");
       return -END_CIRC_REASON_INTERNAL;
     }

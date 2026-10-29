@@ -656,6 +656,17 @@ extend_cell_format(uint8_t *command_out, uint16_t *len_out,
   return 0;
 }
 
+int
+extend_cell_format_foundation(uint8_t *command_out, uint16_t *len_out,
+                             uint8_t *payload_out,
+                             const extend_cell_t *cell_in)
+{
+  if (!cell_in || cell_in->cell_type != RELAY_COMMAND_EXTEND2 ||
+      cell_in->create_cell.handshake_type != ONION_HANDSHAKE_TYPE_NTOR_V3)
+    return -1;
+  return extend_cell_format(command_out, len_out, payload_out, cell_in, NULL);
+}
+
 /** Format the EXTENDED{,2} cell in <b>cell_in</b>, storing its relay payload
  * in <b>payload_out</b>, the number of bytes used in *<b>len_out</b>, and the
  * relay command in *<b>command_out</b>. The <b>payload_out</b> must have

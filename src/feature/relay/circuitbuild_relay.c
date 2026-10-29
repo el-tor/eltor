@@ -44,6 +44,7 @@
 #include "feature/relay/selftest.h"
 
 #include "feature/payment/payment_util.h" 
+#include "feature/payment/free_capacity_hooks.h"
 #include "feature/control/control_events.h"
 
 /* Before replying to an extend cell, check the state of the circuit
@@ -458,19 +459,34 @@ circuit_extend(const relay_msg_t *rmsg, struct circuit_t *circ)
              "ELTOR RELAY %s: Received extend cell payload (len=%d)",
              get_options()->Nickname, (int)rmsg->length);
 
-  // Check to to see if a payment id hash was passed
-  int has_payment_id_hash =
-    payment_util_has_payment_id_hash(rmsg->body, rmsg->length);
-  if (has_payment_id_hash == 0) {
-    log_notice(LD_CIRC, "ELTOR RELAY %s: No payment hash found in extend cell",
-              get_options()->Nickname);
-    /* Chutney builds ordinary circuits during bootstrap and verification.
-     * Permit these only on an explicitly configured testing network. */
-    if (!get_options()->TestingTorNetwork)
+  if (get_options()->ElTorFoundation) {
+    /* The normal resource ACK was authenticated and installed before CREATED.
+     * The child independently authenticates its encrypted payment suffix; the
+     * extending relay must neither demand nor inspect a plaintext duplicate.
+     * Legacy/bootstrap-only contexts cannot extend into an unbounded path. */
+    if (circ->magic != OR_CIRCUIT_MAGIC ||
+        !free_capacity_circuit_is_normal(circ))
+      return -1;
+    const or_circuit_t *or_circ = CONST_TO_OR_CIRCUIT(circ);
+    if (!or_circ->payment_export_requested ||
+        !or_circ->payment_keys ||
+        ec.create_cell.handshake_type != ONION_HANDSHAKE_TYPE_NTOR_V3)
       return -1;
   } else {
-    log_notice(LD_CIRC, "ELTOR RELAY %s: Successfully found payment hash in extend cell",
-              get_options()->Nickname);
+    int has_payment_id_hash =
+      payment_util_has_payment_id_hash(rmsg->body, rmsg->length);
+    if (has_payment_id_hash == 0) {
+      log_notice(LD_CIRC, "ELTOR RELAY %s: No payment hash found in extend cell",
+                 get_options()->Nickname);
+      /* Chutney builds ordinary circuits during bootstrap and verification.
+       * Permit these only on an explicitly configured testing network. */
+      if (!get_options()->TestingTorNetwork)
+        return -1;
+    } else {
+      log_notice(LD_CIRC,
+                 "ELTOR RELAY %s: Payment metadata present in extend cell",
+                 get_options()->Nickname);
+    }
   }
 
   if (circuit_extend_add_ed25519_helper(&ec) < 0)

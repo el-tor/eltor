@@ -619,11 +619,135 @@ test_ntor3_resource_rejections(void *arg)
   memwipe(plaintext,0,sizeof(plaintext));
 }
 
+/* The extending relay sees link specifiers and the child's encrypted ntor
+ * message, never the child's hash/preimage/IDs in a second plaintext suffix. */
+static void
+test_ntor3_payment_extend_isolation(void *arg)
+{
+  (void)arg;
+  curve25519_keypair_t relay_key;
+  server_onion_keys_t server = {0};
+  extend_info_t info = {0};
+  onion_handshake_state_t client = {0};
+  payment_profile_export_t server_export = {0}, client_export = {0};
+  payment_initial_material_t material = {0}, expected = {0};
+  circuit_params_t ns = {0}, negotiated = {0}, client_params = {0};
+  uint8_t raw[384], wire[RELAY_PAYLOAD_SIZE_MAX];
+  uint8_t legacy[RELAY_PAYLOAD_SIZE_MAX], canonical[RELAY_PAYLOAD_SIZE_MAX];
+  uint8_t reply[CELL_PAYLOAD_SIZE], keys[100], client_keys[100];
+  uint8_t nonce[DIGEST_LEN], client_nonce[DIGEST_LEN];
+  char proof[782];
+  uint16_t length = 0, previous_length = 0, legacy_length, canonical_length;
+  uint8_t command = 0, legacy_command, canonical_command;
+  extend_cell_t cell = {0}, parsed = {0};
+  congestion_control_set_cc_disabled();
+  get_options_mutable()->AlwaysCongestionControl = 0;
+  tt_int_op(curve25519_keypair_generate(&relay_key, 0), OP_EQ, 0);
+  memset(info.ed_identity.pubkey, 0x49, 32);
+  info.curve25519_onion_key = relay_key.pubkey;
+  info.supports_ntor_v3 = info.payment_free_v1 = true;
+  server.my_ed_identity = info.ed_identity;
+  server.junk_keypair = &relay_key;
+  dimap_add_entry(&server.curve25519_key_map,
+                 relay_key.pubkey.public_key, &relay_key);
+  ns.eltor_resource_eligible = true;
+  for (unsigned paid = 0; paid < 2; ++paid) {
+    memset(raw, 0, sizeof(raw));
+    memset(raw + 32, paid ? 0x72 : 0x61, 32);
+    tt_int_op(crypto_digest256((char *)raw, (const char *)raw + 32, 32,
+                               DIGEST_SHA256), OP_EQ, 0);
+    for (unsigned i = 0; i < 10; ++i)
+      memset(raw + 64 + i * 32, (int)(i + 1 + 16 * paid), 32);
+    memcpy(proof, "eltor_payhash", 13);
+    base16_encode(proof + 13, sizeof(proof) - 13,
+                  (const char *)raw, sizeof(raw));
+    for (char *p = proof + 13; *p; ++p) *p = TOR_TOLOWER(*p);
+    tt_int_op(payment_initial_parse(&expected, (const uint8_t *)proof,
+                                    strlen(proof)), OP_EQ, 0);
+    info.payment_start_v1 = info.payment_renew_v1 = paid != 0;
+    memset(&cell, 0, sizeof(cell));
+    cell.cell_type = RELAY_COMMAND_EXTEND2;
+    cell.create_cell.cell_type = CELL_CREATE2;
+    cell.create_cell.handshake_type = ONION_HANDSHAKE_TYPE_NTOR_V3;
+    memset(cell.node_id, 0x35, sizeof(cell.node_id));
+    tt_int_op(tor_addr_parse(&cell.orport_ipv4.addr, "127.0.0.1"),
+              OP_EQ, AF_INET);
+    cell.orport_ipv4.port = 9001;
+    int skin_len = onion_skin_create(ONION_HANDSHAKE_TYPE_NTOR_V3, &info,
+        &client, cell.create_cell.onionskin,
+        sizeof(cell.create_cell.onionskin), proof, true);
+    tt_int_op(skin_len, OP_GT, 0);
+    cell.create_cell.handshake_len = skin_len;
+    tt_int_op(extend_cell_format_foundation(&command, &length, wire, &cell),
+              OP_EQ, 0);
+    tt_int_op(extend_cell_format(&canonical_command, &canonical_length,
+                                 canonical, &cell, NULL), OP_EQ, 0);
+    tt_int_op(command, OP_EQ, canonical_command);
+    tt_int_op(length, OP_EQ, canonical_length);
+    tt_mem_op(wire, OP_EQ, canonical, length);
+    tt_ptr_op(tor_memmem(wire, length, "eltor_payhash", 13), OP_EQ, NULL);
+    for (unsigned i = 0; i < 12; ++i)
+      tt_ptr_op(tor_memmem(wire, length, proof + 13 + i * 64, 64),
+                OP_EQ, NULL);
+    if (paid) tt_int_op(length, OP_EQ, previous_length);
+    previous_length = length;
+    /* Explicit profile-off legacy encoding remains available, including its
+     * former suffix. This control reproduces the original exposure. */
+    tt_int_op(extend_cell_format(&legacy_command, &legacy_length, legacy,
+                                 &cell, proof), OP_EQ, 0);
+    tt_int_op(legacy_length, OP_EQ, length + strlen(proof));
+    tt_mem_op(legacy + length, OP_EQ, proof, strlen(proof));
+    tt_int_op(extend_cell_parse(&parsed, command, wire, length), OP_EQ, 0);
+    tt_int_op(parsed.create_cell.handshake_len, OP_EQ, skin_len);
+    tt_mem_op(parsed.create_cell.onionskin, OP_EQ,
+              cell.create_cell.onionskin, skin_len);
+    size_t keylen = sizeof(keys);
+    int reply_len = onion_skin_server_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,
+        parsed.create_cell.onionskin, parsed.create_cell.handshake_len,
+        &server, &ns, reply, sizeof(reply), keys, &keylen, nonce, &negotiated,
+        NULL, NULL, true, &server_export, &material);
+    tt_int_op(reply_len, OP_GT, 0);
+    tt_assert(negotiated.eltor_resource_admitted && server_export.valid);
+    tt_assert(material.valid);
+    tt_mem_op(material.fee_hash, OP_EQ, expected.fee_hash, 32);
+    tt_mem_op(material.ids, OP_EQ, expected.ids, sizeof(expected.ids));
+    size_t client_keylen = sizeof(client_keys);
+    client_params = client.chosen_params;
+    tt_int_op(onion_skin_client_handshake(ONION_HANDSHAKE_TYPE_NTOR_V3,
+        &client, reply, reply_len, client_keys, &client_keylen, client_nonce,
+        &client_params, NULL, &client_export), OP_EQ, 0);
+    tt_assert(client_params.eltor_resource_admitted && client_export.valid);
+    tt_int_op(keylen, OP_EQ, client_keylen);
+    tt_mem_op(keys, OP_EQ, client_keys, keylen);
+    tt_mem_op(&server_export.keys, OP_EQ, &client_export.keys,
+              sizeof(server_export.keys));
+    onion_handshake_state_release(&client);
+    payment_profile_export_clear(&server_export);
+    payment_profile_export_clear(&client_export);
+    payment_initial_clear(&material);
+    payment_initial_clear(&expected);
+  }
+  cell.create_cell.handshake_type = ONION_HANDSHAKE_TYPE_NTOR;
+  tt_int_op(extend_cell_format_foundation(&command, &length, wire, &cell),
+            OP_EQ, -1);
+ done:
+  onion_handshake_state_release(&client);
+  payment_profile_export_clear(&server_export);
+  payment_profile_export_clear(&client_export);
+  payment_initial_clear(&material);
+  payment_initial_clear(&expected);
+  dimap_free(server.curve25519_key_map, NULL);
+  memwipe(raw, 0, sizeof(raw));
+  memwipe(proof, 0, sizeof(proof));
+}
+
 struct testcase_t ntor_v3_tests[] = {
   { "testvecs", test_ntor3_testvecs, 0, NULL, NULL, },
   { "testvecs_payment_export", test_ntor3_testvecs_payment,
     0, NULL, NULL, },
   { "resource_rejections", test_ntor3_resource_rejections,TT_FORK,NULL,NULL },
+  { "payment_extend_isolation", test_ntor3_payment_extend_isolation,
+    TT_FORK, NULL, NULL },
   { "payment_export", test_ntor3_payment_export, TT_FORK, NULL, NULL, },
   { "payment_origin_install", test_ntor3_payment_origin_install,
     TT_FORK, &helper_pubsub_setup, NULL, },

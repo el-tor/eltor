@@ -235,20 +235,8 @@ payment_util_has_payment_id_hash(const uint8_t *payload, size_t payload_len)
       return 0;
     }
 
-    // Extract a reasonable amount of the hash (up to 768 bytes)
-    size_t copy_len = MIN(768, remaining);
-
-    char payhash[769]; // 768 + null terminator
-    memcpy(payhash, (const char *)payload + indexPayHash + plen, copy_len);
-    payhash[copy_len] = '\0';
-
-    log_notice(LD_APP,
-               "ELTOR RELAY %s: Successfully extracted payhash (length=%zu)",
-               get_options()->Nickname, strlen(payhash));
-    log_notice(LD_APP, "ELTOR RELAY %s: Payment hash first 50 chars: %.50s...",
-               get_options()->Nickname, payhash);
-
-    // control_event_payment_id_hash_received(payhash, global_id);
+    /* Presence is legacy framing validation only. Never copy payment material
+     * to a routine log or expose it to another authority. */
     return 1;
   } else {
     log_notice(LD_APP, "ELTOR RELAY %s: PayHash prefix not found in payload",

@@ -535,7 +535,7 @@ test_cfmt_extend_cells(void *arg)
   uint8_t p2_cmd;
   uint16_t p2_len;
   char *mem_op_hex_tmp = NULL;
-  const char eltor_payhash[64+13] =
+  const char eltor_payhash[] =
     "eltor_payhashT0mMxxMNmDaJucQfmCvmtYAUYXIk0dReisy5PPgUa4DrjjVRg"
     "dV43q3hobxi2C3E";
 
