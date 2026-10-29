@@ -51,6 +51,9 @@ struct payment_origin_hop_t {
   uint64_t round_deadline_ms, enforcement_deadline_ms;
   uint64_t observed_ms, elapsed_upper_ms, relay_revision, current_round;
   uint64_t active_period, last_query_ms;
+  /* RENEWED ACTIVE proves the allocation, but does not contain a complete
+   * START status clock. Suppress mixed-period observations until that arrives. */
+  uint64_t pending_active_period;
   uint8_t state, setup_queries;
   bool ready, confirmed, status_seen, failed, query_seen, closed;
 };
@@ -630,7 +633,8 @@ payment_origin_data_active(const origin_circuit_t *circ, uint64_t now_ms)
   do {
     const payment_origin_hop_t *h=hop->payment_profile;
     if (++count>16 || !h || h->closed || h->failed || !h->confirmed ||
-        !h->status_seen || h->state != 3 || now_ms<h->observed_ms ||
+        !h->status_seen || h->pending_active_period || h->state != 3 ||
+        now_ms<h->observed_ms ||
         !remaining_ms(h->round_deadline_ms,now_ms) ||
         !remaining_ms(h->enforcement_deadline_ms,now_ms) ||
         !remaining_ms(h->hard_deadline_ms,now_ms)) return false;
@@ -736,6 +740,9 @@ apply_status(payment_origin_hop_t *h, payment_origin_operation_t *op,
   h->relay_revision = r->revision; h->status_seen = true; h->state = r->state;
   op->phase = PAYMENT_ORIGIN_VERIFIED;
   op->relay_status = r->state; op->result_seen = true;
+  if ((r->round && (r->round-1)/10>=h->pending_active_period) ||
+      r->state==5 || r->state==6)
+    h->pending_active_period=0;
   if (r->state == 5 || r->state == 6) fail_profile(h);
   else {
     observe_paid_path(h->circ,now_ms);
@@ -813,10 +820,14 @@ payment_origin_handle_reply(origin_circuit_t *circ, crypt_path_t *layer,
       if (safe < op->deadline_ms) op->deadline_ms = safe;
       if (r->status == 1) {
         if (r->elapsed_ms < r->activation_ms ||
-            r->elapsed_ms >= h->policy.max_age_ms ||
-            r->period < h->active_period) { fail_profile(h); return 0; }
-        h->active_period = r->period;
-        memcpy(h->active_allocation,op->allocation,32);
+            r->elapsed_ms >= h->policy.max_age_ms) {
+          fail_profile(h); return 0;
+        }
+        /* Never pair this new allocation with the old status round/timers.
+         * Exact historical ACTIVE replays only refine the retained operation;
+         * they cannot move the live profile backward or reset any deadline. */
+        if (r->period>h->active_period && r->period>h->pending_active_period)
+          h->pending_active_period=r->period;
       }
       changed(h,"RENEW_ADMITTED");
     } else changed(h,"RENEW_REFUSED");
@@ -863,6 +874,8 @@ payment_origin_get(const origin_circuit_t *circ, uint16_t index,
   payment_origin_operation_t *op = operation ? find_operation(h,operation) : NULL;
   if (operation && (!op || ((op->kind == PAYMENT_ORIGIN_RENEW) == initial)))
     return PAYMENT_ORIGIN_UNKNOWN_OPERATION;
+  if (h->pending_active_period)
+    return PAYMENT_ORIGIN_OBSERVATION_PENDING;
   if (!initial && (!h->confirmed || !h->status_seen || !h->current_round))
     return PAYMENT_ORIGIN_UNCONFIRMED;
   out->revision = control_payment_revision(TO_CIRCUIT(circ));

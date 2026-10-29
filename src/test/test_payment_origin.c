@@ -577,10 +577,95 @@ test_origin_no_application_fallback(void *arg)
   (void)payment_resources_free_all(); timers_shutdown();
 }
 
+static void
+test_origin_renew_active_requires_status(void *arg)
+{
+  (void)arg;
+  origin_fixture_t f;
+  payment_origin_snapshot_t snapshot;
+  control_connection_t conn={0};
+  uint8_t op[16]={1},nonce[16]={2},renewal[16]={5},ids[10][32]={0};
+  char *command=NULL,*response=NULL;
+  uint8_t original_renewal[PAYMENT_PROFILE_WIRE_LEN];
+  tt_int_op(init_origin(&f),OP_EQ,0);
+  tt_int_op(payment_origin_initial_prepare(f.circ,1,op,nonce,f.policy_wire,2000),OP_EQ,0);
+  tt_int_op(reply(&f,0,0,0,2000),OP_EQ,0);
+  op[0]=3; nonce[0]=4;
+  tt_int_op(payment_origin_initial_start(f.circ,1,op,nonce,2000),OP_EQ,0);
+  tt_int_op(reply(&f,3,0,5,2000),OP_EQ,0);
+  for (size_t i=0;i<10;++i) ids[i][0]=(uint8_t)(i+80);
+  nonce[0]=6;
+  tt_int_op(payment_origin_renew_prepare(f.circ,1,renewal,1,11,nonce,f.q,f.a0,ids,3000),OP_EQ,0);
+  memcpy(original_renewal,sent_wire,sizeof(original_renewal));
+  tt_int_op(reply(&f,1,600000,0,4000),OP_EQ,0);
+  unsigned transmissions=sent_count;
+  uint64_t revision=control_payment_revision(TO_CIRCUIT(f.circ));
+  tt_int_op(payment_origin_get(f.circ,1,renewal,false,4100,&snapshot),OP_EQ,
+            PAYMENT_ORIGIN_OBSERVATION_PENDING);
+  tt_int_op(payment_origin_get(f.circ,1,NULL,true,4200,&snapshot),OP_EQ,
+            PAYMENT_ORIGIN_OBSERVATION_PENDING);
+  tt_assert(!payment_origin_data_active(f.circ,4200));
+  tt_u64_op(control_payment_revision(TO_CIRCUIT(f.circ)),OP_EQ,revision);
+  tt_uint_op(sent_count,OP_EQ,transmissions);
+  conn.base_.magic=CONTROL_CONNECTION_MAGIC; conn.base_.type=CONN_TYPE_CONTROL;
+  conn.base_.s=TOR_INVALID_SOCKET; conn.base_.socket_family=AF_UNSPEC;
+  conn.base_.conn_array_index=conn.base_.closeable_list_index=-1;
+  conn.base_.state=CONTROL_CONN_STATE_OPEN; conn.payment_local_fd=true;
+  replies=smartlist_new(); MOCK(control_write_reply,capture_control);
+  uint8_t instance[16],handle[16]; char ih[33],hh[33],operation_hex[33];
+  tt_int_op(control_payment_binding(TO_CIRCUIT(f.circ),instance,handle),OP_EQ,0);
+  lower_hex_origin(ih,sizeof(ih),instance,16); lower_hex_origin(hh,sizeof(hh),handle,16);
+  lower_hex_origin(operation_hex,sizeof(operation_hex),renewal,16);
+  tor_asprintf(&command,"ELTOR_PAYMENT_GET 1 %s %s 1 %s\r\n",ih,hh,operation_hex);
+  response=control_query(&conn,command,5000);
+  tt_assert(strstr(response,"551 STATE_TRANSITION_PENDING\r\n"));
+  tt_uint_op(sent_count,OP_EQ,transmissions); tor_free(response);
+  /* Only an explicit bounded QUERY obtains the missing authenticated clocks.
+   * GET neither sends nor manufactures a new round or activation. */
+  op[0]=7; nonce[0]=8;
+  tt_int_op(payment_origin_initial_refresh(f.circ,1,op,nonce,6000),OP_EQ,0);
+  tt_uint_op(sent_count,OP_EQ,transmissions+1);
+  tt_int_op(reply(&f,3,600000,6,6100),OP_EQ,0);
+  tt_int_op(payment_origin_get(f.circ,1,renewal,false,6200,&snapshot),OP_EQ,0);
+  tt_u64_op(snapshot.active_period,OP_EQ,1); tt_u64_op(snapshot.current_round,OP_EQ,11);
+  tt_int_op(snapshot.phase,OP_EQ,PAYMENT_ORIGIN_ACTIVE);
+  tt_u64_op(snapshot.round_remaining_ms,OP_EQ,59800);
+  tt_u64_op(snapshot.hard_age_remaining_ms,OP_EQ,1199800);
+  uint64_t hard=snapshot.hard_age_remaining_ms;
+  response=control_query(&conn,command,7000);
+  tt_assert(strstr(response,"250-ELTOR_PAYMENT 1 "));
+  tt_assert(strstr(response," 11\r\n"));
+  tt_int_op(payment_origin_get(f.circ,1,renewal,false,7100,&snapshot),OP_EQ,0);
+  tt_assert(snapshot.hard_age_remaining_ms<hard);
+  tt_uint_op(sent_count,OP_EQ,transmissions+1);
+  /* Move coherently to the following allocation, then replay an old exact
+   * ACTIVE acknowledgement. It cannot roll the live profile back or stop the
+   * already valid current allocation merely because delivery was reordered. */
+  uint8_t parent[32]; memcpy(parent,snapshot.active_allocation,32);
+  for (size_t i=0;i<10;++i) ids[i][0]=(uint8_t)(i+110);
+  op[0]=9; nonce[0]=10;
+  tt_int_op(payment_origin_renew_prepare(f.circ,1,op,2,21,nonce,f.q,parent,ids,7500),OP_EQ,0);
+  tt_int_op(reply(&f,1,1200000,0,8000),OP_EQ,0);
+  op[0]=11; nonce[0]=12;
+  tt_int_op(payment_origin_initial_refresh(f.circ,1,op,nonce,9000),OP_EQ,0);
+  tt_int_op(reply(&f,3,1200000,7,9100),OP_EQ,0);
+  memcpy(sent_wire,original_renewal,sizeof(original_renewal));
+  sent_command=PAYMENT_PROFILE_RENEW;
+  tt_int_op(reply(&f,1,600000,0,9500),OP_EQ,0);
+  tt_int_op(payment_origin_get(f.circ,1,renewal,false,9600,&snapshot),OP_EQ,0);
+  tt_u64_op(snapshot.active_period,OP_EQ,2); tt_u64_op(snapshot.current_round,OP_EQ,21);
+  tt_assert(payment_origin_data_active(f.circ,9600));
+ done:
+  tor_free(command); tor_free(response);
+  clear_origin(); UNMOCK(control_write_reply);
+  if (replies) {SMARTLIST_FOREACH(replies,char *,line,tor_free(line));smartlist_free(replies);replies=NULL;}
+}
+
 struct testcase_t payment_origin_tests[]={
   {"operations",test_origin_operations,TT_FORK,NULL,NULL},
   {"retries",test_origin_retries,TT_FORK,&helper_pubsub_setup,NULL},
   {"refresh_and_renew",test_origin_refresh_and_renew,TT_FORK,NULL,NULL},
+  {"renew_active_requires_status",test_origin_renew_active_requires_status,TT_FORK,NULL,NULL},
   {"control_bridge",test_origin_control_bridge,TT_FORK,NULL,NULL},
   {"control_final",test_origin_control_final,TT_FORK,NULL,NULL},
   {"grace_observation",test_origin_grace_observation,TT_FORK,NULL,NULL},

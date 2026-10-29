@@ -1092,6 +1092,7 @@ origin_error(control_connection_t *conn, payment_origin_result_t result)
     case PAYMENT_ORIGIN_INVALID: reply_error(conn, 512, "BAD_ARGUMENT"); break;
     case PAYMENT_ORIGIN_UNSUPPORTED: reply_error(conn, 551, "UNSUPPORTED_PROFILE"); break;
     case PAYMENT_ORIGIN_UNCONFIRMED: reply_error(conn, 551, "INITIAL_STATE_UNCONFIRMED"); break;
+    case PAYMENT_ORIGIN_OBSERVATION_PENDING: reply_error(conn,551,"STATE_TRANSITION_PENDING"); break;
     case PAYMENT_ORIGIN_UNKNOWN_OPERATION: reply_error(conn, 552, "UNKNOWN_OPERATION"); break;
     case PAYMENT_ORIGIN_CONFLICT: reply_error(conn, 553, "OPERATION_CONFLICT"); break;
     case PAYMENT_ORIGIN_BAD_SEQUENCE: reply_error(conn, 553, "BAD_SEQUENCE"); break;
