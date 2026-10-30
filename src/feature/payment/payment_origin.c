@@ -947,7 +947,9 @@ payment_origin_streams_ready(const origin_circuit_t *circ, uint64_t now_ms)
    * protocol work, but user streams must never downgrade onto those circuits
    * after its funded path closes. Enforcement stays in Tor, not UI status. */
   if (origin_enabled && get_options()->ElTorRequirePaidStreams &&
-      circ->base_.purpose == CIRCUIT_PURPOSE_C_GENERAL)
+      (circ->base_.purpose == CIRCUIT_PURPOSE_C_GENERAL ||
+       circ->base_.purpose == CIRCUIT_PURPOSE_CONFLUX_LINKED ||
+       circ->base_.purpose == CIRCUIT_PURPOSE_CONFLUX_UNLINKED))
     return false;
   return !origin_enabled || (count && hop && resource_only);
 }
