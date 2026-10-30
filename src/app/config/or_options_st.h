@@ -871,6 +871,8 @@ struct or_options_t {
   /** Isolated paid-circuit foundation acceptance only; immutable and requires
    * TestingTorNetwork. Production profile enablement remains unavailable. */
   int ElTorFoundation;
+  /** Local client policy: never substitute base circuits for paid streams. */
+  int ElTorRequirePaidStreams;
   /** Exact canonical 55-byte signed/admitted policy, immutable for the process.
    * NULL selects the zero-price candidate only on an isolated test network. */
   char *ElTorFoundationTerms;

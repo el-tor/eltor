@@ -659,6 +659,7 @@ static const config_var_t option_vars_[] = {
   V_IMMUTABLE(PidFile,           FILENAME,   NULL),
   V_IMMUTABLE(TestingTorNetwork, BOOL,     "0"),
   V_IMMUTABLE(ElTorFoundation, BOOL,       "0"),
+  VAR_IMMUTABLE("__ElTorRequirePaidStreams", BOOL, ElTorRequirePaidStreams, "0"),
   V_IMMUTABLE(ElTorFoundationTerms, STRING, NULL),
   V_IMMUTABLE(ElTorFoundationMaxCircuits, POSINT, "4096"),
   V_IMMUTABLE(ElTorFoundationAdmissionRate, POSINT, "16"),
@@ -4121,6 +4122,8 @@ options_validate_cb(const void *old_options_, void *options_, char **msg)
     REJECT("ElTorFoundationTerms must be canonical finite v1 policy terms.");
   if (options->ElTorFoundation && !options->TestingTorNetwork)
     REJECT("ElTorFoundation requires TestingTorNetwork 1.");
+  if (options->ElTorRequirePaidStreams && !options->ElTorFoundation)
+    REJECT("__ElTorRequirePaidStreams requires ElTorFoundation 1.");
 
   if (options->TestingTorNetwork &&
       !(options->DirAuthorities ||

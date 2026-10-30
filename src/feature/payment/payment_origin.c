@@ -2,6 +2,8 @@
 /* See LICENSE for licensing information. */
 #include "orconfig.h"
 #include "core/or/or.h"
+#include "app/config/config.h"
+#include "app/config/or_options_st.h"
 #include "core/or/origin_circuit_st.h"
 #include "core/or/crypt_path_st.h"
 #include "core/or/cpath_build_state_st.h"
@@ -941,6 +943,12 @@ payment_origin_streams_ready(const origin_circuit_t *circ, uint64_t now_ms)
                    hop->state==CPATH_STATE_OPEN;
     hop=hop->next;
   } while (hop && hop!=circ->cpath);
+  /* A configured paid client may still construct bounded base circuits for
+   * protocol work, but user streams must never downgrade onto those circuits
+   * after its funded path closes. Enforcement stays in Tor, not UI status. */
+  if (origin_enabled && get_options()->ElTorRequirePaidStreams &&
+      circ->base_.purpose == CIRCUIT_PURPOSE_C_GENERAL)
+    return false;
   return !origin_enabled || (count && hop && resource_only);
 }
 

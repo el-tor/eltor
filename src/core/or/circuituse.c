@@ -377,7 +377,10 @@ circuit_get_best(const entry_connection_t *conn,
   if (purpose == CIRCUIT_PURPOSE_C_GENERAL &&
       (best = conflux_get_circ_for_conn(conn, now_sec, need_internal))) {
     if (payment_origin_data_active(best, monotime_absolute_msec())) return best;
-    preferred_conflux = true;
+    if (payment_origin_streams_ready(best, monotime_absolute_msec()))
+      preferred_conflux = true;
+    else
+      best = NULL;
   }
 
   SMARTLIST_FOREACH_BEGIN(circuit_get_global_list(), circuit_t *, circ) {
