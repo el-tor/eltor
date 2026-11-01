@@ -56,6 +56,7 @@
 #define CONNECTION_EDGE_PRIVATE
 
 #include "core/or/or.h"
+#include "feature/payment/free_capacity_hooks.h"
 
 #include "lib/err/backtrace.h"
 
@@ -1292,6 +1293,15 @@ connection_ap_expire_beginning(void)
     /* un-mark it as ending, since we're going to reuse it */
     conn->edge_has_sent_end = 0;
     conn->end_reason = 0;
+    /* A single unresponsive destination must not retire an otherwise paid
+     * path. Bound this stream by the existing timeout; preserve the path for
+     * unrelated requests and never launch another paid circuit implicitly. */
+    if (free_capacity_circuit_is_paid(circ)) {
+      connection_edge_end(conn, END_STREAM_REASON_TIMEOUT);
+      connection_mark_unattached_ap(entry_conn, END_STREAM_REASON_TIMEOUT);
+      continue;
+    }
+
     /* make us not try this circuit again, but allow
      * current streams on it to survive if they can */
     mark_circuit_unusable_for_new_conns(TO_ORIGIN_CIRCUIT(circ));

@@ -1047,6 +1047,17 @@ connection_ap_process_end_not_open(
       case END_STREAM_REASON_TIMEOUT:
       case END_STREAM_REASON_MISC:
       case END_STREAM_REASON_NOROUTE:
+        /* The exit authenticated a destination-specific failure: this is not
+         * evidence that the paid path itself is unusable. Ordinary Tor can
+         * retire this circuit and choose another; a paid origin must not
+         * silently replace its accepted path or strand all other streams.
+         * Finish this request with its actual SOCKS error. A caller can retry
+         * independently without changing circuit authority or spending. */
+        if (free_capacity_circuit_is_paid(TO_CIRCUIT(circ))) {
+          log_info(LD_APP, "Keeping paid circuit usable after destination "
+                   "failure (%s).", stream_end_reason_to_string(reason));
+          break;
+        }
         if (client_dns_incr_failures(conn->socks_request->address)
             < MAX_RESOLVE_FAILURES) {
           /* We haven't retried too many times; reattach the connection. */
@@ -2599,6 +2610,7 @@ circuit_resume_edge_reading_helper(edge_connection_t *first_conn,
 {
   edge_connection_t *conn;
   int n_packaging_streams, n_streams_left;
+  int num_streams = 0;
   int packaged_this_round;
   int cells_on_queue;
   int cells_per_conn;
@@ -2623,7 +2635,6 @@ circuit_resume_edge_reading_helper(edge_connection_t *first_conn,
   /* Select a stream uniformly at random from the linked list.  We
    * don't need cryptographic randomness here. */
   {
-    int num_streams = 0;
     for (conn = first_conn; conn; conn = conn->next_stream) {
       num_streams++;
 
@@ -2704,8 +2715,14 @@ circuit_resume_edge_reading_helper(edge_connection_t *first_conn,
     or_circuit_t *or_circ = TO_OR_CIRCUIT(circ);
     cells_on_queue = or_circ->p_chan_cells.n;
   }
-  if (cell_queue_highwatermark() - cells_on_queue < max_to_package)
-    max_to_package = cell_queue_highwatermark() - cells_on_queue;
+  /* Budget against the same watermark that stops paid packing. Using the
+   * larger ordinary watermark lets the first buffered stream take the whole
+   * paid queue before any of the other streams is considered. */
+  int queue_highwater = free_capacity_circuit_is_paid(circ) ?
+    (int)FREE_CAPACITY_QUEUE_CELLS - 8 : cell_queue_highwatermark();
+  if (queue_highwater - cells_on_queue < max_to_package)
+    max_to_package = queue_highwater - cells_on_queue;
+  if (max_to_package <= 0) return 0;
 
   cells_per_conn = CEIL_DIV(max_to_package, n_packaging_streams);
 
@@ -2717,7 +2734,14 @@ circuit_resume_edge_reading_helper(edge_connection_t *first_conn,
    * packaged, and n_streams_left with the number that still have data to
    * package.
    */
-  for (conn=first_conn; conn; conn=conn->next_stream) {
+  /* Reuse the chosen rotation for buffered paid data too, not only socket
+   * readiness. A small queue can fill partway through this traversal. */
+  edge_connection_t *packaging_start = free_capacity_circuit_is_paid(circ) ?
+    chosen_stream : first_conn;
+  int visited;
+  for (conn = packaging_start, visited = 0;
+       conn && visited < num_streams;
+       conn = conn->next_stream ? conn->next_stream : first_conn, ++visited) {
     if (conn->base_.marked_for_close || conn->package_window <= 0)
       continue;
     if (edge_uses_cpath(conn, layer_hint)) {
