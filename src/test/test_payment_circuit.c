@@ -357,6 +357,41 @@ test_payment_circuit_refusal_and_expiry(void *arg)
 }
 
 static void
+test_payment_circuit_busy_round_transition(void *arg)
+{
+  (void)arg;
+  test_fixture_t f;
+  payment_circuit_charge_t second;
+  payment_circuit_snapshot_t snapshot;
+  tt_int_op(fixture_init(&f), OP_EQ, 0);
+  tt_int_op(activate(&f, 2000), OP_EQ, 0);
+  charge(&f, 2, &second);
+  tt_int_op(payment_circuit_authorize(f.circ, 2, &second, 3000), OP_EQ, 0);
+  /* A status read remains inert, even with the next round funded. */
+  tt_assert(!payment_circuit_data_active(f.circ, 62000));
+  tt_int_op(payment_circuit_get_registration(f.circ, 0, 62000, &snapshot),
+            OP_EQ, PAYMENT_CIRCUIT_OBSERVATION_PENDING);
+  /* Native traffic arrives before the overdue timer callback. More than the
+   * entire free holding queue must retain paid capacity, without moving T0. */
+  for (unsigned i = 0; i < 64; ++i) {
+    payment_circuit_advance_due(f.circ, 62000+i);
+    tt_assert(payment_circuit_data_active(f.circ, 62000+i));
+    tt_assert(payment_circuit_account_bytes(f.circ, 2048, 62000+i));
+  }
+  tt_int_op(payment_circuit_get_registration(f.circ, 0, 63000, &snapshot),
+            OP_EQ, 0);
+  tt_u64_op(snapshot.current_round, OP_EQ, 2);
+  tt_u64_op(snapshot.elapsed_ms, OP_EQ, 61000);
+  /* Traffic cannot authorize an unpaid third round or extend its grace. */
+  payment_circuit_advance_due(f.circ, 122000);
+  tt_assert(!payment_circuit_data_active(f.circ, 122000));
+  payment_circuit_advance_due(f.circ, 137000);
+  tt_assert(f.circ->base_.marked_for_close);
+ done:
+  fixture_clear();
+}
+
+static void
 test_payment_circuit_round_boundaries(void *arg)
 {
   (void)arg;
@@ -753,6 +788,7 @@ struct testcase_t payment_circuit_tests[] = {
   CIRCUIT_TEST(activation_notifications),
   CIRCUIT_TEST(refusal_and_expiry),
   CIRCUIT_TEST(round_boundaries),
+  CIRCUIT_TEST(busy_round_transition),
   CIRCUIT_TEST(renewal),
   CIRCUIT_TEST(renewal_late),
   CIRCUIT_TEST(zero_and_framing),

@@ -98,6 +98,18 @@ free_capacity_paid_data_active, (const circuit_t *circ))
                                       monotime_absolute_msec());
 }
 
+/* A busy socket callback can run before the due timer callback. Consume and
+ * announce an already-authorized round before applying unpaid holding limits
+ * to actual traffic. Never put this in the pure status/permission getter. */
+static void
+advance_paid_relay(circuit_t *circ)
+{
+  if (circ && circ->free_capacity && circ->free_capacity->paid &&
+      !CIRCUIT_IS_ORIGIN(circ))
+    payment_circuit_advance_due(TO_OR_CIRCUIT(circ),
+                                monotime_absolute_msec());
+}
+
 static bool
 head_is_payment_control(cell_queue_t *queue)
 {
@@ -558,6 +570,7 @@ free_capacity_circuit_send_cell(circuit_t *circ, channel_t *chan,
   or_connection_t *conn;
   free_capacity_result_t result;
   if (!context) return FREE_CAPACITY_OK;
+  if (!payment_control) advance_paid_relay(circ);
   if (circ->marked_for_close) return FREE_CAPACITY_CLOSE;
   if (held_queue_expired(context, monotime_absolute_msec())) {
     context->data_only = false;

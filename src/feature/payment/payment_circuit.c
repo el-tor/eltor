@@ -415,6 +415,19 @@ payment_circuit_paid_active(const or_circuit_t *circ)
          circ->payment_profile->schedule.phase == PAYMENT_SCHEDULE_ACTIVE;
 }
 
+void
+payment_circuit_advance_due(or_circuit_t *circ, uint64_t now_ms)
+{
+  if (!payment_circuit_present(circ) || circ->base_.marked_for_close) return;
+  payment_circuit_t *pc = circ->payment_profile;
+  payment_schedule_t projected = pc->schedule;
+  payment_schedule_tick(&projected, now_ms);
+  if (projected.phase != pc->schedule.phase ||
+      projected.current_round != pc->schedule.current_round ||
+      projected.active_period != pc->schedule.active_period)
+    payment_circuit_tick(circ, now_ms);
+}
+
 bool
 payment_circuit_data_active(const or_circuit_t *circ, uint64_t now_ms)
 {

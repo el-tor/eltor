@@ -257,6 +257,14 @@ circuit_receive_relay_cell(cell_t *cell, circuit_t *circ,
   if (circ->marked_for_close)
     return 0;
 
+  /* Backward forwarding encrypts in relay_decrypt_cell. Advance first:
+   * activation notifications must enter the queue in cipher order. */
+  if (!CIRCUIT_IS_ORIGIN(circ) && cell_direction == CELL_DIRECTION_IN) {
+    payment_circuit_advance_due(TO_OR_CIRCUIT(circ),
+                                monotime_absolute_msec());
+    if (circ->marked_for_close) return 0;
+  }
+
   if (relay_decrypt_cell(circ, cell, cell_direction, &layer_hint, &recognized)
       < 0) {
     log_fn(LOG_PROTOCOL_WARN, LD_PROTOCOL,
@@ -316,6 +324,14 @@ circuit_receive_relay_cell(cell_t *cell, circuit_t *circ,
       }
     }
     return 0;
+  }
+
+  /* Forward traffic must not enter the unpaid holding queue merely because
+   * the round timer is due. Recognized payment queries remain read-only. */
+  if (!CIRCUIT_IS_ORIGIN(circ) && cell_direction == CELL_DIRECTION_OUT) {
+    payment_circuit_advance_due(TO_OR_CIRCUIT(circ),
+                                monotime_absolute_msec());
+    if (circ->marked_for_close) return 0;
   }
 
   /* not recognized. inform circpad and pass it on. */
@@ -628,6 +644,15 @@ relay_send_command_from_edge_,(streamid_t stream_id, circuit_t *orig_circ,
   /* XXXX NM Split this function into a separate versions per circuit type? */
 
   tor_assert(circ);
+
+  /* Service a funded transition before encrypting application output. Doing
+   * this during queue reservation could enqueue a notification ahead of a
+   * cell whose cipher state has already advanced. */
+  if (!CIRCUIT_IS_ORIGIN(circ) && relay_command == RELAY_COMMAND_DATA) {
+    payment_circuit_advance_due(TO_OR_CIRCUIT(circ),
+                                monotime_absolute_msec());
+    if (circ->marked_for_close) return -1;
+  }
 
   size_t msg_body_len;
   {
@@ -2823,7 +2848,8 @@ cell_queue_append_packed_copy_impl(circuit_t *circ, cell_queue_t *queue,
 {
   free_capacity_queue_ticket_t ticket;
   if (free_capacity_cell_reserve_command(circ, &ticket, cell->command) < 0) {
-    circuit_mark_for_close(circ, END_CIRC_REASON_RESOURCELIMIT);
+    if (!circ->marked_for_close)
+      circuit_mark_for_close(circ, END_CIRC_REASON_RESOURCELIMIT);
     return;
   }
   packed_cell_t *copy = packed_cell_copy(cell, wide_circ_ids);

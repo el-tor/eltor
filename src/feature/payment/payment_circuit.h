@@ -9,6 +9,9 @@
 struct or_circuit_t;
 struct relay_msg_t;
 typedef struct payment_circuit_t payment_circuit_t;
+/* Actual data-plane input/output may service an overdue scheduled transition.
+ * Read-only status queries must keep using the pure observation functions. */
+void payment_circuit_advance_due(struct or_circuit_t *, uint64_t now_ms);
 
 typedef enum payment_circuit_result_t {
   PAYMENT_CIRCUIT_OK = 0,
