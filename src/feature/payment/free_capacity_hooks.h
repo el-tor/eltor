@@ -33,6 +33,7 @@ bool free_capacity_circuit_ready(const circuit_t *, uint64_t now_ms);
 /* Irreversible transition after independently verified paid activation. Keeps
  * original counters/old queue receipts; never grants a later free fallback. */
 void free_capacity_circuit_paid(circuit_t *);
+bool free_capacity_circuit_is_paid(const circuit_t *);
 void free_capacity_connection_free(or_connection_t *);
 /* Central serialized link hooks. Return false only after closing the affected
  * circuit/connection. Stateful incoming cells must never be skipped and then

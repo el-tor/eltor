@@ -128,6 +128,8 @@ static int circuit_resume_edge_reading_helper(edge_connection_t *conn,
 static int circuit_consider_stop_edge_reading(circuit_t *circ,
                                               crypt_path_t *layer_hint);
 static int circuit_queue_streams_are_blocked(circuit_t *circ);
+static void set_circuit_blocked_on_chan(circuit_t *circ, channel_t *chan,
+                                         int block);
 static void adjust_exit_policy_from_exitpolicy_failure(origin_circuit_t *circ,
                                                   entry_connection_t *conn,
                                                   node_t *node,
@@ -767,7 +769,8 @@ relay_send_command_from_edge_,(streamid_t stream_id, circuit_t *orig_circ,
     circuit_package_relay_cell(&cell, circ, cell_direction, cpath_layer,
                                stream_id, filename, lineno);
   if (ret < 0) {
-    circuit_mark_for_close(circ, END_CIRC_REASON_INTERNAL);
+    if (!circ->marked_for_close)
+      circuit_mark_for_close(circ, END_CIRC_REASON_INTERNAL);
     return -1;
   } else if (ret == 0) {
     /* This means we should drop the cell or that the circuit was already
@@ -2558,6 +2561,33 @@ circuit_resume_edge_reading(circuit_t *circ, crypt_path_t *layer_hint)
                                        circ, layer_hint);
 }
 
+/* A status/timer transition may leave bytes already buffered while socket
+ * reads were stopped. Resume those bytes without requiring a new SENDME. */
+void
+circuit_paid_resume_edge_reading(circuit_t *circ)
+{
+  if (!free_capacity_circuit_is_paid(circ) || circ->marked_for_close ||
+      !circuit_queue_streams_are_blocked(circ) ||
+      !free_capacity_paid_data_active(circ)) return;
+  channel_t *chan = CIRCUIT_IS_ORIGIN(circ) ? circ->n_chan :
+                                             TO_OR_CIRCUIT(circ)->p_chan;
+  int queued = CIRCUIT_IS_ORIGIN(circ) ? circ->n_chan_cells.n :
+                                    TO_OR_CIRCUIT(circ)->p_chan_cells.n;
+  if (!chan || queued > ((int)FREE_CAPACITY_QUEUE_CELLS - 8)/2) return;
+  set_circuit_blocked_on_chan(circ, chan, 0);
+  if (CIRCUIT_IS_ORIGIN(circ)) {
+    crypt_path_t *hop = TO_ORIGIN_CIRCUIT(circ)->cpath;
+    if (hop) do {
+      circuit_resume_edge_reading(circ, hop);
+      if (circ->marked_for_close || circuit_queue_streams_are_blocked(circ))
+        break;
+      hop = hop->next;
+    } while (hop && hop != TO_ORIGIN_CIRCUIT(circ)->cpath);
+  } else {
+    circuit_resume_edge_reading(circ, NULL);
+  }
+}
+
 /** A helper function for circuit_resume_edge_reading() above.
  * The arguments are the same, except that <b>conn</b> is the head
  * of a linked list of edge streams that should each be considered.
@@ -2742,6 +2772,22 @@ circuit_consider_stop_edge_reading(circuit_t *circ, crypt_path_t *layer_hint)
 {
   edge_connection_t *conn = NULL;
   unsigned domain = layer_hint ? LD_APP : LD_EXIT;
+
+  /* A paid rollover can revoke local all-hop readiness before its status
+   * arrives. Stop before draining the socket buffer or advancing relay crypto.
+   * Keep room for protocol cells in the existing 32-cell holding budget. */
+  if (free_capacity_circuit_is_paid(circ)) {
+    channel_t *chan = CIRCUIT_IS_ORIGIN(circ) ? circ->n_chan :
+                                               TO_OR_CIRCUIT(circ)->p_chan;
+    int queued = CIRCUIT_IS_ORIGIN(circ) ? circ->n_chan_cells.n :
+                                      TO_OR_CIRCUIT(circ)->p_chan_cells.n;
+    if (!free_capacity_paid_data_active(circ) ||
+        circuit_queue_streams_are_blocked(circ) ||
+        queued >= (int)FREE_CAPACITY_QUEUE_CELLS - 8) {
+      if (chan) set_circuit_blocked_on_chan(circ, chan, 1);
+      return 1;
+    }
+  }
 
   if (!layer_hint) {
     or_circuit_t *or_circ = TO_OR_CIRCUIT(circ);
@@ -3470,8 +3516,17 @@ channel_flush_from_first_active_circuit, (channel_t *chan, int max))
 
     /* Is the cell queue low enough to unblock all the streams that are waiting
      * to write to this circuit? */
-    if (circ_blocked && queue->n <= cell_queue_lowwatermark())
-      set_circuit_blocked_on_chan(circ, chan, 0); /* unblock streams */
+    if (circ_blocked &&
+        (!free_capacity_circuit_is_paid(circ) ||
+          free_capacity_paid_data_active(circ)) && queue->n <=
+        (free_capacity_circuit_is_paid(circ) ?
+          ((int)FREE_CAPACITY_QUEUE_CELLS - 8)/2 : cell_queue_lowwatermark())) {
+      if (free_capacity_circuit_is_paid(circ) &&
+          (CIRCUIT_IS_ORIGIN(circ) || circ->n_chan != chan))
+        circuit_paid_resume_edge_reading(circ);
+      else
+        set_circuit_blocked_on_chan(circ, chan, 0);
+    }
 
     /* If n_flushed < max still, loop around and pick another circuit */
   }
@@ -3640,7 +3695,9 @@ append_cell_to_circuit_queue_impl(circuit_t *circ, channel_t *chan,
 
   /* If we have too many cells on the circuit, note that it should
    * be blocked from new cells. */
-  if (!circ_blocked && queue->n >= cell_queue_highwatermark())
+  if (!circ_blocked && queue->n >=
+      (free_capacity_circuit_is_paid(circ) ?
+        (int)FREE_CAPACITY_QUEUE_CELLS - 8 : cell_queue_highwatermark()))
     set_circuit_blocked_on_chan(circ, chan, 1);
 
   if (circ_blocked && fromstream) {

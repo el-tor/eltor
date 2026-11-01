@@ -662,6 +662,12 @@ free_capacity_circuit_queued(circuit_t *circ)
                                 FREE_CAPACITY_QUEUE_AGE_MS));
 }
 
+bool
+free_capacity_circuit_is_paid(const circuit_t *circ)
+{
+  return circ && circ->free_capacity && circ->free_capacity->paid;
+}
+
 void
 free_capacity_circuit_paid(circuit_t *circ)
 {

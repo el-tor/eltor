@@ -406,6 +406,7 @@ payment_circuit_tick(or_circuit_t *circ, uint64_t now_ms)
       !circ->base_.marked_for_close)
     circuit_mark_for_close(TO_CIRCUIT(circ), END_CIRC_REASON_TIMEOUT);
   schedule_timer(now_ms);
+  circuit_paid_resume_edge_reading(TO_CIRCUIT(circ));
 }
 
 bool

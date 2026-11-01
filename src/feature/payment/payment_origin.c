@@ -959,6 +959,7 @@ observe_paid_path(origin_circuit_t *circ, uint64_t now_ms)
 {
   if (payment_origin_data_active(circ,now_ms)) {
     free_capacity_circuit_paid(TO_CIRCUIT(circ));
+    circuit_paid_resume_edge_reading(TO_CIRCUIT(circ));
     if (circ->base_.state==CIRCUIT_STATE_OPEN && circ->base_.n_chan)
       circuit_try_attaching_streams(circ);
   }
