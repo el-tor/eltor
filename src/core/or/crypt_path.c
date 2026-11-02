@@ -24,6 +24,7 @@
 
 #include "core/crypto/relay_crypto.h"
 #include "core/crypto/onion_crypto.h"
+#include "feature/payment/payment_origin.h"
 #include "core/or/circuitbuild.h"
 #include "core/or/circuitlist.h"
 #include "core/or/extendinfo.h"
@@ -161,6 +162,8 @@ cpath_free(crypt_path_t *victim)
   if (!victim)
     return;
 
+  payment_origin_hop_free(victim);
+  payment_profile_keys_free(victim->payment_keys);
   relay_crypto_clear(&victim->pvt_crypto);
   onion_handshake_state_release(&victim->handshake_state);
   extend_info_free(victim->extend_info);

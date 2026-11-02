@@ -33,6 +33,7 @@
 #include "core/crypto/hs_ntor.h"
 #include "core/crypto/onion_crypto.h"
 #include "core/crypto/onion_fast.h"
+#include "feature/payment/payment_origin.h"
 #include "core/mainloop/connection.h"
 #include "core/mainloop/mainloop.h"
 #include "core/or/channel.h"
@@ -88,6 +89,7 @@
 #include "trunnel/subproto_request.h"
 
 #include "feature/payment/payment_util.h"
+#include "lib/crypt_ops/crypto_util.h"
 #include "feature/payment/relay_payments.h"
 #include <stdio.h>
 #include <string.h>
@@ -509,6 +511,12 @@ circuit_establish_circuit_with_guard(uint8_t purpose, extend_info_t *exit_ei,
     return NULL;
   }
 
+  if (purpose == CIRCUIT_PURPOSE_TESTING &&
+      payment_origin_prepare_reachability(circ) < 0) {
+    circuit_mark_for_close(TO_CIRCUIT(circ), END_CIRC_REASON_RESOURCELIMIT);
+    return NULL;
+  }
+
   circuit_event_status(circ, CIRC_EVENT_LAUNCHED, 0);
 
   err_reason = circuit_handle_first_hop_with_guard(circ, guard_state);
@@ -900,6 +908,7 @@ int
 circuit_timeout_want_to_count_circ(const origin_circuit_t *circ)
 {
   return !circ->has_opened
+          && !payment_origin_build_deadline(circ, NULL)
           && circ->build_state->desired_path_len >= DEFAULT_ROUTE_LEN
           && circuit_get_cpath_opened_len(circ) <= DEFAULT_ROUTE_LEN;
 }
@@ -1070,6 +1079,9 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
     cc.handshake_type = ONION_HANDSHAKE_TYPE_FAST;
   }
   
+  if (payment_origin_prepare_base(circ) < 0)
+    return -END_CIRC_REASON_RESOURCELIMIT;
+
   char hop_payhash_buf[PAYMENT_PAYHASH_SIZE] = {0};
   const char *tmp = payment_util_get_first_hop_payhash(circ);
   if (tmp) {
@@ -1077,15 +1089,21 @@ circuit_send_first_onion_skin(origin_circuit_t *circ)
   }
   const char *hop_payhash = (*hop_payhash_buf) ? hop_payhash_buf : NULL;
 
-  len = onion_skin_create(cc.handshake_type,
-                          circ->cpath->extend_info,
-                          &circ->cpath->handshake_state,
-                          cc.onionskin,
-                          sizeof(cc.onionskin),
-                          hop_payhash);
+  if (payment_origin_prepare_handshake(circ,circ->cpath,hop_payhash,
+                                       monotime_absolute_msec()) < 0)
+    return -END_CIRC_REASON_TORPROTOCOL;
+  if (circ->cpath->payment_export_requested) {
+    cc.cell_type = CELL_CREATE2;
+    cc.handshake_type = ONION_HANDSHAKE_TYPE_NTOR_V3;
+  }
+
+  len = payment_origin_create_onionskin(circ, circ->cpath, cc.handshake_type,
+                                        cc.onionskin, sizeof(cc.onionskin),
+                                        hop_payhash);
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create (first hop) failed.");
-    return - END_CIRC_REASON_INTERNAL;
+    return len == PAYMENT_ORIGIN_WORK_REFUSED ?
+      -END_CIRC_REASON_RESOURCELIMIT : -END_CIRC_REASON_INTERNAL;
   }
   cc.handshake_len = len;
 
@@ -1252,9 +1270,14 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
   }
 
   const relay_payment_item_t *payment = relay_payments_find_by_hop_num(circ->relay_payments, hop_num);
+  char internal_payhash[PAYMENT_PAYHASH_SIZE] = {0};
   const char *hop_payhash = NULL;
   if (payment && payment->wire_format) {
     hop_payhash = payment->wire_format;
+  } else if (circ->payment_base_only &&
+      payment_util_get_hop_payhash(circ, hop, internal_payhash,
+                                   sizeof(internal_payhash))) {
+    hop_payhash = internal_payhash;
   }
 
   // Add debugging to show we have the payment hash
@@ -1265,25 +1288,32 @@ circuit_send_intermediate_onion_skin(origin_circuit_t *circ,
     log_info(LD_GENERAL, "ELTOR intermediate hop with NO PayHash");
   }
 
-  len = onion_skin_create(ec.create_cell.handshake_type,
-                          hop->extend_info,
-                          &hop->handshake_state,
-                          ec.create_cell.onionskin,
-                          sizeof(ec.create_cell.onionskin), 
-                          hop_payhash);
+  if (payment_origin_prepare_handshake(circ,hop,hop_payhash,
+                                       monotime_absolute_msec()) < 0)
+    return -END_CIRC_REASON_TORPROTOCOL;
+  if (hop->payment_export_requested)
+    ec.create_cell.handshake_type = ONION_HANDSHAKE_TYPE_NTOR_V3;
+  len = payment_origin_create_onionskin(circ, hop,
+                                        ec.create_cell.handshake_type,
+                                        ec.create_cell.onionskin,
+                                        sizeof(ec.create_cell.onionskin),
+                                        hop_payhash);
   if (len < 0) {
     log_warn(LD_CIRC,"onion_skin_create failed.");
-    return - END_CIRC_REASON_INTERNAL;
+    return len == PAYMENT_ORIGIN_WORK_REFUSED ?
+      -END_CIRC_REASON_RESOURCELIMIT : -END_CIRC_REASON_INTERNAL;
   }
   ec.create_cell.handshake_len = len;
 
 
-  log_info(LD_CIRC,"Sending extend relay cell with eltor. payhash: %s", hop_payhash);
   {
     uint8_t command = 0;
     uint16_t payload_len=0;
     uint8_t payload[RELAY_PAYLOAD_SIZE_MAX];
-    if (extend_cell_format(&command, &payload_len, payload, &ec, hop_payhash)<0) {
+    int formatted = hop->payment_export_requested ?
+      extend_cell_format_foundation(&command, &payload_len, payload, &ec) :
+      extend_cell_format(&command, &payload_len, payload, &ec, hop_payhash);
+    if (formatted < 0) {
       log_warn(LD_CIRC,"Couldn't format extend cell");
       return -END_CIRC_REASON_INTERNAL;
     }
@@ -1379,7 +1409,8 @@ int
 circuit_finish_handshake(origin_circuit_t *circ,
                          const created_cell_t *reply)
 {
-  char keys[MAX_RELAY_KEY_MATERIAL_LEN];
+  char keys[MAX_RELAY_KEY_MATERIAL_LEN] = {0};
+  payment_profile_export_t payment_result = {0};
   crypt_path_t *hop;
   int rv;
 
@@ -1404,24 +1435,35 @@ circuit_finish_handshake(origin_circuit_t *circ,
   {
     const char *msg = NULL;
 
-    if (onion_skin_client_handshake(hop->handshake_state.tag,
-                                    &hop->handshake_state,
+    int handshake_result = payment_origin_finish_onionskin(circ, hop,
                                     reply->reply, reply->handshake_len,
                                     (uint8_t*)keys, &keylen,
                                     (uint8_t*)hop->rend_circ_nonce,
-                                    &params,
-                                    &msg) < 0) {
+                                    &params, &msg, &payment_result);
+    if (handshake_result < 0) {
       if (msg)
         log_warn(LD_CIRC,"onion_skin_client_handshake failed: %s", msg);
-      return -END_CIRC_REASON_TORPROTOCOL;
+      memwipe(keys, 0, sizeof(keys));
+      payment_profile_export_clear(&payment_result);
+      return handshake_result == PAYMENT_ORIGIN_WORK_REFUSED ?
+        -END_CIRC_REASON_RESOURCELIMIT : -END_CIRC_REASON_TORPROTOCOL;
     }
   }
 
   onion_handshake_state_release(&hop->handshake_state);
-  if (cpath_init_circuit_crypto(params.crypto_alg,
-                                hop, keys, keylen)<0) {
+  int crypto_result = cpath_init_circuit_crypto(params.crypto_alg,
+                                                hop, keys, keylen);
+  memwipe(keys, 0, sizeof(keys));
+  if (crypto_result < 0) {
+    payment_profile_export_clear(&payment_result);
     return -END_CIRC_REASON_TORPROTOCOL;
   }
+  if (payment_profile_export_take(&hop->payment_keys, &payment_result,
+                                   hop->payment_export_requested) < 0)
+    return -END_CIRC_REASON_TORPROTOCOL;
+  if (payment_origin_resource_complete(circ,hop,params.eltor_resource_admitted,
+                                         monotime_absolute_msec())<0)
+    return -END_CIRC_REASON_TORPROTOCOL;
   hop->relay_cell_format = params.cell_fmt;
 
   if (params.cc_enabled) {
@@ -2877,6 +2919,11 @@ client_circ_negotiation_message(const extend_info_t *ei,
     }
     params_out->cell_fmt = RELAY_CELL_FORMAT_V1;
     params_out->crypto_alg = RELAY_CRYPTO_ALG_CGO_CLIENT;
+  }
+
+  if (params_out->eltor_resource_requested) {
+    if (!ei->payment_free_v1 ||
+        eltor_resource_extension_add(ext) < 0) goto err;
   }
 
   size_t n_fields = trn_extension_getlen_fields(ext);

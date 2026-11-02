@@ -54,6 +54,8 @@ int connection_edge_package_raw_inbuf(edge_connection_t *conn,
                                       int *max_cells);
 void connection_edge_consider_sending_sendme(edge_connection_t *conn);
 void circuit_reset_sendme_randomness(circuit_t *circ);
+/* Resume retained edge input only after authenticated paid readiness. */
+void circuit_paid_resume_edge_reading(circuit_t *circ);
 
 extern uint64_t stats_n_data_cells_packaged;
 extern uint64_t stats_n_data_bytes_packaged;

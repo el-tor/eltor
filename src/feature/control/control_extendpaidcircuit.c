@@ -107,6 +107,9 @@
 #include "feature/nodelist/describe.h"
 #include "feature/payment/relay_payments.h"
 #include "feature/payment/payment_util.h"
+#include "feature/payment/payment_initial.h"
+#include "feature/payment/payment_origin.h"
+#include "feature/control/control_payment.h"
 #include "feature/payment/relay_payments.h"
 
 #ifdef HAVE_UNISTD_H
@@ -141,15 +144,48 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   bool zero_circ = !strcmp("0", circ_id);
 
   const char *body = args->cmddata;
-  log_debug(LD_CONTROL, "EXTENDPAIDCIRCUIT: %s", body);
 
   // 1. Parse multiline input
   smartlist_t *lines = smartlist_new();
+  /* Bound decoded body plus command/framing before per-hop allocations. */
+  if (get_options()->ElTorFoundation &&
+      args->cmddata_len>CONTROL_PAYMENT_MAX_LINE-64) {
+    control_write_endreply(conn,512,"Foundation constructor exceeds command bound");
+    goto done;
+  }
   smartlist_split_string(lines, body, "\n", SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
 
   if (smartlist_len(lines) == 0) {
     control_write_endreply(conn, 512, "No router specifications provided");
     goto done;
+  }
+
+  if (get_options()->ElTorFoundation) {
+    if (!zero_circ) {
+      control_write_endreply(conn,551,"Foundation path is immutable");
+      goto done;
+    }
+    if (smartlist_len(lines)>16) {
+      control_write_endreply(conn,512,"Foundation path exceeds hop bound");
+      goto done;
+    }
+    SMARTLIST_FOREACH_BEGIN(lines,char *,line) {
+      const char *space=strchr(line,' ');
+      char canonical[782];
+      payment_initial_material_t material={0};
+      bool valid=space && space!=line && strlen(space+1)==768;
+      if (valid) {
+        memcpy(canonical,"eltor_payhash",13);
+        memcpy(canonical+13,space+1,768); canonical[781]=0;
+        valid=payment_initial_parse(&material,(const uint8_t *)canonical,781)==0;
+        memwipe(canonical,0,sizeof(canonical));
+        payment_initial_clear(&material);
+      }
+      if (!valid) {
+        control_write_endreply(conn,512,"Invalid canonical foundation hop");
+        goto done;
+      }
+    } SMARTLIST_FOREACH_END(line);
   }
 
   // 2. Create circuit if circ_id is "0", otherwise get the circuit
@@ -201,7 +237,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     smartlist_split_string(tokens, line, " ", SPLIT_SKIP_SPACE | SPLIT_IGNORE_BLANK, 0);
     
     if (smartlist_len(tokens) != 2) {
-      log_debug(LD_CONTROL, "Invalid line format: %s", line);
+      log_debug(LD_CONTROL, "Invalid payment line format");
       SMARTLIST_FOREACH(tokens, char *, tok, tor_free(tok)); // avoid mem leak free the individual tokens in addition to the smartlist
       smartlist_free(tokens);
       continue;
@@ -213,7 +249,7 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     // NEW Use parser instead of manual steps
     relay_payment_item_t *payment_item = payment_util_parse_payment_line(line);
     if (!payment_item) {
-      log_warn(LD_CONTROL, "Invalid payment line: %s", line);
+      log_warn(LD_CONTROL, "Invalid payment line");
       SMARTLIST_FOREACH(tokens, char *, tok, tor_free(tok)); // free each token
       smartlist_free(tokens);
       continue;
@@ -279,7 +315,8 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
   // 5. Store the payment hash in the circuit
   log_info(LD_CONTROL, "ELTOR circuit payment hash total length: %zu", strlen(payhashes));
   // Check if total payment hash size is reasonable
-  const size_t max_payhash_size = 10 * 1024; // Example limit
+  const size_t max_payhash_size = get_options()->ElTorFoundation ?
+      PAYMENT_ORIGIN_CONSTRUCTION_PAYHASH_BYTES : 10 * 1024;
   if (strlen(payhashes) > max_payhash_size) {
     log_warn(LD_CONTROL, "ELTOR circuit payment hash exceeds maximum size (%zu > %zu)",
              strlen(payhashes), max_payhash_size);
@@ -289,8 +326,10 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
 
   log_info(LD_CONTROL, "ELTOR circuit payment hash total length: %zu", strlen(payhashes));
 
+  if (circ->payhashes) memwipe(circ->payhashes,0,strlen(circ->payhashes));
   tor_free(circ->payhashes);
   circ->payhashes = payhashes;
+  circ->payment_payhash_capacity=buffer_size;
 
   if (circ->relay_payments) {
     relay_payments_free(circ->relay_payments);
@@ -321,6 +360,11 @@ handle_control_extendpaidcircuit(control_connection_t *conn,
     extend_info_free(info);
     first_node = 0;
   });
+
+  if (zero_circ && payment_origin_prepare_owned_construction(circ) < 0) {
+    control_write_endreply(conn, 551, "Foundation construction refused");
+    goto done;
+  }
 
   // 7. Handle new circuit creation vs extending existing circuit
   if (zero_circ) {
@@ -380,6 +424,7 @@ done:
     payhashes = NULL;
   }
   if (payhashes) {
+    memwipe(payhashes,0,strlen(payhashes));
     tor_free(payhashes);
   }
 

@@ -46,6 +46,7 @@
 #include "feature/control/control.h"
 #include "feature/control/control_auth.h"
 #include "feature/control/control_cmd.h"
+#include "feature/control/control_payment.h"
 #include "feature/control/control_events.h"
 #include "feature/control/control_proto.h"
 #include "feature/hs/hs_common.h"
@@ -99,6 +100,7 @@ control_connection_add_local_fd(tor_socket_t sock, unsigned flags)
   const int is_owner = !!(flags & CC_LOCAL_FD_IS_OWNER);
   const int is_authenticated = !!(flags & CC_LOCAL_FD_IS_AUTHENTICATED);
   control_connection_t *control_conn = control_connection_new(AF_UNSPEC);
+  control_conn->payment_local_fd = true;
   connection_t *conn = TO_CONN(control_conn);
   conn->s = sock;
   tor_addr_make_unspec(&conn->addr);
@@ -201,6 +203,7 @@ int
 connection_control_finished_flushing(control_connection_t *conn)
 {
   tor_assert(conn);
+  control_payment_finished_flushing(conn);
   return 0;
 }
 
@@ -231,6 +234,7 @@ void
 connection_control_closed(control_connection_t *conn)
 {
   tor_assert(conn);
+  control_payment_connection_closed(conn);
 
   conn->event_mask = 0;
   control_update_global_event_mask();
@@ -624,5 +628,6 @@ control_free_all(void)
   control_auth_free_all();
   control_events_free_all();
   control_cmd_free_all();
+  control_payment_free_all();
   control_event_bootstrap_reset();
 }

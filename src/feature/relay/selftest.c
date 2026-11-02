@@ -12,6 +12,7 @@
  * their own bandwidth, before publishing.
  */
 
+#define SELFTEST_PRIVATE
 #include "core/or/or.h"
 
 #include "app/config/config.h"
@@ -28,6 +29,7 @@
 #include "core/or/extend_info_st.h"
 #include "core/or/origin_circuit_st.h"
 #include "core/or/relay.h"
+#include "core/or/versions.h"
 
 #include "feature/control/control_events.h"
 
@@ -188,8 +190,8 @@ have_orport_for_family(int family)
  * server.
  *
  * If the requested address is not available, returns NULL. */
-static extend_info_t *
-extend_info_from_router(const routerinfo_t *r, int family)
+STATIC extend_info_t *
+selftest_extend_info_from_router(const routerinfo_t *r, int family)
 {
   extend_info_t *info;
   tor_addr_port_t ap;
@@ -221,6 +223,21 @@ extend_info_from_router(const routerinfo_t *r, int family)
                           * congestion control? */
                          NULL, false);
 
+  /* Our current descriptor is locally signed before self-tests run; its exact
+   * immutable capabilities are authoritative for this self-selected last hop.
+   * Keep the existing no-congestion-control self-test policy. */
+  if (info && r->cache_info.signed_descriptor_body && r->payment_free_v1) {
+    protover_summary_flags_t pv;
+    summarize_protover_flags(&pv, r->protocol_list, NULL);
+    if (pv.supports_ntor_v3) {
+      info->supports_ntor_v3 = true;
+      info->payment_free_v1 = r->payment_free_v1;
+      info->payment_start_v1 = r->payment_start_v1;
+      info->payment_renew_v1 = r->payment_renew_v1;
+      memcpy(info->payment_profile_terms, r->payment_profile_terms, 55);
+    }
+  }
+
   return info;
 }
 
@@ -237,7 +254,7 @@ router_do_orport_reachability_checks(const routerinfo_t *me,
                                      int family,
                                      int orport_reachable)
 {
-  extend_info_t *ei = extend_info_from_router(me, family);
+  extend_info_t *ei = selftest_extend_info_from_router(me, family);
   int ipv6_flags = (family == AF_INET6 ? CIRCLAUNCH_IS_IPV6_SELFTEST : 0);
 
   /* If we're trying to test IPv6, but we don't have an IPv6 ORPort, ei will

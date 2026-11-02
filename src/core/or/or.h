@@ -222,6 +222,14 @@ struct curve25519_public_key_t;
 #define RELAY_COMMAND_XOFF 43
 #define RELAY_COMMAND_XON 44
 
+/* Private El Tor v1 draft commands; capability negotiation remains gated. */
+#define RELAY_COMMAND_PAYMENT_RENEW 224
+#define RELAY_COMMAND_PAYMENT_RENEWED 225
+#define RELAY_COMMAND_PAYMENT_COMMIT 226
+#define RELAY_COMMAND_PAYMENT_COMMITTED 227
+#define RELAY_COMMAND_PAYMENT_START_STATUS 228
+#define RELAY_COMMAND_PAYMENT_STARTED_STATUS 229
+
 /* NOTE: Any new command from above MUST be added to this function. */
 /** Helper to learn if we know the relay command. Unfortunately, they are not
  * contiguous and so we need this kind of big switch. We could do better but

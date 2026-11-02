@@ -14,6 +14,7 @@
 
 #include "lib/crypt_ops/crypto_ed25519.h"
 #include "core/crypto/relay_crypto.h"
+#include "feature/payment/payment_profile.h"
 
 typedef struct server_onion_keys_t {
   uint8_t my_identity[DIGEST_LEN];
@@ -33,6 +34,11 @@ typedef struct circuit_params_t {
   /** True if we have requested congestion control.
    */
   bool cc_requested;
+  /* Frozen per-job eligibility; requested/admitted are authenticated handshake
+   * facts, never inferred from a descriptor or dummy payment proof. */
+  bool eltor_resource_requested;
+  bool eltor_resource_eligible;
+  bool eltor_resource_admitted;
   /** Is true if congestion control is enabled in consensus or param,
    * as per congestion_control_enabled() result. */
   bool cc_enabled;
@@ -45,12 +51,17 @@ typedef struct circuit_params_t {
   relay_cell_fmt_t cell_fmt;
 } circuit_params_t;
 
+/* Export gates are staging inputs: all live callers leave them false until
+ * authenticated paid-profile negotiation exists. Enabling a local gate
+ * alone never proves peer support or authorizes payment/admission. */
 int onion_skin_create(int type,
                       const extend_info_t *node,
                       onion_handshake_state_t *state_out,
                       uint8_t *onion_skin_out,
                       size_t onion_skin_out_maxlen,
-                      const char *eltor_payhash);
+                      const char *eltor_payhash,
+                      bool payment_export_requested);
+struct payment_initial_material_t;
 int onion_skin_server_handshake(int type,
                       const uint8_t *onion_skin, size_t onionskin_len,
                       const server_onion_keys_t *keys,
@@ -61,14 +72,18 @@ int onion_skin_server_handshake(int type,
                       uint8_t *rend_nonce_out,
                       circuit_params_t *params_out,
                       uint64_t *p_circuit_id,
-                      uint64_t *n_circuit_id);
+                      uint64_t *n_circuit_id,
+                      bool payment_export_requested,
+                      payment_profile_export_t *payment_out,
+                      struct payment_initial_material_t *initial_out);
 int onion_skin_client_handshake(int type,
                       const onion_handshake_state_t *handshake_state,
                       const uint8_t *reply, size_t reply_len,
                       uint8_t *keys_out, size_t *keys_out_len,
                       uint8_t *rend_authenticator_out,
                       circuit_params_t *negotiated_params_out,
-                      const char **msg_out);
+                      const char **msg_out,
+                      payment_profile_export_t *payment_out);
 
 server_onion_keys_t *server_onion_keys_new(void);
 void server_onion_keys_free_(server_onion_keys_t *keys);
@@ -77,6 +92,8 @@ void server_onion_keys_free_(server_onion_keys_t *keys);
 
 struct trn_extension_st;
 struct trn_extension_field_st;
+int eltor_resource_extension_parse(const struct trn_extension_st *ext);
+int eltor_resource_extension_add(struct trn_extension_st *ext);
 const struct trn_extension_field_st *trn_extension_find(
                                         const struct trn_extension_st *ext,
                                         uint8_t ext_type);

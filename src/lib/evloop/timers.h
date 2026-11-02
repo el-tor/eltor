@@ -10,6 +10,7 @@
 #define TOR_TIMERS_H
 
 #include "orconfig.h"
+#include <stddef.h>
 #include "lib/testsupport/testsupport.h"
 
 struct monotime_t;
@@ -18,6 +19,8 @@ typedef struct timeout tor_timer_t;
 typedef void (*timer_cb_fn_t)(tor_timer_t *, void *,
                               const struct monotime_t *);
 tor_timer_t *timer_new(timer_cb_fn_t cb, void *arg);
+/* Exact incremental allocation capacity, for bounded feature arenas. */
+size_t timer_memory_cost(void);
 void timer_set_cb(tor_timer_t *t, timer_cb_fn_t cb, void *arg);
 void timer_get_cb(const tor_timer_t *t,
                   timer_cb_fn_t *cb_out, void **arg_out);

@@ -105,6 +105,8 @@ typedef enum {
 #define REMAP_STREAM_SOURCE_EXIT 2
 
 void control_initialize_event_queue(void);
+/* Main-loop-only, bounded per authenticated local control subscriber. */
+void control_event_payment_state(const char *line);
 
 void control_update_global_event_mask(void);
 void control_adjust_event_log_severity(void);
@@ -287,7 +289,8 @@ typedef uint64_t event_mask_t;
 #define EVENT_NETWORK_LIVENESS        0x0023
 #define EVENT_PT_LOG                  0x0024
 #define EVENT_PT_STATUS               0x0025
-#define EVENT_MAX_                    0x0025
+#define EVENT_ELTOR_PAYMENT_STATE     0x002B
+#define EVENT_MAX_                    0x002B
 
 /* sizeof(control_connection_t.event_mask) in bits, currently a uint64_t */
 #define EVENT_CAPACITY_               0x0040

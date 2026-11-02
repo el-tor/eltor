@@ -22,6 +22,7 @@
  * link handshake.
  **/
 #include "core/or/or.h"
+#include "feature/payment/free_capacity_hooks.h"
 #include "feature/client/bridges.h"
 #include "lib/buf/buffers.h"
 /*
@@ -2177,6 +2178,8 @@ connection_or_write_cell_to_buf(const cell_t *cell, or_connection_t *conn)
   tor_assert(cell);
   tor_assert(conn);
 
+  if (!free_capacity_wire_send(conn, cell->circ_id, cell_network_size, true, cell->command))
+    return;
   cell_pack(&networkcell, cell, conn->wide_circ_ids);
 
   /* We need to count padding cells from this non-packed code path
@@ -2215,6 +2218,9 @@ connection_or_write_var_cell_to_buf,(const var_cell_t *cell,
   tor_assert(cell);
   tor_assert(conn);
   n = var_cell_pack_header(cell, hdr, conn->wide_circ_ids);
+  if (!free_capacity_wire_send(conn, cell->circ_id, n + cell->payload_len,
+                               false, cell->command))
+    return;
   connection_buf_add(hdr, n, TO_CONN(conn));
   connection_buf_add((char*)cell->payload,
                           cell->payload_len, TO_CONN(conn));
@@ -2276,7 +2282,9 @@ connection_or_process_cells_from_inbuf(or_connection_t *conn)
         channel_timestamp_active(TLS_CHAN_TO_BASE(conn->chan));
 
       circuit_build_times_network_is_live(get_circuit_build_times_mutable());
-      channel_tls_handle_var_cell(var_cell, conn);
+      bool accepted = free_capacity_wire_receive(conn, var_cell->circ_id,
+          (conn->wide_circ_ids ? 7 : 5) + var_cell->payload_len, false, var_cell->command);
+      if (accepted) channel_tls_handle_var_cell(var_cell, conn);
       var_cell_free(var_cell);
     } else {
       const int wide_circ_ids = conn->wide_circ_ids;
@@ -2298,7 +2306,9 @@ connection_or_process_cells_from_inbuf(or_connection_t *conn)
        * network-order string) */
       cell_unpack(&cell, buf, wide_circ_ids);
 
-      channel_tls_handle_cell(&cell, conn);
+      if (free_capacity_wire_receive(conn, cell.circ_id, cell_network_size, true,
+                                     cell.command))
+        channel_tls_handle_cell(&cell, conn);
     }
   }
 }

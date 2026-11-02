@@ -9,3 +9,27 @@ LIBTOR_APP_A_SOURCES += src/feature/payment/relay_payments.c
 noinst_HEADERS += src/feature/payment/payment_util.h
 noinst_HEADERS += src/feature/payment/relay_payments_st.h
 noinst_HEADERS += src/feature/payment/relay_payments.h
+
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_profile.c
+noinst_HEADERS += src/feature/payment/payment_profile.h
+LIBTOR_APP_A_SOURCES += src/feature/payment/free_capacity.c
+noinst_HEADERS += src/feature/payment/free_capacity.h
+
+LIBTOR_APP_A_SOURCES += src/feature/payment/protocol_budget.c
+noinst_HEADERS += src/feature/payment/protocol_budget.h
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_schedule.c
+noinst_HEADERS += src/feature/payment/payment_schedule.h
+
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_circuit.c
+noinst_HEADERS += src/feature/payment/payment_circuit.h
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_origin.c
+noinst_HEADERS += src/feature/payment/payment_origin.h
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_resources.c
+noinst_HEADERS += src/feature/payment/payment_resources.h
+LIBTOR_APP_A_SOURCES += src/feature/payment/free_capacity_hooks.c
+noinst_HEADERS += src/feature/payment/free_capacity_hooks.h
+
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_initial.c
+noinst_HEADERS += src/feature/payment/payment_initial.h
+LIBTOR_APP_A_SOURCES += src/feature/payment/payment_workqueue.c
+noinst_HEADERS += src/feature/payment/payment_workqueue.h

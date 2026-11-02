@@ -24,6 +24,8 @@
 #include "feature/client/bridges.h"
 #include "feature/client/entrynodes.h"
 #include "feature/control/control.h"
+#include "feature/control/control_payment.h"
+#include "feature/payment/payment_resources.h"
 #include "feature/control/control_cmd.h"
 #include "feature/control/control_events.h"
 #include "feature/control/control_fmt.h"
@@ -77,6 +79,23 @@
 
 static char *list_getinfo_options(void);
 static char *download_status_to_string(const download_status_t *dl);
+
+/* This aggregate-only observation is serialized with the main-loop owners.
+ * Formatting never initializes/refills them or applies lifecycle transitions. */
+STATIC int
+getinfo_helper_eltor_resources(control_connection_t *conn, const char *question,
+                                char **answer, const char **errmsg)
+{
+  (void)question;
+  if (!control_payment_authority(conn)) {
+    *errmsg = "LOCAL_AUTHORITY_REQUIRED";
+    return -1;
+  }
+  payment_resource_snapshot_t snapshot;
+  payment_resources_snapshot(&snapshot);
+  *answer = payment_resources_format_snapshot(&snapshot);
+  return 0;
+}
 
 /** Implementation helper for GETINFO: knows the answers for various
  * trivial-to-implement questions. */
@@ -1494,6 +1513,8 @@ typedef struct getinfo_item_t {
 /** Table mapping questions accepted by GETINFO to the functions that know how
  * to answer them. */
 static const getinfo_item_t getinfo_items[] = {
+  ITEM("eltor/resource-status", eltor_resources,
+       "Bounded local authenticated aggregate resource counters and caps."),
   ITEM("version", misc, "The current version of Tor."),
   ITEM("bw-event-cache", misc, "Cached BW events for a short interval."),
   ITEM("config-file", misc, "Current location of the \"torrc\" file."),
@@ -1750,6 +1771,19 @@ handle_control_getinfo(control_connection_t *conn,
                        const control_cmd_args_t *args)
 {
   const smartlist_t *questions = args->args;
+  if (smartlist_contains_string(questions, "eltor/resource-status")) {
+    /* This diagnostic is one bounded response, never repeated within a batch.
+     * Preserve legacy GETINFO behavior for all unrelated keys. */
+    if (smartlist_len(questions) != 1) {
+      control_write_endreply(conn, 512, "RESOURCE_STATUS_REQUIRES_SINGLE_KEY");
+      return 0;
+    }
+    if (connection_get_outbuf_len(TO_CONN(conn)) > 8192) {
+      connection_stop_reading(TO_CONN(conn));
+      connection_mark_for_close(TO_CONN(conn));
+      return 0;
+    }
+  }
   smartlist_t *answers = smartlist_new();
   smartlist_t *unrecognized = smartlist_new();
   char *ans = NULL;

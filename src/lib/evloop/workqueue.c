@@ -119,6 +119,8 @@ struct workqueue_entry_t {
   workqueue_reply_t (*fn)(void *state, void *arg);
   /** Function to run while processing the reply queue. */
   void (*reply_fn)(void *arg);
+  void (*reply_release_fn)(void *arg);
+  void *reply_release_arg;
   /** Argument for the above functions. */
   void *arg;
 };
@@ -204,8 +206,8 @@ workqueue_entry_free_(workqueue_entry_t *ent)
  * This function will have no effect if the worker thread has already executed
  * or begun to execute the work item.  In that case, it will return NULL.
  */
-void *
-workqueue_entry_cancel(workqueue_entry_t *ent)
+MOCK_IMPL(void *,
+workqueue_entry_cancel, (workqueue_entry_t *ent))
 {
   int cancelled = 0;
   void *result = NULL;
@@ -894,13 +896,31 @@ replyqueue_process(replyqueue_t *queue)
     tor_mutex_release(&queue->lock);
     work->on_pool = NULL;
 
+    void (*release_fn)(void *) = work->reply_release_fn;
+    void *release_arg = work->reply_release_arg;
     work->reply_fn(work->arg);
     workqueue_entry_free(work);
+    if (release_fn) release_fn(release_arg);
 
     tor_mutex_acquire(&queue->lock);
   }
 
   tor_mutex_release(&queue->lock);
+}
+
+size_t
+workqueue_entry_memory_cost(void)
+{
+  return sizeof(workqueue_entry_t);
+}
+
+MOCK_IMPL(void,
+workqueue_entry_set_reply_release, (workqueue_entry_t *entry,
+                                  void (*release_fn)(void *), void *arg))
+{
+  tor_assert(entry);
+  entry->reply_release_fn = release_fn;
+  entry->reply_release_arg = arg;
 }
 
 /** Return the number of threads configured for the given pool. */

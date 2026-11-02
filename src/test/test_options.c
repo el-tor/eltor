@@ -14,6 +14,9 @@
 #include "feature/dirauth/dirauth_options_st.h"
 #include "feature/dirauth/dirauth_sys.h"
 #include "feature/relay/relay_config.h"
+#include "feature/payment/payment_profile.h"
+#include "feature/payment/payment_circuit.h"
+#include "feature/payment/payment_resources.h"
 #include "test/test.h"
 #include "lib/geoip/geoip.h"
 
@@ -3741,6 +3744,80 @@ test_options_validate__virtual_addr(void *ignored)
 }
 
 static void
+test_options_foundation_terms(void *arg)
+{
+  (void)arg;
+  options_test_data_t *tdata = NULL;
+  char *msg = NULL, *cfg = NULL;
+  char hex[111];
+  uint8_t wire[55], observed_wire[55];
+  payment_profile_policy_t policy = payment_profile_testing_policy();
+  payment_profile_policy_t actual;
+  bool candidate = false;
+  or_options_t bare = {0};
+
+  /* The zero-price test candidate is never inferred outside test networks. */
+  tt_int_op(options_get_payment_policy(&bare, &actual), OP_EQ, -1);
+  bare.TestingTorNetwork = 1;
+  tt_int_op(options_get_payment_policy(&bare, &actual), OP_EQ, 0);
+  tt_u64_op(actual.rate_msat, OP_EQ, 0);
+  policy.rate_msat = 1500;
+  policy.initial_handshake_fee_msat = 2500;
+  policy.max_age_ms = 2400000;
+  policy.max_periods = 4;
+  tt_int_op(payment_profile_policy_encode(wire, sizeof(wire), &policy),
+            OP_EQ, 0);
+  base16_encode(hex, sizeof(hex), (const char *)wire, sizeof(wire));
+  tor_strlower(hex);
+  tor_asprintf(&cfg, VALID_DIR_AUTH "TestingTorNetwork 1\n"
+               "ElTorFoundation 1\nElTorFoundationTerms %s\n", hex);
+  tdata = get_options_test_data(cfg);
+  tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, 0);
+  tt_ptr_op(msg, OP_EQ, NULL);
+  tt_int_op(options_get_payment_policy(tdata->opt, &actual), OP_EQ, 0);
+  tt_u64_op(actual.rate_msat, OP_EQ, 1500);
+  tt_u64_op(actual.initial_handshake_fee_msat, OP_EQ, 2500);
+  tt_u64_op(actual.max_age_ms, OP_EQ, 2400000);
+  tt_uint_op(actual.max_periods, OP_EQ, 4);
+  tt_int_op(payment_circuit_configure_construction(true, &actual), OP_EQ, 0);
+  tt_assert(payment_circuit_construction_policy(&actual, &candidate));
+  tt_assert(candidate);
+  tt_int_op(payment_profile_policy_encode(observed_wire,
+                         sizeof(observed_wire), &actual), OP_EQ, 0);
+  tt_mem_op(observed_wire, OP_EQ, wire, sizeof(wire));
+  /* Parsing explicit terms also works without testing; it does not remove
+   * the independent production enable/advertisement gate. */
+  tdata->opt->TestingTorNetwork = 0;
+  tt_int_op(options_get_payment_policy(tdata->opt, &actual), OP_EQ, 0);
+  tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, -1);
+  tt_str_op(msg, OP_EQ, "ElTorFoundation requires TestingTorNetwork 1.");
+  tor_free(msg);
+  tdata->opt->ElTorFoundation = 0;
+  tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, 0);
+
+  /* Exact nonzero quota reaches the same immutable policy as other fields. */
+  policy.paid_quota_bytes = 1;
+  tt_int_op(payment_profile_policy_encode(wire, sizeof(wire), &policy),
+            OP_EQ, 0);
+  base16_encode(hex, sizeof(hex), (const char *)wire, sizeof(wire));
+  tor_strlower(hex);
+  tor_free(tdata->opt->ElTorFoundationTerms);
+  tdata->opt->ElTorFoundationTerms = tor_strdup(hex);
+  tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, 0);
+  tt_int_op(options_get_payment_policy(tdata->opt, &actual), OP_EQ, 0);
+  tt_u64_op(actual.paid_quota_bytes, OP_EQ, 1);
+  tor_free(tdata->opt->ElTorFoundationTerms);
+  tdata->opt->ElTorFoundationTerms = tor_strdup("01");
+  tt_int_op(options_get_payment_policy(tdata->opt, &actual), OP_EQ, -1);
+  tt_u64_op(actual.rate_msat, OP_EQ, 0);
+ done:
+  (void)payment_circuit_configure_construction(false, NULL);
+  free_options_test_data(tdata);
+  tor_free(cfg);
+  tor_free(msg);
+}
+
+static void
 test_options_validate__testing_options(void *ignored)
 {
   (void)ignored;
@@ -3748,6 +3825,17 @@ test_options_validate__testing_options(void *ignored)
   char *msg;
   options_test_data_t *tdata = NULL;
   setup_capture_of_logs(LOG_WARN);
+  tdata=get_options_test_data("ElTorFoundation 1\n");
+  ret=options_validate(NULL,tdata->opt,&msg);
+  tt_int_op(ret,OP_EQ,-1);
+  tt_str_op(msg,OP_EQ,"ElTorFoundation requires TestingTorNetwork 1.");
+  tor_free(msg);
+  free_options_test_data(tdata);
+  tdata=get_options_test_data(VALID_DIR_AUTH
+                             "TestingTorNetwork 1\nElTorFoundation 1\n");
+  ret=options_validate(NULL,tdata->opt,&msg);
+  tt_int_op(ret,OP_EQ,0);
+  tor_free(msg);
 
 #define TEST_TESTING_OPTION(name, accessor, \
                             low_val, high_val, err_low, EXTRA_OPT_STR)  \
@@ -4134,6 +4222,137 @@ mock_options_act_reversible(const or_options_t *old_options, char **msg_out)
 }
 
 static void
+test_options_foundation_resources(void *arg)
+{
+  (void)arg;
+  options_test_data_t *tdata = NULL;
+  config_line_t *lines = NULL;
+  char *msg = NULL, *dump = NULL;
+  free_capacity_limits_t free_limits;
+  protocol_budget_limits_t protocol_limits;
+  free_capacity_conn_t conn = {0};
+  free_capacity_circuit_t first = {0}, second = {0};
+  free_capacity_queue_ticket_t ticket = {0};
+  free_capacity_t *owner = NULL;
+  struct { const char *name; size_t offset; unsigned ceiling; } fields[] = {
+    { "ElTorFoundationMaxCircuits", offsetof(or_options_t, ElTorFoundationMaxCircuits), 4096 },
+    { "ElTorFoundationAdmissionRate", offsetof(or_options_t, ElTorFoundationAdmissionRate), 16 },
+    { "ElTorFoundationAdmissionBurst", offsetof(or_options_t, ElTorFoundationAdmissionBurst), 32 },
+    { "ElTorFoundationConnAdmissionRate", offsetof(or_options_t, ElTorFoundationConnAdmissionRate), 4 },
+    { "ElTorFoundationConnAdmissionBurst", offsetof(or_options_t, ElTorFoundationConnAdmissionBurst), 8 },
+    { "ElTorFoundationByteRate", offsetof(or_options_t, ElTorFoundationByteRate), 4194304 },
+    { "ElTorFoundationByteBurst", offsetof(or_options_t, ElTorFoundationByteBurst), 8388608 },
+    { "ElTorFoundationConnByteRate", offsetof(or_options_t, ElTorFoundationConnByteRate), 1048576 },
+    { "ElTorFoundationConnByteBurst", offsetof(or_options_t, ElTorFoundationConnByteBurst), 2097152 },
+    { "ElTorFoundationQueueBytes", offsetof(or_options_t, ElTorFoundationQueueBytes), 8388608 },
+    { "ElTorFoundationMaxSlots", offsetof(or_options_t, ElTorFoundationMaxSlots), 4096 },
+    { "ElTorFoundationArenaBytes", offsetof(or_options_t, ElTorFoundationArenaBytes), 67108864 },
+    { "ElTorFoundationCryptoRate", offsetof(or_options_t, ElTorFoundationCryptoRate), 256 },
+    { "ElTorFoundationCryptoBurst", offsetof(or_options_t, ElTorFoundationCryptoBurst), 512 },
+    { "ElTorFoundationMaxRunning", offsetof(or_options_t, ElTorFoundationMaxRunning), 32 },
+    { "ElTorFoundationMaxWaiting", offsetof(or_options_t, ElTorFoundationMaxWaiting), 128 },
+  };
+  MOCK(options_act, mock_options_act);
+  MOCK(options_act_reversible, mock_options_act_reversible);
+  tt_int_op(options_trial_assign(NULL, 0, &msg), OP_EQ, SETOPT_OK);
+  tt_ptr_op(msg, OP_EQ, NULL);
+  tdata = get_options_test_data("ElTorFoundationMaxCircuits 1\n"
+      "ElTorFoundationAdmissionRate 1\nElTorFoundationAdmissionBurst 2\n"
+      "ElTorFoundationConnAdmissionRate 1\n"
+      "ElTorFoundationConnAdmissionBurst 2\n"
+      "ElTorFoundationByteRate 2048\nElTorFoundationByteBurst 4096\n"
+      "ElTorFoundationConnByteRate 1024\n"
+      "ElTorFoundationConnByteBurst 4096\n"
+      "ElTorFoundationQueueBytes 4096\nElTorFoundationMaxSlots 8\n"
+      "ElTorFoundationArenaBytes 1048576\n"
+      "ElTorFoundationCryptoRate 2\nElTorFoundationCryptoBurst 4\n"
+      "ElTorFoundationMaxRunning 1\nElTorFoundationMaxWaiting 2\n");
+  tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, 0);
+  tt_int_op(options_get_payment_limits(tdata->opt, &free_limits,
+                                      &protocol_limits), OP_EQ, 0);
+  tt_uint_op(free_limits.max_circuits, OP_EQ, 1);
+  tt_uint_op(protocol_limits.arena_bytes, OP_EQ, 1048576);
+  tt_uint_op(protocol_limits.max_running, OP_EQ, 1);
+  /* Per-slot and per-circuit protocol constants are not operator overrides. */
+  tt_uint_op(protocol_limits.max_slot_bytes, OP_EQ, PROTOCOL_BUDGET_SLOT_BYTES);
+  tt_uint_op(protocol_limits.max_wait_ms, OP_EQ, PROTOCOL_BUDGET_WAIT_MS);
+  dump = options_dump(tdata->opt, OPTIONS_DUMP_ALL);
+  tt_assert(strstr(dump, "ElTorFoundationMaxCircuits 1\n"));
+  tor_free(dump);
+  for (unsigned i = 0; i < ARRAY_LENGTH(fields); ++i) {
+    int *field = (int *)((char *)tdata->opt + fields[i].offset);
+    int saved = *field;
+    tt_int_op(*(const int *)((const char *)get_options() + fields[i].offset),
+              OP_EQ, fields[i].ceiling);
+    *field = 0;
+    tt_int_op(options_get_payment_limits(tdata->opt, &free_limits,
+                                        &protocol_limits), OP_EQ, -1);
+    *field = fields[i].ceiling + 1;
+    tt_int_op(options_get_payment_limits(tdata->opt, &free_limits,
+                                        &protocol_limits), OP_EQ, -1);
+    *field = saved;
+    char command[128];
+    tor_snprintf(command, sizeof(command), "%s %u", fields[i].name,
+                 fields[i].ceiling / 2);
+    tt_int_op(config_get_lines(command, &lines, 0), OP_EQ, 0);
+    setopt_err_t assigned = options_trial_assign(lines, 0, &msg);
+    if (assigned != SETOPT_ERR_TRANSITION)
+      TT_DIE(("Unexpected %s reload result: %s", fields[i].name,
+              msg ? msg : "no diagnostic"));
+    tt_int_op(assigned, OP_EQ, SETOPT_ERR_TRANSITION);
+    tt_assert(strstr(msg, "is not allowed"));
+    config_free_lines(lines); lines = NULL; tor_free(msg);
+  }
+  tdata->opt->ElTorFoundationMaxCircuits = 0;
+  tt_int_op(options_validate(NULL, tdata->opt, &msg), OP_EQ, -1);
+  tt_assert(strstr(msg, "aggregate limits must be positive"));
+  tor_free(msg);
+  tdata->opt->ElTorFoundationMaxCircuits = 1;
+  tt_int_op(config_get_lines("ElTorFoundationMaxCircuits -1", &lines, 0),
+            OP_EQ, 0);
+  tt_int_op(options_trial_assign(lines, 0, &msg), OP_EQ, SETOPT_ERR_PARSE);
+  config_free_lines(lines); lines = NULL; tor_free(msg);
+  tt_int_op(options_get_payment_limits(tdata->opt, &free_limits,
+                                      &protocol_limits), OP_EQ, 0);
+  tt_int_op(payment_resources_configure_limits(&free_limits, &protocol_limits),
+            OP_EQ, 0);
+  owner = payment_resources_free();
+  uint64_t now_ms = owner->last_ms;
+  tt_int_op(free_capacity_conn_init(&conn, owner, now_ms), OP_EQ, 0);
+  tt_int_op(free_capacity_admit(&conn, &first, now_ms), OP_EQ, 0);
+  tt_int_op(free_capacity_admit(&conn, &second, now_ms), OP_EQ,
+            FREE_CAPACITY_REFUSE);
+  tt_int_op(free_capacity_send(&first, &conn, 1, 4096, now_ms), OP_EQ, 0);
+  tt_int_op(free_capacity_send(&first, &conn, 1, 1, now_ms), OP_EQ,
+            FREE_CAPACITY_WAIT);
+  uint64_t credit = owner->bytes.credit_milli;
+  tt_int_op(payment_resources_configure_limits(&free_limits, &protocol_limits),
+            OP_EQ, 0);
+  tt_u64_op(owner->bytes.credit_milli, OP_EQ, credit);
+  tt_uint_op(owner->live_circuits, OP_EQ, 1);
+  free_limits.max_circuits = 2;
+  tt_int_op(payment_resources_configure_limits(&free_limits, &protocol_limits),
+            OP_EQ, -1);
+  tt_uint_op(owner->limits.max_circuits, OP_EQ, 1);
+  tt_int_op(free_capacity_queue_push(&first, 4096, now_ms, &ticket), OP_EQ, 0);
+  tt_uint_op(owner->queued_bytes, OP_EQ, 4096);
+  tt_int_op(free_capacity_queue_discard(&first, &ticket), OP_EQ, 0);
+  memset(&ticket, 0, sizeof(ticket));
+  tt_int_op(free_capacity_queue_push(&first, 4097, now_ms, &ticket), OP_EQ,
+            FREE_CAPACITY_CLOSE);
+ done:
+  if (ticket.serial && owner)
+    (void)free_capacity_queue_discard(&first, &ticket);
+  free_capacity_release(&first);
+  free_capacity_release(&second);
+  (void)payment_resources_free_all();
+  UNMOCK(options_act); UNMOCK(options_act_reversible);
+  config_free_lines(lines);
+  free_options_test_data(tdata);
+  tor_free(dump); tor_free(msg);
+}
+
+static void
 test_options_trial_assign(void *arg)
 {
   (void)arg;
@@ -4168,6 +4387,26 @@ test_options_trial_assign(void *arg)
   v = options_trial_assign(lines, 0, &msg);
   tt_int_op(v, OP_EQ, SETOPT_ERR_TRANSITION);
   tt_str_op(msg, OP_EQ,  "While Tor is running, changing User is not allowed");
+  tor_free(msg);
+  config_free_lines(lines);
+
+  // Foundation policy is immutable even when the feature is disabled.
+  {
+    payment_profile_policy_t policy = payment_profile_testing_policy();
+    uint8_t wire[55];
+    char hex[111], line[160];
+    tt_int_op(payment_profile_policy_encode(wire, sizeof(wire), &policy),
+              OP_EQ, 0);
+    base16_encode(hex, sizeof(hex), (const char *)wire, sizeof(wire));
+    tor_strlower(hex);
+    tor_snprintf(line, sizeof(line), "ElTorFoundationTerms %s", hex);
+    r = config_get_lines(line, &lines, 0);
+  }
+  tt_int_op(r, OP_EQ, 0);
+  v = options_trial_assign(lines, 0, &msg);
+  tt_int_op(v, OP_EQ, SETOPT_ERR_TRANSITION);
+  tt_str_op(msg, OP_EQ, "While Tor is running, changing "
+                        "ElTorFoundationTerms is not allowed");
   tor_free(msg);
   config_free_lines(lines);
 
@@ -4207,6 +4446,8 @@ test_options_trial_assign(void *arg)
 #endif
 
 struct testcase_t options_tests[] = {
+  { "foundation_resources", test_options_foundation_resources, TT_FORK, NULL, NULL },
+  { "foundation_terms", test_options_foundation_terms, TT_FORK, NULL, NULL },
   { "validate", test_options_validate, TT_FORK, NULL, NULL },
   { "mem_dircache", test_have_enough_mem_for_dircache, TT_FORK, NULL, NULL },
   LOCAL_VALIDATE_TEST(uname_for_server),

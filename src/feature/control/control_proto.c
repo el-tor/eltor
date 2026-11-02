@@ -14,6 +14,7 @@
 #include "core/or/circuitlist.h"
 #include "core/or/connection_edge.h"
 #include "feature/control/control_proto.h"
+#include "feature/control/control_payment.h"
 #include "feature/nodelist/nodelist.h"
 
 #include "core/or/cpath_build_state_st.h"
@@ -182,6 +183,7 @@ MOCK_IMPL(void,
 control_write_reply, (control_connection_t *conn, int code, int c,
                       const char *s))
 {
+  if (control_payment_write_reply(conn, code, c, s)) return;
   connection_printf_to_buf(conn, "%03d%c%s\r\n", code, c, s);
 }
 
@@ -197,6 +199,7 @@ void
 control_vprintf_reply(control_connection_t *conn, int code, int c,
                       const char *fmt, va_list ap)
 {
+  if (control_payment_vprintf_reply(conn, code, c, fmt, ap)) return;
   char *buf = NULL;
   int len;
 

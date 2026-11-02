@@ -352,8 +352,10 @@ command_process_create_cell(cell_t *cell, channel_t *chan)
     rep_hist_note_circuit_handshake_requested(create_cell->handshake_type);
   }
 
-  if (create_cell->handshake_type != ONION_HANDSHAKE_TYPE_FAST) {
-    /* hand it off to the cpuworkers, and then return. */
+  if (create_cell->handshake_type != ONION_HANDSHAKE_TYPE_FAST ||
+      options->ElTorFoundation) {
+    /* Enabled foundation bootstrap uses the same admitted dispatcher even for
+     * FAST; the inline legacy path must not bypass shared CPU/state limits. */
 
     if (assign_onionskin_to_cpuworker(circ, create_cell) < 0) {
       log_debug(LD_GENERAL,"Failed to hand off onionskin. Closing.");
@@ -385,7 +387,7 @@ command_process_create_cell(cell_t *cell, channel_t *chan)
                                        rend_circ_nonce,
                                        &params,
                                        &circuit_id_64,
-                                       &n_circuit_id_64);
+                                       &n_circuit_id_64, false, NULL, NULL);
     tor_free(create_cell);
     if (len < 0 || keylen != sizeof(keys)) {
       log_warn(LD_OR,"Failed to generate key material. Closing.");

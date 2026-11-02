@@ -128,12 +128,22 @@ push(uint8_t **ptr, const uint8_t *endptr, const uint8_t *data, size_t len)
 /**
  * Helper: Drop storage held by @a state, after wiping it.
  **/
+size_t
+onion_ntor3_client_state_memory_cost(void)
+{
+  return sizeof(ntor3_handshake_state_t);
+}
+
 void
 ntor3_handshake_state_free_(ntor3_handshake_state_t *state)
 {
   if (!state)
     return;
 
+  if (state->payment_client_hdata) {
+    memwipe(state->payment_client_hdata, 0, state->payment_client_hdata_len);
+    tor_free(state->payment_client_hdata);
+  }
   memwipe(state, 0, sizeof(*state));
   tor_free(state);
 }
@@ -169,10 +179,15 @@ onion_skin_ntor3_create(const ed25519_public_key_t *relay_id,
                         const size_t message_len,
                         ntor3_handshake_state_t **handshake_state_out,
                         uint8_t **onion_skin_out,
-                        size_t *onion_skin_len_out)
+                        size_t *onion_skin_len_out,
+                        bool payment_export_requested)
 {
+  *handshake_state_out = NULL;
+  *onion_skin_out = NULL;
+  *onion_skin_len_out = 0;
   curve25519_keypair_t client_keypair;
   if (curve25519_keypair_generate(&client_keypair, 0) < 0) {
+    memwipe(&client_keypair, 0, sizeof(client_keypair));
     return -1;
   }
   int r = onion_skin_ntor3_create_nokeygen(
@@ -185,7 +200,8 @@ onion_skin_ntor3_create(const ed25519_public_key_t *relay_id,
                                    message_len,
                                    handshake_state_out,
                                    onion_skin_out,
-                                   onion_skin_len_out);
+                                   onion_skin_len_out,
+                                   payment_export_requested);
   memwipe(&client_keypair, 0, sizeof(client_keypair));
   return r;
 }
@@ -208,7 +224,8 @@ onion_skin_ntor3_create_nokeygen(
                         const size_t message_len,
                         ntor3_handshake_state_t **handshake_state_out,
                         uint8_t **onion_skin_out,
-                        size_t *onion_skin_len_out)
+                        size_t *onion_skin_len_out,
+                        bool payment_export_requested)
 {
   *handshake_state_out = NULL;
   *onion_skin_out = NULL;
@@ -227,6 +244,7 @@ onion_skin_ntor3_create_nokeygen(
   if (safe_mem_is_zero((*handshake_state_out)->bx, CURVE25519_OUTPUT_LEN)) {
     // Okay to return early here, since our behavior here doesn't
     // cause a visible timing sidechannel.
+    ntor3_handshake_state_free(*handshake_state_out);
     return -1;
   }
 
@@ -287,6 +305,12 @@ onion_skin_ntor3_create_nokeygen(
     tor_assert(ptr == end);
   }
 
+  if (payment_export_requested) {
+    (*handshake_state_out)->payment_client_hdata =
+      tor_memdup(*onion_skin_out, *onion_skin_len_out);
+    (*handshake_state_out)->payment_client_hdata_len = *onion_skin_len_out;
+  }
+
   memwipe(&enc_key, 0, sizeof(enc_key));
   memwipe(&mac_key, 0, sizeof(mac_key));
   memwipe(encrypted_message, 0, message_len);
@@ -320,8 +344,11 @@ onion_ntor3_client_handshake(const ntor3_handshake_state_t *handshake_state,
                              uint8_t *keys_out,
                              size_t keys_out_len,
                              uint8_t **message_out,
-                             size_t *message_len_out)
+                             size_t *message_len_out,
+                             payment_profile_export_t *payment_out)
 {
+  payment_profile_export_clear(payment_out);
+  const uint8_t *server_hdata = handshake_reply;
   *message_out = NULL;
   *message_len_out = 0;
 
@@ -424,6 +451,17 @@ onion_ntor3_client_handshake(const ntor3_handshake_state_t *handshake_state,
     crypto_cipher_free(c);
   }
 
+  if (!problems && payment_out && handshake_state->payment_client_hdata) {
+    if (payment_profile_derive_keys(&payment_out->keys, key_seed,
+                          handshake_state->payment_client_hdata,
+                          handshake_state->payment_client_hdata_len,
+                          server_hdata, reply_len) == PAYMENT_PROFILE_OK) {
+      payment_out->valid = true;
+    } else {
+      ++problems;
+    }
+  }
+
  done:
   memwipe(&relay_Y, 0, sizeof(relay_Y));
   memwipe(&relay_auth, 0, sizeof(relay_auth));
@@ -432,6 +470,7 @@ onion_ntor3_client_handshake(const ntor3_handshake_state_t *handshake_state,
   memwipe(verify, 0, sizeof(verify));
   memwipe(enc_key, 0, sizeof(enc_key));
   if (problems) {
+    payment_profile_export_clear(payment_out);
     if (*message_out) {
       memwipe(*message_out, 0, *message_len_out);
       tor_free(*message_out); // Sets it to NULL.
@@ -453,6 +492,10 @@ ntor3_server_handshake_state_free_(ntor3_server_handshake_state_t *state)
   if (state == NULL)
     return;
 
+  if (state->payment_client_hdata) {
+    memwipe(state->payment_client_hdata, 0, state->payment_client_hdata_len);
+    tor_free(state->payment_client_hdata);
+  }
   memwipe(state, 0, sizeof(ntor3_server_handshake_state_t));
   tor_free(state);
 }
@@ -491,7 +534,8 @@ onion_skin_ntor3_server_handshake_part1(
                 size_t *client_message_len_out,
                 ntor3_server_handshake_state_t **state_out,
                 uint64_t *p_circuit_id,
-                uint64_t *n_circuit_id)
+                uint64_t *n_circuit_id,
+                bool payment_export_requested)
 {
   *client_message_out = NULL;
   *client_message_len_out = 0;
@@ -611,49 +655,14 @@ onion_skin_ntor3_server_handshake_part1(
     return -1;
   }
 
-  // After decrypting the message
-  if (*client_message_out && *client_message_len_out > 0) {
-    log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message (len=%zu): %s",
-         *client_message_len_out,
-         (const char *)*client_message_out);
-    
-    // Log the first few bytes for debugging
-    log_notice(LD_CIRC, "ELTOR RELAY: Decrypted client message hex dump: %s",
-              hex_str((const char *)*client_message_out, MIN(32, *client_message_len_out)));
-    
-    // Check for the prefixPayHash directly
-    const char *prefixPayHash = "eltor_payhash";
-    const void *foundPayHash = tor_memmem(*client_message_out, *client_message_len_out,
-                                        prefixPayHash, strlen(prefixPayHash));
-
-    if (foundPayHash) {
-      size_t indexPayHash = (const uint8_t *)foundPayHash - *client_message_out;
-      log_notice(LD_CIRC, "ELTOR RELAY: Found Payment hash: %.*s", 
-                 (int)MIN(32, *client_message_len_out - indexPayHash - strlen(prefixPayHash)),
-                 (const char *)foundPayHash); 
-
-      log_notice(LD_CIRC, "ELTOR RELAY: Found payment hash prefix at offset %zu", indexPayHash);
-      
-      // Extract and process the payment hash
-      size_t remaining = *client_message_len_out - (indexPayHash + strlen(prefixPayHash));
-      if (remaining > 0) {
-        char *payhash = tor_malloc(remaining + 1);
-        memcpy(payhash, (const char*)*client_message_out + indexPayHash + strlen(prefixPayHash), remaining);
-        payhash[remaining] = '\0';
-
-        log_notice(LD_CIRC, "ELTOR RELAY: Payment hash: %s, P_CircuitID: %"PRIu64", N_CircuitID: %"PRIu64, 
-                   payhash, 
-                   p_circuit_id ? *p_circuit_id : 0,
-                   n_circuit_id ? *n_circuit_id : 0);
-        control_event_payment_id_hash_received(payhash, p_circuit_id, n_circuit_id);
-
-        tor_free(payhash);
-      }
-        
-    } else {
-      log_notice(LD_CIRC, "ELTOR RELAY: No payhash found in decrypted message");
-    }
+  if (payment_export_requested) {
+    (*state_out)->payment_client_hdata =
+      tor_memdup(client_handshake, client_handshake_len);
+    (*state_out)->payment_client_hdata_len = client_handshake_len;
   }
+
+  /* Legacy observer dispatch follows parameter negotiation in onion_crypto. */
+  (void)p_circuit_id; (void)n_circuit_id;
 
   return 0;
 }
@@ -681,10 +690,13 @@ onion_skin_ntor3_server_handshake_part2(
                 uint8_t **handshake_out,
                 size_t *handshake_len_out,
                 uint8_t *keys_out,
-                size_t keys_out_len)
+                size_t keys_out_len,
+                payment_profile_export_t *payment_out)
 {
+  payment_profile_export_clear(payment_out);
   curve25519_keypair_t relay_keypair;
   if (curve25519_keypair_generate(&relay_keypair, 0) < 0) {
+    memwipe(&relay_keypair, 0, sizeof(relay_keypair));
     return -1;
   }
   int r = onion_skin_ntor3_server_handshake_part2_nokeygen(
@@ -697,7 +709,8 @@ onion_skin_ntor3_server_handshake_part2(
               handshake_out,
               handshake_len_out,
               keys_out,
-              keys_out_len);
+              keys_out_len,
+              payment_out);
   memwipe(&relay_keypair, 0, sizeof(relay_keypair));
   return r;
 }
@@ -722,8 +735,10 @@ onion_skin_ntor3_server_handshake_part2_nokeygen(
                 uint8_t **handshake_out,
                 size_t *handshake_len_out,
                 uint8_t *keys_out,
-                size_t keys_out_len)
+                size_t keys_out_len,
+                payment_profile_export_t *payment_out)
 {
+  payment_profile_export_clear(payment_out);
   *handshake_out = NULL;
   *handshake_len_out = 0;
 
@@ -804,6 +819,18 @@ onion_skin_ntor3_server_handshake_part2_nokeygen(
   push(&ptr, end, encrypted_message, server_message_len);
   tor_assert(ptr == end);
 
+  if (!problems && payment_out && state->payment_client_hdata) {
+    if (payment_profile_derive_keys(&payment_out->keys, key_seed,
+                           state->payment_client_hdata,
+                           state->payment_client_hdata_len,
+                           *handshake_out, *handshake_len_out) ==
+        PAYMENT_PROFILE_OK) {
+      payment_out->valid = true;
+    } else {
+      ++problems;
+    }
+  }
+
   // Clean up and return.
   memwipe(xy, 0, sizeof(xy));
   memwipe(key_seed, 0, sizeof(key_seed));
@@ -813,6 +840,7 @@ onion_skin_ntor3_server_handshake_part2_nokeygen(
   tor_free(encrypted_message);
 
   if (problems) {
+    payment_profile_export_clear(payment_out);
     memwipe(*handshake_out, 0, *handshake_len_out);
     tor_free(*handshake_out); // Sets it to NULL.
     *handshake_len_out = 0;

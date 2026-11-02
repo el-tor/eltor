@@ -1219,7 +1219,8 @@ directory_info_has_arrived(time_t now, int from_cache, int suppress_logs)
   }
 
   if (server_mode(options) && !net_is_disabled() && !from_cache &&
-      (have_completed_a_circuit() || !any_predicted_circuits(now)))
+      (have_completed_a_circuit() || !any_predicted_circuits(now) ||
+       options->ElTorFoundation))
    router_do_reachability_checks();
 }
 

@@ -46,6 +46,7 @@
  **/
 
 #include "lib/log/log.h"
+#include "feature/payment/free_capacity_hooks.h"
 #define RELAY_PRIVATE
 #include "core/or/or.h"
 #include "feature/client/addressmap.h"
@@ -78,6 +79,9 @@
 #include "core/or/policies.h"
 #include "core/or/reasons.h"
 #include "core/or/relay.h"
+#include "feature/payment/payment_circuit.h"
+#include "feature/payment/payment_origin.h"
+#include "lib/time/compat_time.h"
 #include "core/crypto/relay_crypto.h"
 #include "feature/rend/rendcommon.h"
 #include "feature/nodelist/describe.h"
@@ -106,6 +110,11 @@
 #include "core/or/conflux_pool.h"
 #include "core/or/relay_msg_st.h"
 
+static int append_cell_to_circuit_queue_impl(circuit_t *, channel_t *,
+    cell_t *, cell_direction_t, streamid_t, bool payment_control);
+static void cell_queue_append_packed_copy_impl(circuit_t *, cell_queue_t *,
+    int, const cell_t *, int, int, bool payment_control);
+
 static edge_connection_t *relay_lookup_conn(circuit_t *circ,
                                             const relay_msg_t *msg,
                                             cell_direction_t cell_direction,
@@ -119,6 +128,8 @@ static int circuit_resume_edge_reading_helper(edge_connection_t *conn,
 static int circuit_consider_stop_edge_reading(circuit_t *circ,
                                               crypt_path_t *layer_hint);
 static int circuit_queue_streams_are_blocked(circuit_t *circ);
+static void set_circuit_blocked_on_chan(circuit_t *circ, channel_t *chan,
+                                         int block);
 static void adjust_exit_policy_from_exitpolicy_failure(origin_circuit_t *circ,
                                                   entry_connection_t *conn,
                                                   node_t *node,
@@ -248,6 +259,14 @@ circuit_receive_relay_cell(cell_t *cell, circuit_t *circ,
   if (circ->marked_for_close)
     return 0;
 
+  /* Backward forwarding encrypts in relay_decrypt_cell. Advance first:
+   * activation notifications must enter the queue in cipher order. */
+  if (!CIRCUIT_IS_ORIGIN(circ) && cell_direction == CELL_DIRECTION_IN) {
+    payment_circuit_advance_due(TO_OR_CIRCUIT(circ),
+                                monotime_absolute_msec());
+    if (circ->marked_for_close) return 0;
+  }
+
   if (relay_decrypt_cell(circ, cell, cell_direction, &layer_hint, &recognized)
       < 0) {
     log_fn(LOG_PROTOCOL_WARN, LD_PROTOCOL,
@@ -307,6 +326,14 @@ circuit_receive_relay_cell(cell_t *cell, circuit_t *circ,
       }
     }
     return 0;
+  }
+
+  /* Forward traffic must not enter the unpaid holding queue merely because
+   * the round timer is due. Recognized payment queries remain read-only. */
+  if (!CIRCUIT_IS_ORIGIN(circ) && cell_direction == CELL_DIRECTION_OUT) {
+    payment_circuit_advance_due(TO_OR_CIRCUIT(circ),
+                                monotime_absolute_msec());
+    if (circ->marked_for_close) return 0;
   }
 
   /* not recognized. inform circpad and pass it on. */
@@ -383,11 +410,11 @@ circuit_receive_relay_cell(cell_t *cell, circuit_t *circ,
  * Return 1 if the cell was successfully sent as in queued on the circuit.
  * Return 0 if the cell needs to be dropped as in ignored.
  * Return -1 on error for which the circuit should be marked for close. */
-MOCK_IMPL(int,
-circuit_package_relay_cell, (cell_t *cell, circuit_t *circ,
-                           cell_direction_t cell_direction,
-                           crypt_path_t *layer_hint, streamid_t on_stream,
-                           const char *filename, int lineno))
+static int
+package_relay_cell(cell_t *cell, circuit_t *circ,
+                   cell_direction_t cell_direction,
+                   crypt_path_t *layer_hint, streamid_t on_stream,
+                   const char *filename, int lineno, bool payment_control)
 {
   channel_t *chan; /* where to send the cell */
 
@@ -442,8 +469,18 @@ circuit_package_relay_cell, (cell_t *cell, circuit_t *circ,
   }
   ++stats_n_relay_cells_relayed;
 
-  return append_cell_to_circuit_queue(circ, chan, cell,
-                                      cell_direction, on_stream);
+  return append_cell_to_circuit_queue_impl(circ, chan, cell,
+                             cell_direction, on_stream, payment_control);
+}
+
+MOCK_IMPL(int,
+circuit_package_relay_cell, (cell_t *cell, circuit_t *circ,
+                           cell_direction_t direction,
+                           crypt_path_t *layer_hint, streamid_t stream,
+                           const char *filename, int lineno))
+{
+  return package_relay_cell(cell, circ, direction, layer_hint, stream,
+                            filename, lineno, false);
 }
 
 /** If cell's stream_id matches the stream_id of any conn that's
@@ -610,6 +647,15 @@ relay_send_command_from_edge_,(streamid_t stream_id, circuit_t *orig_circ,
 
   tor_assert(circ);
 
+  /* Service a funded transition before encrypting application output. Doing
+   * this during queue reservation could enqueue a notification ahead of a
+   * cell whose cipher state has already advanced. */
+  if (!CIRCUIT_IS_ORIGIN(circ) && relay_command == RELAY_COMMAND_DATA) {
+    payment_circuit_advance_due(TO_OR_CIRCUIT(circ),
+                                monotime_absolute_msec());
+    if (circ->marked_for_close) return -1;
+  }
+
   size_t msg_body_len;
   {
     relay_cell_fmt_t cell_format = circuit_get_relay_format(circ, cpath_layer);
@@ -672,6 +718,8 @@ relay_send_command_from_edge_,(streamid_t stream_id, circuit_t *orig_circ,
   if (cell_direction == CELL_DIRECTION_OUT) {
     origin_circuit_t *origin_circ = TO_ORIGIN_CIRCUIT(circ);
     if (origin_circ->remaining_relay_early_cells > 0 &&
+        !(relay_command >= RELAY_COMMAND_PAYMENT_RENEW &&
+          relay_command <= RELAY_COMMAND_PAYMENT_STARTED_STATUS) &&
         (relay_command == RELAY_COMMAND_EXTEND ||
          relay_command == RELAY_COMMAND_EXTEND2 ||
          cpath_layer != origin_circ->cpath)) {
@@ -713,11 +761,16 @@ relay_send_command_from_edge_,(streamid_t stream_id, circuit_t *orig_circ,
     circuit_sent_valid_data(origin_circ, msg_body_len);
   }
 
-  int ret = circuit_package_relay_cell(&cell, circ, cell_direction,
-                                       cpath_layer, stream_id, filename,
-                                       lineno);
+  bool payment_control = !stream_id &&
+    relay_command >= RELAY_COMMAND_PAYMENT_RENEW &&
+    relay_command <= RELAY_COMMAND_PAYMENT_STARTED_STATUS;
+  int ret = payment_control ? package_relay_cell(&cell, circ, cell_direction,
+       cpath_layer, stream_id, filename, lineno, true) :
+    circuit_package_relay_cell(&cell, circ, cell_direction, cpath_layer,
+                               stream_id, filename, lineno);
   if (ret < 0) {
-    circuit_mark_for_close(circ, END_CIRC_REASON_INTERNAL);
+    if (!circ->marked_for_close)
+      circuit_mark_for_close(circ, END_CIRC_REASON_INTERNAL);
     return -1;
   } else if (ret == 0) {
     /* This means we should drop the cell or that the circuit was already
@@ -994,6 +1047,17 @@ connection_ap_process_end_not_open(
       case END_STREAM_REASON_TIMEOUT:
       case END_STREAM_REASON_MISC:
       case END_STREAM_REASON_NOROUTE:
+        /* The exit authenticated a destination-specific failure: this is not
+         * evidence that the paid path itself is unusable. Ordinary Tor can
+         * retire this circuit and choose another; a paid origin must not
+         * silently replace its accepted path or strand all other streams.
+         * Finish this request with its actual SOCKS error. A caller can retry
+         * independently without changing circuit authority or spending. */
+        if (free_capacity_circuit_is_paid(TO_CIRCUIT(circ))) {
+          log_info(LD_APP, "Keeping paid circuit usable after destination "
+                   "failure (%s).", stream_end_reason_to_string(reason));
+          break;
+        }
         if (client_dns_incr_failures(conn->socks_request->address)
             < MAX_RESOLVE_FAILURES) {
           /* We haven't retried too many times; reattach the connection. */
@@ -1645,6 +1709,18 @@ handle_relay_msg(const relay_msg_t *msg, circuit_t *circ,
 
   tor_assert(msg);
 
+  /* A nonnegotiated bootstrap endpoint cannot extend, exit to an application,
+   * join an onion service, or acquire paid authority. Only an actual linked
+   * directory stream can carry its stateful stream traffic. Check before other
+   * recognized command handlers (including padding) can create work. */
+  bool directory_stream = conn && conn->base_.linked_conn &&
+    conn->base_.linked_conn->type == CONN_TYPE_DIR;
+  if (!CIRCUIT_IS_ORIGIN(circ) &&
+      !free_capacity_bootstrap_command_allowed(circ, msg->command,
+                                               msg->stream_id,
+                                               directory_stream))
+    return -END_CIRC_REASON_TORPROTOCOL;
+
   /* First pass the cell to the circuit padding subsystem, in case it's a
    * padding cell or circuit that should be handled there. */
   if (circpad_check_received_cell(msg, circ, layer_hint) == 0) {
@@ -1652,8 +1728,37 @@ handle_relay_msg(const relay_msg_t *msg, circuit_t *circ,
     return 0;
   }
 
+  if (!CIRCUIT_IS_ORIGIN(circ) &&
+      payment_circuit_requires_payment(TO_OR_CIRCUIT(circ)) &&
+      !(msg->command >= RELAY_COMMAND_PAYMENT_RENEW &&
+        msg->command <= RELAY_COMMAND_PAYMENT_STARTED_STATUS)) {
+    payment_circuit_tick(TO_OR_CIRCUIT(circ), monotime_absolute_msec());
+    if (circ->marked_for_close) return 0;
+    if (!payment_circuit_data_active(TO_OR_CIRCUIT(circ),
+                                       monotime_absolute_msec()) &&
+        (msg->command == RELAY_COMMAND_DATA ||
+         msg->command == RELAY_COMMAND_BEGIN ||
+         msg->command == RELAY_COMMAND_BEGIN_DIR ||
+         msg->command == RELAY_COMMAND_RESOLVE))
+      /* A decrypted stream cell cannot be silently discarded and resumed.
+       * There is no charged decrypted-cell holding queue at this layer. */
+      return -END_CIRC_REASON_RESOURCELIMIT;
+  }
+
   /* Now handle all the other commands */
   switch (msg->command) {
+    case RELAY_COMMAND_PAYMENT_RENEW:
+    case RELAY_COMMAND_PAYMENT_RENEWED:
+    case RELAY_COMMAND_PAYMENT_COMMIT:
+    case RELAY_COMMAND_PAYMENT_COMMITTED:
+    case RELAY_COMMAND_PAYMENT_START_STATUS:
+    case RELAY_COMMAND_PAYMENT_STARTED_STATUS:
+      if (CIRCUIT_IS_ORIGIN(circ))
+        return payment_origin_handle_reply(TO_ORIGIN_CIRCUIT(circ), layer_hint,
+                                             msg, monotime_absolute_msec());
+      if (layer_hint) return 0;
+      return payment_circuit_handle_relay(TO_OR_CIRCUIT(circ), msg,
+                                          monotime_absolute_msec());
     case RELAY_COMMAND_CONFLUX_LINK:
       conflux_process_link(circ, msg);
       return 0;
@@ -2467,6 +2572,33 @@ circuit_resume_edge_reading(circuit_t *circ, crypt_path_t *layer_hint)
                                        circ, layer_hint);
 }
 
+/* A status/timer transition may leave bytes already buffered while socket
+ * reads were stopped. Resume those bytes without requiring a new SENDME. */
+void
+circuit_paid_resume_edge_reading(circuit_t *circ)
+{
+  if (!free_capacity_circuit_is_paid(circ) || circ->marked_for_close ||
+      !circuit_queue_streams_are_blocked(circ) ||
+      !free_capacity_paid_data_active(circ)) return;
+  channel_t *chan = CIRCUIT_IS_ORIGIN(circ) ? circ->n_chan :
+                                             TO_OR_CIRCUIT(circ)->p_chan;
+  int queued = CIRCUIT_IS_ORIGIN(circ) ? circ->n_chan_cells.n :
+                                    TO_OR_CIRCUIT(circ)->p_chan_cells.n;
+  if (!chan || queued > ((int)FREE_CAPACITY_QUEUE_CELLS - 8)/2) return;
+  set_circuit_blocked_on_chan(circ, chan, 0);
+  if (CIRCUIT_IS_ORIGIN(circ)) {
+    crypt_path_t *hop = TO_ORIGIN_CIRCUIT(circ)->cpath;
+    if (hop) do {
+      circuit_resume_edge_reading(circ, hop);
+      if (circ->marked_for_close || circuit_queue_streams_are_blocked(circ))
+        break;
+      hop = hop->next;
+    } while (hop && hop != TO_ORIGIN_CIRCUIT(circ)->cpath);
+  } else {
+    circuit_resume_edge_reading(circ, NULL);
+  }
+}
+
 /** A helper function for circuit_resume_edge_reading() above.
  * The arguments are the same, except that <b>conn</b> is the head
  * of a linked list of edge streams that should each be considered.
@@ -2478,6 +2610,7 @@ circuit_resume_edge_reading_helper(edge_connection_t *first_conn,
 {
   edge_connection_t *conn;
   int n_packaging_streams, n_streams_left;
+  int num_streams = 0;
   int packaged_this_round;
   int cells_on_queue;
   int cells_per_conn;
@@ -2502,7 +2635,6 @@ circuit_resume_edge_reading_helper(edge_connection_t *first_conn,
   /* Select a stream uniformly at random from the linked list.  We
    * don't need cryptographic randomness here. */
   {
-    int num_streams = 0;
     for (conn = first_conn; conn; conn = conn->next_stream) {
       num_streams++;
 
@@ -2583,8 +2715,14 @@ circuit_resume_edge_reading_helper(edge_connection_t *first_conn,
     or_circuit_t *or_circ = TO_OR_CIRCUIT(circ);
     cells_on_queue = or_circ->p_chan_cells.n;
   }
-  if (cell_queue_highwatermark() - cells_on_queue < max_to_package)
-    max_to_package = cell_queue_highwatermark() - cells_on_queue;
+  /* Budget against the same watermark that stops paid packing. Using the
+   * larger ordinary watermark lets the first buffered stream take the whole
+   * paid queue before any of the other streams is considered. */
+  int queue_highwater = free_capacity_circuit_is_paid(circ) ?
+    (int)FREE_CAPACITY_QUEUE_CELLS - 8 : cell_queue_highwatermark();
+  if (queue_highwater - cells_on_queue < max_to_package)
+    max_to_package = queue_highwater - cells_on_queue;
+  if (max_to_package <= 0) return 0;
 
   cells_per_conn = CEIL_DIV(max_to_package, n_packaging_streams);
 
@@ -2596,7 +2734,14 @@ circuit_resume_edge_reading_helper(edge_connection_t *first_conn,
    * packaged, and n_streams_left with the number that still have data to
    * package.
    */
-  for (conn=first_conn; conn; conn=conn->next_stream) {
+  /* Reuse the chosen rotation for buffered paid data too, not only socket
+   * readiness. A small queue can fill partway through this traversal. */
+  edge_connection_t *packaging_start = free_capacity_circuit_is_paid(circ) ?
+    chosen_stream : first_conn;
+  int visited;
+  for (conn = packaging_start, visited = 0;
+       conn && visited < num_streams;
+       conn = conn->next_stream ? conn->next_stream : first_conn, ++visited) {
     if (conn->base_.marked_for_close || conn->package_window <= 0)
       continue;
     if (edge_uses_cpath(conn, layer_hint)) {
@@ -2652,6 +2797,22 @@ circuit_consider_stop_edge_reading(circuit_t *circ, crypt_path_t *layer_hint)
   edge_connection_t *conn = NULL;
   unsigned domain = layer_hint ? LD_APP : LD_EXIT;
 
+  /* A paid rollover can revoke local all-hop readiness before its status
+   * arrives. Stop before draining the socket buffer or advancing relay crypto.
+   * Keep room for protocol cells in the existing 32-cell holding budget. */
+  if (free_capacity_circuit_is_paid(circ)) {
+    channel_t *chan = CIRCUIT_IS_ORIGIN(circ) ? circ->n_chan :
+                                               TO_OR_CIRCUIT(circ)->p_chan;
+    int queued = CIRCUIT_IS_ORIGIN(circ) ? circ->n_chan_cells.n :
+                                      TO_OR_CIRCUIT(circ)->p_chan_cells.n;
+    if (!free_capacity_paid_data_active(circ) ||
+        circuit_queue_streams_are_blocked(circ) ||
+        queued >= (int)FREE_CAPACITY_QUEUE_CELLS - 8) {
+      if (chan) set_circuit_blocked_on_chan(circ, chan, 1);
+      return 1;
+    }
+  }
+
   if (!layer_hint) {
     or_circuit_t *or_circ = TO_OR_CIRCUIT(circ);
     log_debug(domain,"considering circ->package_window %d",
@@ -2686,6 +2847,8 @@ static size_t total_cells_allocated = 0;
 static inline void
 packed_cell_free_unchecked(packed_cell_t *cell)
 {
+  free_capacity_cell_release(cell->free_capacity_circuit,
+                             &cell->free_capacity_ticket);
   --total_cells_allocated;
   tor_free(cell);
 }
@@ -2747,12 +2910,23 @@ cell_queue_append(cell_queue_t *queue, packed_cell_t *cell)
  * <b>exitward</b> (or app-ward) <b>queue</b> of <b>circ</b>.  If
  * <b>use_stats</b> is true, record statistics about the cell.
  */
-void
-cell_queue_append_packed_copy(circuit_t *circ, cell_queue_t *queue,
+static void
+cell_queue_append_packed_copy_impl(circuit_t *circ, cell_queue_t *queue,
                               int exitward, const cell_t *cell,
-                              int wide_circ_ids, int use_stats)
+                              int wide_circ_ids, int use_stats,
+                              bool payment_control)
 {
+  free_capacity_queue_ticket_t ticket;
+  if (free_capacity_cell_reserve_command(circ, &ticket, cell->command) < 0) {
+    if (!circ->marked_for_close)
+      circuit_mark_for_close(circ, END_CIRC_REASON_RESOURCELIMIT);
+    return;
+  }
   packed_cell_t *copy = packed_cell_copy(cell, wide_circ_ids);
+  copy->free_capacity_circuit = circ;
+  copy->free_capacity_ticket = ticket;
+  copy->payment_control = payment_control;
+  copy->free_queue_inserted_ms = monotime_absolute_msec();
   (void)circ;
   (void)exitward;
   (void)use_stats;
@@ -2760,6 +2934,15 @@ cell_queue_append_packed_copy(circuit_t *circ, cell_queue_t *queue,
   copy->inserted_timestamp = monotime_coarse_get_stamp();
 
   cell_queue_append(queue, copy);
+}
+
+void
+cell_queue_append_packed_copy(circuit_t *circ, cell_queue_t *queue,
+                              int exitward, const cell_t *cell,
+                              int wide_circ_ids, int use_stats)
+{
+  cell_queue_append_packed_copy_impl(circ, queue, exitward, cell,
+                                    wide_circ_ids, use_stats, false);
 }
 
 /** Initialize <b>queue</b> as an empty cell queue. */
@@ -3273,7 +3456,22 @@ channel_flush_from_first_active_circuit, (channel_t *chan, int max))
      * selection, so we have to loop around for another even if this circuit
      * has more than one.
      */
+    packed_cell_t *head = TOR_SIMPLEQ_FIRST(&queue->head);
+    free_capacity_result_t free_result = free_capacity_circuit_send_cell(
+        circ, chan, head->payment_control,
+        packed_cell_get_command(head, chan->wide_circ_ids));
+    if (free_result != FREE_CAPACITY_OK) {
+      /* A closing circuit can retain queued cells until deferred cleanup.
+       * Never select that same refused head forever in this flush loop.
+       * WAIT is reactivated only by the bounded resource timer. */
+      circuitmux_set_num_cells(cmux, circ, 0);
+      continue;
+    }
     cell = cell_queue_pop(queue);
+    free_capacity_cell_release(cell->free_capacity_circuit,
+                               &cell->free_capacity_ticket);
+    cell->free_capacity_circuit = NULL;
+    cell->free_capacity_charged = circ->free_capacity != NULL;
 
     /* Calculate the exact time that this cell has spent in the queue. */
     if (get_options()->CellStatistics ||
@@ -3336,13 +3534,23 @@ channel_flush_from_first_active_circuit, (channel_t *chan, int max))
      */
     circuitmux_notify_xmit_cells(cmux, circ, 1);
     circuitmux_set_num_cells(cmux, circ, queue->n);
+    free_capacity_circuit_queued(circ);
     if (queue->n == 0)
       log_debug(LD_GENERAL, "Made a circuit inactive.");
 
     /* Is the cell queue low enough to unblock all the streams that are waiting
      * to write to this circuit? */
-    if (circ_blocked && queue->n <= cell_queue_lowwatermark())
-      set_circuit_blocked_on_chan(circ, chan, 0); /* unblock streams */
+    if (circ_blocked &&
+        (!free_capacity_circuit_is_paid(circ) ||
+          free_capacity_paid_data_active(circ)) && queue->n <=
+        (free_capacity_circuit_is_paid(circ) ?
+          ((int)FREE_CAPACITY_QUEUE_CELLS - 8)/2 : cell_queue_lowwatermark())) {
+      if (free_capacity_circuit_is_paid(circ) &&
+          (CIRCUIT_IS_ORIGIN(circ) || circ->n_chan != chan))
+        circuit_paid_resume_edge_reading(circ);
+      else
+        set_circuit_blocked_on_chan(circ, chan, 0);
+    }
 
     /* If n_flushed < max still, loop around and pick another circuit */
   }
@@ -3446,10 +3654,10 @@ relay_consensus_has_changed(const networkstatus_t *ns)
  * Return 0 if the cell can not be sent. The caller MUST NOT close the circuit.
  * Return -1 indicating an error and that the caller should mark the circuit
  * for close. */
-int
-append_cell_to_circuit_queue(circuit_t *circ, channel_t *chan,
+static int
+append_cell_to_circuit_queue_impl(circuit_t *circ, channel_t *chan,
                              cell_t *cell, cell_direction_t direction,
-                             streamid_t fromstream)
+                             streamid_t fromstream, bool payment_control)
 {
   or_circuit_t *orcirc = NULL;
   edge_connection_t *stream_list = NULL;
@@ -3495,8 +3703,11 @@ append_cell_to_circuit_queue(circuit_t *circ, channel_t *chan,
 
   /* Very important that we copy to the circuit queue because all calls to
    * this function use the stack for the cell memory. */
-  cell_queue_append_packed_copy(circ, queue, exitward, cell,
-                                chan->wide_circ_ids, 1);
+  cell_queue_append_packed_copy_impl(circ, queue, exitward, cell,
+                                chan->wide_circ_ids, 1, payment_control);
+
+  if (circ->marked_for_close)
+    return -1;
 
   /* Check and run the OOM if needed. */
   if (PREDICT_UNLIKELY(cell_queues_check_size())) {
@@ -3508,7 +3719,9 @@ append_cell_to_circuit_queue(circuit_t *circ, channel_t *chan,
 
   /* If we have too many cells on the circuit, note that it should
    * be blocked from new cells. */
-  if (!circ_blocked && queue->n >= cell_queue_highwatermark())
+  if (!circ_blocked && queue->n >=
+      (free_capacity_circuit_is_paid(circ) ?
+        (int)FREE_CAPACITY_QUEUE_CELLS - 8 : cell_queue_highwatermark()))
     set_circuit_blocked_on_chan(circ, chan, 1);
 
   if (circ_blocked && fromstream) {
@@ -3519,6 +3732,7 @@ append_cell_to_circuit_queue(circuit_t *circ, channel_t *chan,
   }
 
   update_circuit_on_cmux(circ, direction);
+  free_capacity_circuit_queued(circ);
   if (queue->n == 1) {
     /* This was the first cell added to the queue.  We just made this
      * circuit active. */
@@ -3528,6 +3742,15 @@ append_cell_to_circuit_queue(circuit_t *circ, channel_t *chan,
   /* New way: mark this as having waiting cells for the scheduler */
   scheduler_channel_has_waiting_cells(chan);
   return 1;
+}
+
+int
+append_cell_to_circuit_queue(circuit_t *circ, channel_t *chan,
+                             cell_t *cell, cell_direction_t direction,
+                             streamid_t fromstream)
+{
+  return append_cell_to_circuit_queue_impl(circ, chan, cell, direction,
+                                          fromstream, false);
 }
 
 /** Append an encoded value of <b>addr</b> to <b>payload_out</b>, which must

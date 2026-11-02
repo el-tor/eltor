@@ -36,6 +36,7 @@
 #include "feature/client/bridges.h"
 #include "feature/client/entrynodes.h"
 #include "feature/control/control_getinfo.h"
+#include "feature/payment/payment_profile.h"
 #include "feature/dirauth/bwauth.h"
 #include "feature/dirauth/dirauth_sys.h"
 #include "feature/dirauth/dirvote.h"
@@ -881,6 +882,17 @@ test_dir_formats_rsa_ed25519(void *arg)
     set_family_id_keys(family_keys); // takes ownership.
   }
 
+  /* Exercise the actual signed descriptor path, not only argument codecs. */
+  payment_profile_policy_t payment_policy = {0};
+  payment_policy.rate_msat = 1000;
+  payment_policy.grace_ms = 15000;
+  payment_policy.max_age_ms = 1200000;
+  payment_policy.max_periods = 2;
+  payment_policy.setup_timeout_ms = 30000;
+  tt_int_op(payment_profile_policy_encode(r2->payment_profile_terms, 55,
+                                         &payment_policy), OP_EQ, 0);
+  r2->payment_start_v1 = r2->payment_renew_v1 = r2->payment_free_v1 = true;
+
   buf = router_dump_router_to_string(r2, r2->identity_pkey,
                                      r2_onion_pkey,
                                      &r2_onion_keypair, &kp2);
@@ -893,6 +905,9 @@ test_dir_formats_rsa_ed25519(void *arg)
   rp2 = router_parse_entry_from_string((const char*)cp,NULL,1,0,NULL,NULL);
 
   CHECK_ROUTERINFO_CONSISTENCY(r2, rp2);
+  tt_assert(rp2->payment_start_v1 && rp2->payment_renew_v1 && rp2->payment_free_v1);
+  tt_mem_op(rp2->payment_profile_terms, OP_EQ, r2->payment_profile_terms, 55);
+
 
   tt_mem_op(rp2->onion_curve25519_pkey->public_key,OP_EQ,
              r2->onion_curve25519_pkey->public_key,

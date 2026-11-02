@@ -63,6 +63,9 @@
 
 #define CONFIG_PRIVATE
 #include "core/or/or.h"
+#include "feature/payment/payment_circuit.h"
+#include "feature/payment/payment_origin.h"
+#include "feature/payment/payment_resources.h"
 #include "app/config/config.h"
 #include "lib/confmgt/confmgt.h"
 #include "app/config/statefile.h"
@@ -655,6 +658,25 @@ static const config_var_t option_vars_[] = {
   V(PerConnBWRate,               MEMUNIT,  "0"),
   V_IMMUTABLE(PidFile,           FILENAME,   NULL),
   V_IMMUTABLE(TestingTorNetwork, BOOL,     "0"),
+  V_IMMUTABLE(ElTorFoundation, BOOL,       "0"),
+  VAR_IMMUTABLE("__ElTorRequirePaidStreams", BOOL, ElTorRequirePaidStreams, "0"),
+  V_IMMUTABLE(ElTorFoundationTerms, STRING, NULL),
+  V_IMMUTABLE(ElTorFoundationMaxCircuits, POSINT, "4096"),
+  V_IMMUTABLE(ElTorFoundationAdmissionRate, POSINT, "16"),
+  V_IMMUTABLE(ElTorFoundationAdmissionBurst, POSINT, "32"),
+  V_IMMUTABLE(ElTorFoundationConnAdmissionRate, POSINT, "4"),
+  V_IMMUTABLE(ElTorFoundationConnAdmissionBurst, POSINT, "8"),
+  V_IMMUTABLE(ElTorFoundationByteRate, POSINT, "4194304"),
+  V_IMMUTABLE(ElTorFoundationByteBurst, POSINT, "8388608"),
+  V_IMMUTABLE(ElTorFoundationConnByteRate, POSINT, "1048576"),
+  V_IMMUTABLE(ElTorFoundationConnByteBurst, POSINT, "2097152"),
+  V_IMMUTABLE(ElTorFoundationQueueBytes, POSINT, "8388608"),
+  V_IMMUTABLE(ElTorFoundationMaxSlots, POSINT, "4096"),
+  V_IMMUTABLE(ElTorFoundationArenaBytes, POSINT, "67108864"),
+  V_IMMUTABLE(ElTorFoundationCryptoRate, POSINT, "256"),
+  V_IMMUTABLE(ElTorFoundationCryptoBurst, POSINT, "512"),
+  V_IMMUTABLE(ElTorFoundationMaxRunning, POSINT, "32"),
+  V_IMMUTABLE(ElTorFoundationMaxWaiting, POSINT, "128"),
 
   V(TestingLinkCertLifetime,          INTERVAL, "2 days"),
   V(TestingAuthKeyLifetime,          INTERVAL, "2 days"),
@@ -2097,6 +2119,57 @@ options_transition_affects_guards(const or_options_t *old_options,
   return 0;
 }
 
+/** Resolve immutable operator terms without enabling a deployment. */
+int
+options_get_payment_policy(const or_options_t *options,
+                            payment_profile_policy_t *out)
+{
+  if (!out) return -1;
+  memset(out, 0, sizeof(*out));
+  if (!options) return -1;
+  if (options->ElTorFoundationTerms) {
+    payment_profile_policy_t parsed;
+    if (payment_profile_policy_parse_hex(&parsed,
+                              options->ElTorFoundationTerms) != 0) return -1;
+    *out = parsed;
+    return 0;
+  }
+  if (!options->TestingTorNetwork) return -1;
+  *out = payment_profile_testing_policy();
+  return 0;
+}
+
+/* Resolve local aggregate ceilings separately from signed per-circuit terms. */
+int
+options_get_payment_limits(const or_options_t *options,
+    free_capacity_limits_t *free_limits, protocol_budget_limits_t *protocol)
+{
+  free_capacity_t free_validation;
+  protocol_budget_t protocol_validation;
+  if (!options || !free_limits || !protocol) return -1;
+  free_capacity_default_limits(free_limits);
+  protocol_budget_default_limits(protocol);
+  free_limits->max_circuits = options->ElTorFoundationMaxCircuits;
+  free_limits->admission_rate = options->ElTorFoundationAdmissionRate;
+  free_limits->admission_burst = options->ElTorFoundationAdmissionBurst;
+  free_limits->conn_admission_rate = options->ElTorFoundationConnAdmissionRate;
+  free_limits->conn_admission_burst = options->ElTorFoundationConnAdmissionBurst;
+  free_limits->byte_rate = options->ElTorFoundationByteRate;
+  free_limits->byte_burst = options->ElTorFoundationByteBurst;
+  free_limits->conn_byte_rate = options->ElTorFoundationConnByteRate;
+  free_limits->conn_byte_burst = options->ElTorFoundationConnByteBurst;
+  free_limits->queue_bytes = options->ElTorFoundationQueueBytes;
+  protocol->max_slots = options->ElTorFoundationMaxSlots;
+  protocol->arena_bytes = options->ElTorFoundationArenaBytes;
+  protocol->crypto_rate = options->ElTorFoundationCryptoRate;
+  protocol->crypto_burst = options->ElTorFoundationCryptoBurst;
+  protocol->max_running = options->ElTorFoundationMaxRunning;
+  protocol->max_waiting = options->ElTorFoundationMaxWaiting;
+  return free_capacity_init_limits(&free_validation, free_limits, 0) < 0 ||
+      protocol_budget_init(&protocol_validation, protocol, 0) !=
+        PROTOCOL_BUDGET_OK ? -1 : 0;
+}
+
 /** Fetch the active option list, and take actions based on it. All of the
  * things we do should survive being done repeatedly.  If present,
  * <b>old_options</b> contains the previous value of the options.
@@ -2116,6 +2189,23 @@ options_act,(const or_options_t *old_options))
   char *msg=NULL;
   const int transition_affects_guards =
     old_options && options_transition_affects_guards(old_options, options);
+
+  free_capacity_limits_t free_limits;
+  protocol_budget_limits_t protocol_limits;
+  if (options->ElTorFoundation &&
+      (options_get_payment_limits(options, &free_limits, &protocol_limits) < 0 ||
+       payment_resources_configure_limits(&free_limits, &protocol_limits) < 0))
+    return -1;
+
+  /* The test-only option is immutable, so repeated options_act calls cannot
+   * replace live terms or reset a circuit/resource lifecycle. */
+  payment_profile_policy_t foundation_policy = {0};
+  if (options->ElTorFoundation &&
+      options_get_payment_policy(options, &foundation_policy) < 0) return -1;
+  if (payment_circuit_configure_construction(options->ElTorFoundation,
+             options->ElTorFoundation ? &foundation_policy : NULL)<0 ||
+      payment_origin_configure_enabled(options->ElTorFoundation)<0)
+    return -1;
 
   if (options->NoExec || options->Sandbox) {
     tor_disable_spawning_background_processes();
@@ -4020,6 +4110,20 @@ options_validate_cb(const void *old_options_, void *options_, char **msg)
   if (parse_virtual_addr_network(options->VirtualAddrNetworkIPv6,
                                  AF_INET6, 1, msg)<0)
     return -1;
+
+  free_capacity_limits_t free_limits;
+  protocol_budget_limits_t protocol_limits;
+  if (options_get_payment_limits(options, &free_limits, &protocol_limits) < 0)
+    REJECT("ElTorFoundation aggregate limits must be positive and no greater "
+           "than the resource-profile candidates.");
+  payment_profile_policy_t foundation_policy;
+  if (options->ElTorFoundationTerms &&
+      options_get_payment_policy(options, &foundation_policy) < 0)
+    REJECT("ElTorFoundationTerms must be canonical finite v1 policy terms.");
+  if (options->ElTorFoundation && !options->TestingTorNetwork)
+    REJECT("ElTorFoundation requires TestingTorNetwork 1.");
+  if (options->ElTorRequirePaidStreams && !options->ElTorFoundation)
+    REJECT("__ElTorRequirePaidStreams requires ElTorFoundation 1.");
 
   if (options->TestingTorNetwork &&
       !(options->DirAuthorities ||

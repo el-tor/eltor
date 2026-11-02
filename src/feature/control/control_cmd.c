@@ -12,6 +12,7 @@
 #define CONTROL_EVENTS_PRIVATE
 
 #include "core/or/or.h"
+#include "feature/payment/payment_origin.h"
 #include "app/config/config.h"
 #include "lib/confmgt/confmgt.h"
 #include "app/main/main.h"
@@ -28,6 +29,7 @@
 #include "feature/control/control.h"
 #include "feature/control/control_auth.h"
 #include "feature/control/control_cmd.h"
+#include "feature/control/control_payment.h"
 #include "feature/control/control_hs.h"
 #include "feature/control/control_events.h"
 #include "feature/control/control_getinfo.h"
@@ -418,6 +420,11 @@ handle_control_setevents(control_connection_t *conn,
           return 0;
         }
       }
+      if (event_code == EVENT_ELTOR_PAYMENT_STATE &&
+          !control_payment_authority(conn)) {
+        control_write_endreply(conn, 514, "AUTHENTICATION_REQUIRED");
+        return 0;
+      }
       event_mask |= (((event_mask_t)1) << event_code);
     }
   SMARTLIST_FOREACH_END(ev);
@@ -761,6 +768,11 @@ handle_control_extendcircuit(control_connection_t *conn,
 
   const config_line_t *purpose_line = config_line_find_case(kwargs, "PURPOSE");
   bool zero_circ = !strcmp("0", circ_id);
+  if (!zero_circ && get_options()->ElTorFoundation) {
+    control_write_endreply(conn,551,"Foundation path is immutable");
+    goto done;
+  }
+
 
   if (purpose_line) {
     intended_purpose = circuit_purpose_from_string(purpose_line->value);
@@ -977,6 +989,12 @@ handle_control_attachstream(control_connection_t *conn,
       ENTRY_TO_CONN(ap_conn)->state != AP_CONN_STATE_RESOLVE_WAIT) {
     control_write_endreply(conn, 555,
                            "Connection is not managed by controller.");
+    return 0;
+  }
+
+  if (circ && !ap_conn->use_begindir &&
+      !payment_origin_streams_ready(circ,monotime_absolute_msec())) {
+    control_write_endreply(conn,551,"Foundation circuit is not active");
     return 0;
   }
 
@@ -2280,6 +2298,17 @@ handle_control_command(control_connection_t *conn,
   tor_assert(conn);
   tor_assert(args);
   tor_assert(args[cmd_data_len] == '\0');
+
+  /* Payment commands validate the ORIGINAL complete line. Generic argument
+   * normalization would otherwise accept duplicate spaces/tabs and lose CRLF. */
+  if (control_payment_is_command(conn->current_cmd)) {
+    size_t raw_len = conn->incoming_cmd_cur_len;
+    int result = control_payment_handle_command(conn, conn->incoming_cmd,
+                                                raw_len);
+    if (conn->incoming_cmd && raw_len)
+      memwipe(conn->incoming_cmd, 0, raw_len);
+    return result;
+  }
 
   for (unsigned i = 0; i < N_CONTROL_COMMANDS; ++i) {
     const control_cmd_def_t *def = &CONTROL_COMMANDS[i];

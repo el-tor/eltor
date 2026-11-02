@@ -25,6 +25,7 @@
 #include "core/or/reasons.h"
 #include "feature/control/control.h"
 #include "feature/control/control_events.h"
+#include "feature/control/control_payment.h"
 #include "feature/control/control_fmt.h"
 #include "feature/control/control_proto.h"
 #include "feature/dircommon/directory.h"
@@ -111,6 +112,7 @@ const struct control_event_t control_event_table[] = {
   { EVENT_HS_DESC_CONTENT, "HS_DESC_CONTENT" },
   { EVENT_NETWORK_LIVENESS, "NETWORK_LIVENESS" },
   { EVENT_PAYMENT_ID_HASH_RECEIVED, "PAYMENT_ID_HASH_RECEIVED" },
+  { EVENT_ELTOR_PAYMENT_STATE, "ELTOR_PAYMENT_STATE" },
   { 0, NULL },
 };
 
@@ -2307,10 +2309,6 @@ control_events_free_all(void)
 /** Called when a payment id hash is received in an onion cell */
 int control_event_payment_id_hash_received(char *payment_id_hash, uint64_t *p_circuit_id, uint64_t *n_circuit_id)
 {
-  log_info(LD_APP, "LOG EVENT_PAYMENT_ID_HASH_RECEIVED P_CircID:%llu N_CircID:%llu PayHash:%s", 
-           p_circuit_id ? *p_circuit_id : 0ULL, 
-           n_circuit_id ? *n_circuit_id : 0ULL, 
-           payment_id_hash);
   send_control_event(EVENT_PAYMENT_ID_HASH_RECEIVED, 
                      "650 EVENT_PAYMENT_ID_HASH_RECEIVED P_CIRC_ID=%llu N_CIRC_ID=%llu PAYMENT_HASH=%s\r\n", 
                      p_circuit_id ? *p_circuit_id : 0ULL, 
@@ -2329,3 +2327,19 @@ control_testing_set_global_event_mask(uint64_t mask)
   global_event_mask = mask;
 }
 #endif /* defined(TOR_UNIT_TESTS) */
+
+/* Payment state changes originate on the circuit's main loop. Unlike the
+ * generic cross-thread log/event queue, each subscriber has a finite bound and
+ * is disconnected on overflow so inventory can recover missed observations. */
+void
+control_event_payment_state(const char *line)
+{
+  tor_assert(in_main_thread());
+  SMARTLIST_FOREACH_BEGIN(get_connection_array(), connection_t *, conn) {
+    if (conn->type == CONN_TYPE_CONTROL && !conn->marked_for_close) {
+      control_connection_t *controller = TO_CONTROL_CONN(conn);
+      if (controller->event_mask & EVENT_MASK_(EVENT_ELTOR_PAYMENT_STATE))
+        control_payment_queue_event(controller, line);
+    }
+  } SMARTLIST_FOREACH_END(conn);
+}

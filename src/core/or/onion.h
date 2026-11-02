@@ -89,6 +89,11 @@ int created_cell_format(cell_t *cell_out, const created_cell_t *cell_in);
 int extend_cell_format(uint8_t *command_out, uint16_t *len_out,
                        uint8_t *payload_out, const extend_cell_t *cell_in,
                        const char *eltor_payhash);
+/* Foundation payment material belongs only inside the child's authenticated
+ * ntor-v3 message. Never expose a duplicate to the extending relay. */
+int extend_cell_format_foundation(uint8_t *command_out, uint16_t *len_out,
+                                 uint8_t *payload_out,
+                                 const extend_cell_t *cell_in);
 int extended_cell_format(uint8_t *command_out, uint16_t *len_out,
                          uint8_t *payload_out, const extended_cell_t *cell_in);
 

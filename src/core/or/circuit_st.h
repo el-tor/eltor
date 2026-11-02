@@ -60,6 +60,7 @@ struct congestion_control_t;
  * ciphers: one for data going forward, and one for data going backward.
  */
 struct circuit_t {
+  struct free_capacity_context_t *free_capacity;
   uint32_t magic; /**< For memory and type debugging: must equal
                    * ORIGIN_CIRCUIT_MAGIC or OR_CIRCUIT_MAGIC. */
 

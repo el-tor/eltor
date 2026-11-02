@@ -68,6 +68,7 @@
 #include "feature/nodelist/routerlist.h"
 #include "feature/nodelist/torcert.h"
 #include "feature/relay/router.h"
+#include "feature/payment/payment_profile.h"
 #include "lib/crypt_ops/crypto_curve25519.h"
 #include "lib/crypt_ops/crypto_ed25519.h"
 #include "lib/crypt_ops/crypto_format.h"
@@ -84,6 +85,9 @@
 /** List of tokens recognized in router descriptors */
 // clang-format off
 const token_rule_t routerdesc_token_table[] = {
+  T01("eltor-payment-start", K_ELTOR_PAYMENT_START, ARGS, NO_OBJ),
+  T01("eltor-payment-renew", K_ELTOR_PAYMENT_RENEW, ARGS, NO_OBJ),
+  T01("eltor-free-capacity", K_ELTOR_FREE_CAPACITY, ARGS, NO_OBJ),
   T0N("reject",              K_REJECT,              ARGS,    NO_OBJ ),
   T0N("accept",              K_ACCEPT,              ARGS,    NO_OBJ ),
   T0N("reject6",             K_REJECT6,             ARGS,    NO_OBJ ),
@@ -504,6 +508,31 @@ router_parse_entry_from_string(const char *s, const char *end,
   router = tor_malloc_zero(sizeof(routerinfo_t));
   router->cert_expiration_time = TIME_MAX;
   router->cache_info.routerlist_index = -1;
+  {
+    uint8_t renew_terms[55], ignored[55];
+    int start = 0, renew = 0, free_capacity = 0;
+    if ((tok = find_opt_by_keyword(tokens, K_ELTOR_PAYMENT_START)))
+      start = payment_profile_parse_capability(router->payment_profile_terms,
+                  PAYMENT_CAPABILITY_START, tok->n_args,
+                  (const char *const *)tok->args);
+    if ((tok = find_opt_by_keyword(tokens, K_ELTOR_PAYMENT_RENEW)))
+      renew = payment_profile_parse_capability(renew_terms,
+                  PAYMENT_CAPABILITY_RENEW, tok->n_args,
+                  (const char *const *)tok->args);
+    if ((tok = find_opt_by_keyword(tokens, K_ELTOR_FREE_CAPACITY)))
+      free_capacity = payment_profile_parse_capability(ignored,
+                  PAYMENT_CAPABILITY_FREE, tok->n_args,
+                  (const char *const *)tok->args);
+    if (start < 0 || renew < 0 || free_capacity < 0 ||
+        (start && renew && memcmp(router->payment_profile_terms,
+                                  renew_terms, sizeof(renew_terms))))
+      goto err;
+    router->payment_start_v1 = start == 1;
+    router->payment_renew_v1 = start == 1 && renew == 1;
+    router->payment_free_v1 = free_capacity == 1;
+    /* The router token is needed below; optional parsing must not replace it. */
+    tok = find_by_keyword(tokens, K_ROUTER);
+  }
   router->cache_info.annotations_len = s-start_of_annotations + prepend_len;
   router->cache_info.signed_descriptor_len = end-s;
   if (cache_copy) {

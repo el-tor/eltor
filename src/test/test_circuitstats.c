@@ -48,6 +48,12 @@
 #include "core/or/crypt_path_st.h"
 #include "core/or/extend_info_st.h"
 #include "core/or/extendinfo.h"
+#include "feature/payment/payment_origin.h"
+#include "feature/payment/payment_resources.h"
+#include "feature/control/control_payment.h"
+#include "lib/evloop/timers.h"
+#include "lib/time/compat_time.h"
+#include "lib/encoding/binascii.h"
 #include "core/or/origin_circuit_st.h"
 
 static origin_circuit_t *add_opened_threehop(void);
@@ -1971,7 +1977,7 @@ test_circuitstats_firsthop_progress(void *arg)
   crypt_path_t *hop = circ->cpath->next;
   int len = onion_skin_create(ONION_HANDSHAKE_TYPE_FAST, hop->extend_info,
                               &hop->handshake_state, cbt_last_create.onionskin,
-                              sizeof(cbt_last_create.onionskin), NULL);
+                              sizeof(cbt_last_create.onionskin), NULL, false);
   tt_int_op(len, OP_GT, 0);
   hop->state = CPATH_STATE_AWAITING_KEYS;
   tt_int_op(fast_server_handshake(cbt_last_create.onionskin, reply.reply,
@@ -2531,10 +2537,109 @@ test_circuitstats_fresh_rend_extension(void *arg)
   UNMOCK(circuit_mark_for_close_);
 }
 
+/* An explicit approved build is not a background CBT measurement probe. */
+static void
+test_circuitstats_foundation_setup_deadline(void *arg)
+{
+  (void)arg;
+  origin_circuit_t *circ = NULL, *ordinary = NULL, *opened = NULL;
+  circuit_build_times_t *cbt = get_circuit_build_times_mutable();
+  struct timeval start = {1000, 0};
+  uint64_t deadline = 0, again = 0;
+  timers_initialize(); monotime_enable_test_mocking();
+  monotime_set_mock_time_nsec(INT64_C(1000000000000));
+  monotime_coarse_set_mock_time_nsec(INT64_C(1000000000000));
+  circuitbuild_running_unit_tests();
+  MOCK(tor_gettimeofday, mock_cbt_gettimeofday);
+  MOCK(circuit_mark_for_close_, mock_circuit_mark_for_close);
+  circuit_build_times_init(cbt);
+  get_options_mutable()->LearnCircuitBuildTimeout = 1;
+  cbt->timeout_ms = 46; cbt->close_ms = 60000;
+  cbt->liveness.network_last_live = 1000;
+  opened = add_opened_threehop();
+  tt_assert(circuit_any_opened_circuits());
+  extend_info_t info = {0};
+  info.supports_ntor_v3 = info.payment_free_v1 = info.payment_start_v1 = true;
+  payment_profile_policy_t policy = payment_profile_testing_policy();
+  policy.setup_timeout_ms = 30000;
+  tt_int_op(payment_profile_policy_encode(info.payment_profile_terms,
+            sizeof(info.payment_profile_terms), &policy), OP_EQ, 0);
+  extend_info_t *infos[3] = {&info, &info, &info};
+  circ = new_test_origin_circuit(false, start, 3, infos);
+  circ->base_.purpose = CIRCUIT_PURPOSE_C_GENERAL;
+  circ->base_.state = CIRCUIT_STATE_CHAN_WAIT;
+  circ->any_hop_from_controller = circ->first_hop_from_controller = 1;
+  circ->payment_payhash_capacity = 3*769;
+  circ->payhashes = tor_malloc_zero(circ->payment_payhash_capacity);
+  for (unsigned i = 0; i < 3; ++i) {
+    uint8_t raw[384] = {0};
+    for (unsigned j = 0; j < 10; ++j) raw[64+j*32] = (uint8_t)(i*10+j+1);
+    base16_encode(circ->payhashes+i*769, 769, (const char *)raw, sizeof(raw));
+    if (i != 2) circ->payhashes[i*769+768] = ',';
+  }
+  tor_strlower(circ->payhashes);
+  tt_int_op(payment_origin_configure_enabled(true), OP_EQ, 0);
+  tt_int_op(payment_origin_prepare_owned_construction(circ), OP_EQ, 0);
+  tt_assert(payment_origin_build_deadline(circ, &deadline));
+  tt_u64_op(deadline, OP_EQ, 1030000);
+  tt_ptr_op(circ->cpath->payment_profile, OP_EQ, NULL);
+  tt_uint_op(circ->cpath->state, OP_EQ, CPATH_STATE_CLOSED);
+  /* A cold OR connection has not pinned any per-hop profile, yet its original
+   * deadline is already finite and cannot be replaced by graph/prepare retry. */
+  monotime_set_mock_time_nsec(INT64_C(1001000000000));
+  monotime_coarse_set_mock_time_nsec(INT64_C(1001000000000));
+  tt_int_op(payment_origin_reserve_construction(circ), OP_EQ, 0);
+  tt_int_op(payment_origin_prepare_owned_construction(circ), OP_EQ, 0);
+  tt_assert(payment_origin_build_deadline(circ, &again));
+  tt_u64_op(again, OP_EQ, deadline);
+  cbt_test_now = start; cbt_test_now.tv_sec = 1001;
+  marked_for_close = 0;
+  circuit_expire_building();
+  tt_int_op(marked_for_close, OP_EQ, 0);
+  /* Even a completed prefix slower than learned46ms retains its purpose. */
+  circ->base_.state = CIRCUIT_STATE_BUILDING;
+  circ->cpath->state = CPATH_STATE_OPEN;
+  circuit_build_times_handle_completed_hop(circ);
+  tt_uint_op(circ->base_.purpose, OP_EQ, CIRCUIT_PURPOSE_C_GENERAL);
+  tt_assert(!circuit_timeout_want_to_count_circ(circ));
+  ordinary = build_unopened_fourhop(start);
+  ordinary->base_.state = CIRCUIT_STATE_BUILDING;
+  ordinary->cpath->state = CPATH_STATE_OPEN;
+  circuit_build_times_handle_completed_hop(ordinary);
+  tt_uint_op(ordinary->base_.purpose, OP_EQ, CIRCUIT_PURPOSE_C_MEASURE_TIMEOUT);
+  /* Expiry uses the original monotonic bound, including cold first-hop wait. */
+  circ->base_.state = CIRCUIT_STATE_CHAN_WAIT;
+  circ->cpath->state = CPATH_STATE_CLOSED;
+  monotime_set_mock_time_nsec(INT64_C(1029999000000));
+  monotime_coarse_set_mock_time_nsec(INT64_C(1029999000000));
+  cbt_test_now.tv_sec = 1029; marked_for_close = 0;
+  circuit_expire_building();
+  tt_int_op(marked_for_close, OP_EQ, 0);
+  monotime_set_mock_time_nsec(INT64_C(1030000000000));
+  monotime_coarse_set_mock_time_nsec(INT64_C(1030000000000));
+  cbt_test_now.tv_sec = 1030;
+  circuit_expire_building();
+  tt_int_op(marked_for_close, OP_EQ, 1);
+  tt_uint_op(circ->base_.purpose, OP_EQ, CIRCUIT_PURPOSE_C_GENERAL);
+  tt_assert(payment_origin_build_deadline(circ, &again));
+  tt_u64_op(again, OP_EQ, deadline);
+ done:
+  circuit_free_(TO_CIRCUIT(circ));
+  circuit_free_(TO_CIRCUIT(ordinary));
+  circuit_free_(TO_CIRCUIT(opened));
+  (void)payment_origin_free_all(); control_payment_free_all();
+  (void)payment_resources_free_all();
+  (void)payment_origin_configure_enabled(false);
+  circuit_build_times_free_timeouts(cbt);
+  UNMOCK(tor_gettimeofday); UNMOCK(circuit_mark_for_close_);
+  timers_shutdown(); monotime_disable_test_mocking();
+}
+
 #define TEST_CIRCUITSTATS(name, flags) \
     { #name, test_##name, (flags), &helper_pubsub_setup, NULL }
 
 struct testcase_t circuitstats_tests[] = {
+  TEST_CIRCUITSTATS(circuitstats_foundation_setup_deadline, TT_FORK),
   TEST_CIRCUITSTATS(circuitstats_fresh_rend_extension, TT_FORK),
   TEST_CIRCUITSTATS(circuitstats_hoplen, TT_FORK),
   TEST_CIRCUITSTATS(circuitstats_late_firsthop, TT_FORK),

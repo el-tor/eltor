@@ -28,6 +28,12 @@
 #include "core/or/extend_info_st.h"
 #include "core/or/origin_circuit_st.h"
 #include "core/or/or_circuit_st.h"
+#include "core/or/or_connection_st.h"
+#include "core/crypto/onion_ntor.h"
+#include "feature/payment/free_capacity_hooks.h"
+#include "feature/payment/payment_resources.h"
+#include "feature/payment/payment_profile.h"
+#include "lib/evloop/timers.h"
 
 #include "feature/client/entrynodes.h"
 #include "feature/nodelist/nodelist.h"
@@ -1532,6 +1538,82 @@ test_circuit_extend(void *arg)
   tor_free(fake_n_chan);
 }
 
+static void
+test_circuit_extend_foundation(void *arg)
+{
+  (void)arg;
+  or_circuit_t *circ = tor_malloc_zero(sizeof(*circ));
+  channel_t *previous = tor_malloc_zero(sizeof(*previous));
+  or_connection_t connection = {0};
+  payment_profile_keys_t keys = {0};
+  extend_cell_t extend = {0};
+  relay_msg_t message = {0};
+  uint8_t body[RELAY_PAYLOAD_SIZE_MAX], command;
+  uint16_t length;
+  timers_initialize();
+  circ->base_.magic = OR_CIRCUIT_MAGIC;
+  circ->p_chan = previous;
+  extend.cell_type = RELAY_COMMAND_EXTEND2;
+  extend.create_cell.cell_type = CELL_CREATE2;
+  extend.create_cell.handshake_type = ONION_HANDSHAKE_TYPE_NTOR_V3;
+  extend.create_cell.handshake_len = 128;
+  memset(extend.node_id, 0x4b, sizeof(extend.node_id));
+  tt_int_op(tor_addr_parse(&extend.orport_ipv4.addr, PUBLIC_IPV4), OP_EQ, AF_INET);
+  extend.orport_ipv4.port = VALID_PORT;
+  tt_int_op(extend_cell_format_foundation(&command, &length, body, &extend),
+            OP_EQ, 0);
+  message.command = command; message.body = body; message.length = length;
+  get_options_mutable()->ElTorFoundation = 1;
+  get_options_mutable()->TestingTorNetwork = 1;
+  server = 1;
+  MOCK(server_mode, mock_server_mode);
+  MOCK(channel_get_for_extend, mock_channel_get_for_extend);
+  mock_channel_get_for_extend_nchan = NULL;
+  mock_channel_get_for_extend_launch_out = 0;
+  /* Neither the testing flag nor a provisional allocation grants extension. */
+  tt_int_op(circuit_extend(&message, TO_CIRCUIT(circ)), OP_EQ, -1);
+  tt_int_op(free_capacity_circuit_prepare(TO_CIRCUIT(circ), &connection),
+            OP_EQ, 0);
+  circ->payment_export_requested = true;
+  circ->payment_keys = &keys;
+  tt_int_op(circuit_extend(&message, TO_CIRCUIT(circ)), OP_EQ, -1);
+  tt_int_op(free_capacity_circuit_confirm_bootstrap(TO_CIRCUIT(circ)), OP_EQ, 0);
+  tt_int_op(circuit_extend(&message, TO_CIRCUIT(circ)), OP_EQ, -1);
+  free_capacity_circuit_free(TO_CIRCUIT(circ));
+  tt_int_op(free_capacity_circuit_prepare(TO_CIRCUIT(circ), &connection),
+            OP_EQ, 0);
+  tt_int_op(free_capacity_circuit_confirm(TO_CIRCUIT(circ)), OP_EQ, 0);
+  circ->payment_export_requested = false;
+  tt_int_op(circuit_extend(&message, TO_CIRCUIT(circ)), OP_EQ, -1);
+  circ->payment_export_requested = true;
+  circ->payment_keys = NULL;
+  tt_int_op(circuit_extend(&message, TO_CIRCUIT(circ)), OP_EQ, -1);
+  circ->payment_keys = &keys;
+  /* A confirmed normal context extends with no plaintext payment marker. */
+  tt_ptr_op(tor_memmem(body, length, "eltor_payhash", 13), OP_EQ, NULL);
+  tt_int_op(circuit_extend(&message, TO_CIRCUIT(circ)), OP_EQ, 0);
+  tt_assert(circ->base_.n_hop);
+  tor_free(circ->base_.n_hop);
+  tor_free(circ->base_.n_chan_create_cell);
+  extend.create_cell.handshake_type = ONION_HANDSHAKE_TYPE_NTOR;
+  extend.create_cell.handshake_len = NTOR_ONIONSKIN_LEN;
+  tt_int_op(extend_cell_format(&command, &length, body, &extend, NULL), OP_EQ, 0);
+  message.length = length;
+  tt_int_op(circuit_extend(&message, TO_CIRCUIT(circ)), OP_EQ, -1);
+ done:
+  UNMOCK(server_mode); server = 0;
+  UNMOCK(channel_get_for_extend);
+  mock_channel_get_for_extend_calls = 0;
+  circ->payment_keys = NULL;
+  free_capacity_circuit_free(TO_CIRCUIT(circ));
+  free_capacity_connection_free(&connection);
+  (void)payment_resources_free_all();
+  timers_shutdown();
+  tor_free(circ->base_.n_hop);
+  tor_free(circ->base_.n_chan_create_cell);
+  tor_free(circ); tor_free(previous);
+}
+
 /* Test the different cases in onionskin_answer(). */
 static void
 test_onionskin_answer(void *arg)
@@ -2007,6 +2089,7 @@ struct testcase_t circuitbuild_tests[] = {
   TEST_CIRCUIT_PASSTHROUGH(open_connection_for_extend, TT_FORK, "dual-stack"),
 
   TEST_CIRCUIT(extend, TT_FORK),
+  TEST_CIRCUIT(extend_foundation, TT_FORK),
 
   TEST(onionskin_answer, TT_FORK, NULL, NULL),
 

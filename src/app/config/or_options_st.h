@@ -868,6 +868,32 @@ struct or_options_t {
    * couple of other configuration options and allow to change the values
    * of certain configuration options. */
   int TestingTorNetwork;
+  /** Isolated paid-circuit foundation acceptance only; immutable and requires
+   * TestingTorNetwork. Production profile enablement remains unavailable. */
+  int ElTorFoundation;
+  /** Local client policy: never substitute base circuits for paid streams. */
+  int ElTorRequirePaidStreams;
+  /** Exact canonical 55-byte signed/admitted policy, immutable for the process.
+   * NULL selects the zero-price candidate only on an isolated test network. */
+  char *ElTorFoundationTerms;
+
+  /** Immutable lower aggregate ceilings; never change signed per-circuit caps. */
+  int ElTorFoundationMaxCircuits;
+  int ElTorFoundationAdmissionRate;
+  int ElTorFoundationAdmissionBurst;
+  int ElTorFoundationConnAdmissionRate;
+  int ElTorFoundationConnAdmissionBurst;
+  int ElTorFoundationByteRate;
+  int ElTorFoundationByteBurst;
+  int ElTorFoundationConnByteRate;
+  int ElTorFoundationConnByteBurst;
+  int ElTorFoundationQueueBytes;
+  int ElTorFoundationMaxSlots;
+  int ElTorFoundationArenaBytes;
+  int ElTorFoundationCryptoRate;
+  int ElTorFoundationCryptoBurst;
+  int ElTorFoundationMaxRunning;
+  int ElTorFoundationMaxWaiting;
 
   /** Enable CONN_BW events.  Only altered on testing networks. */
   int TestingEnableConnBwEvent;

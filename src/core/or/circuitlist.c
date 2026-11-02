@@ -50,6 +50,11 @@
  * logic, which was originally circuit-focused.
  **/
 #include "feature/payment/relay_payments.h"
+#include "feature/payment/payment_resources.h"
+#include "feature/payment/payment_circuit.h"
+#include "feature/payment/free_capacity_hooks.h"
+#include "feature/payment/payment_origin.h"
+#include "core/mainloop/cpuworker.h"
 #define CIRCUITLIST_PRIVATE
 #define OCIRC_EVENT_PRIVATE
 #include "lib/cc/torint.h"  /* TOR_PRIuSZ */
@@ -1176,6 +1181,7 @@ circuit_free_(circuit_t *circ)
   void *mem;
   size_t memlen;
   int should_free = 1;
+  protocol_budget_memory_t construction_memory = {0};
   if (!circ)
     return;
 
@@ -1194,11 +1200,13 @@ circuit_free_(circuit_t *circ)
 
   if (CIRCUIT_IS_ORIGIN(circ)) {
     origin_circuit_t *ocirc = TO_ORIGIN_CIRCUIT(circ);
+    construction_memory = ocirc->payment_construction_memory;
     if (ocirc->relay_payments) {
       relay_payments_free(ocirc->relay_payments);
       ocirc->relay_payments = NULL;
     }
     if (ocirc->payhashes) {
+      memwipe(ocirc->payhashes,0,strlen(ocirc->payhashes));
       tor_free(ocirc->payhashes);
       ocirc->payhashes = NULL;
     }
@@ -1248,6 +1256,7 @@ circuit_free_(circuit_t *circ)
     
     // Free payhash if allocated
     if (ocirc->payhashes) {
+      memwipe(ocirc->payhashes,0,strlen(ocirc->payhashes));
       tor_free(ocirc->payhashes);
     }
 
@@ -1261,8 +1270,14 @@ circuit_free_(circuit_t *circ)
     memlen = sizeof(or_circuit_t);
     tor_assert(circ->magic == OR_CIRCUIT_MAGIC);
 
+    /* Waiting shared-budget work is cancellable before the circuit's storage
+     * disappears. Running workers retain the existing DEAD_CIRCUIT lifetime. */
+    if (ocirc->payment_native_work && !ocirc->workqueue_entry)
+      cpuworker_cancel_circ_handshake(ocirc);
     should_free = (ocirc->workqueue_entry == NULL);
 
+    payment_circuit_free(ocirc);
+    payment_profile_keys_free(ocirc->payment_keys);
     relay_crypto_clear(&ocirc->crypto);
 
     if (ocirc->rend_splice) {
@@ -1299,6 +1314,7 @@ circuit_free_(circuit_t *circ)
   /* Clear cell queue _after_ removing it from the map.  Otherwise our
    * "active" checks will be violated. */
   cell_queue_clear(&circ->n_chan_cells);
+  free_capacity_circuit_free(circ);
 
   /* Cleanup possible SENDME state. */
   if (circ->sendme_last_digests) {
@@ -1324,6 +1340,7 @@ circuit_free_(circuit_t *circ)
   if (should_free) {
     memwipe(mem, 0xAA, memlen); /* poison memory */
     tor_free(mem);
+    (void)payment_resources_release(&construction_memory);
   } else {
     /* If we made it here, this is an or_circuit_t that still has a pending
      * cpuworker request which we weren't able to cancel.  Instead, set up
@@ -1955,6 +1972,7 @@ circuit_find_to_cannibalize(uint8_t purpose_to_produce, extend_info_t *info,
         circ_->purpose == purpose_to_search_for &&
         !circ_->timestamp_dirty) {
       origin_circuit_t *circ = TO_ORIGIN_CIRCUIT(circ_);
+      if (payment_origin_present(circ)) goto next;
 
       /* Only cannibalize from reasonable length circuits. If we
        * want C_GENERAL, then only choose 3 hop circs. If we want
@@ -2278,6 +2296,24 @@ circuit_mark_for_close_, (circuit_t *circ, int reason, int line,
     reason = END_CIRC_REASON_NONE;
   }
 
+  if (CIRCUIT_IS_ORIGIN(circ)) {
+    crypt_path_t *head = TO_ORIGIN_CIRCUIT(circ)->cpath;
+    payment_origin_close(TO_ORIGIN_CIRCUIT(circ));
+    if (head) {
+      crypt_path_t *hop = head;
+      do {
+        payment_profile_keys_free(hop->payment_keys);
+        hop->payment_export_requested = false;
+        hop = hop->next;
+      } while (hop && hop != head);
+    }
+  } else {
+    or_circuit_t *or_circ = TO_OR_CIRCUIT(circ);
+    payment_circuit_close(or_circ);
+    payment_profile_keys_free(or_circ->payment_keys);
+    or_circ->payment_export_requested = false;
+  }
+
   circ->marked_for_close = line;
   circ->marked_for_close_file = file;
   circ->marked_for_close_reason = reason;
@@ -2413,6 +2449,7 @@ circuit_about_to_free(circuit_t *circ)
       if (ocirc->payhashes) {
         log_debug(LD_MM, "Freeing payhashes for circuit %lu",
                 (unsigned long)ocirc->global_identifier);
+        memwipe(ocirc->payhashes,0,strlen(ocirc->payhashes));
         tor_free(ocirc->payhashes);
         ocirc->payhashes = NULL;
       }

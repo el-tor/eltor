@@ -2,6 +2,7 @@
 #include "core/or/or.h"
 #include "feature/payment/payment_util.h"
 #include "test/test.h"
+#include "test/log_test_helpers.h"
 #include "lib/log/log.h"
 #include <stddef.h>
 #include "core/or/origin_circuit_st.h"
@@ -108,6 +109,24 @@ done:
   relay_payments_free(cloned_payments);
 }
 
+static void
+test_payment_util_legacy_metadata_redaction(void *arg)
+{
+  (void)arg;
+  static const char payload[] =
+    "eltor_payhashf0a5d9c13b7e2468f0a5d9c13b7e2468"
+    "f0a5d9c13b7e2468f0a5d9c13b7e2468";
+  setup_full_capture_of_logs(LOG_DEBUG);
+  tt_int_op(payment_util_has_payment_id_hash((const uint8_t *)payload,
+                                             sizeof(payload) - 1), OP_EQ, 1);
+  expect_no_log_msg_containing("f0a5d9c13b7e2468");
+  expect_no_log_msg_containing("first 50 chars");
+  tt_int_op(payment_util_has_payment_id_hash((const uint8_t *)"absent", 6),
+            OP_EQ, 0);
+ done:
+  teardown_capture_of_logs();
+}
+
 // TODO El Tor client and relay flows with new relay payments struct
 // 1. client_get_circ_payhashes_from_rpc(rpc)
 // 2. client_get_hop_payhashes_from_circ_payhashes(circ->payhash)
@@ -117,4 +136,5 @@ done:
   {#name, test_payment_util_##name, TT_FORK, NULL, NULL}
 
 struct testcase_t payment_tests[] = {PAYMENT_TESTS(relay_payments_basic),
+                                     PAYMENT_TESTS(legacy_metadata_redaction),
                                      END_OF_TESTCASES};
