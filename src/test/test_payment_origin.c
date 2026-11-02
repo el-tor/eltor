@@ -421,6 +421,32 @@ test_origin_retries(void *arg)
 }
 
 static void
+test_origin_delayed_query_preserves_schedule(void *arg)
+{
+  (void)arg;
+  origin_fixture_t f;
+  payment_origin_snapshot_t s;
+  uint8_t op[16]={1}, nonce[16]={2};
+  tt_int_op(init_origin(&f),OP_EQ,0);
+  tt_int_op(payment_origin_initial_prepare(f.circ,1,op,nonce,f.policy_wire,2000),OP_EQ,0);
+  tt_int_op(reply(&f,0,0,0,2000),OP_EQ,0);
+  op[0]=3; nonce[0]=4;
+  tt_int_op(payment_origin_initial_start(f.circ,1,op,nonce,2000),OP_EQ,0);
+  tt_int_op(reply(&f,3,0,5,2000),OP_EQ,0);
+  op[0]=5; nonce[0]=6;
+  tt_int_op(payment_origin_initial_refresh(f.circ,1,op,nonce,12000),OP_EQ,0);
+  /* Six seconds outbound delay is within the seven-second query timeout. */
+  tt_int_op(reply(&f,3,16000,5,18000),OP_EQ,0);
+  tt_int_op(payment_origin_get(f.circ,1,NULL,true,18000,&s),OP_EQ,0);
+  tt_u64_op(s.round_remaining_ms,OP_EQ,44000);
+  tt_u64_op(s.elapsed_upper_ms,OP_EQ,16000);
+  tt_assert(payment_origin_data_active(f.circ,61000));
+  tt_assert(!payment_origin_data_active(f.circ,62000));
+ done:
+  clear_origin();
+}
+
+static void
 test_origin_refresh_and_renew(void *arg)
 {
   (void)arg;
@@ -1174,8 +1200,8 @@ test_origin_renew_active_requires_status(void *arg)
   tt_int_op(payment_origin_get(f.circ,1,renewal,false,6200,&snapshot),OP_EQ,0);
   tt_u64_op(snapshot.active_period,OP_EQ,1); tt_u64_op(snapshot.current_round,OP_EQ,11);
   tt_int_op(snapshot.phase,OP_EQ,PAYMENT_ORIGIN_ACTIVE);
-  tt_u64_op(snapshot.round_remaining_ms,OP_EQ,59800);
-  tt_u64_op(snapshot.hard_age_remaining_ms,OP_EQ,1199800);
+  tt_u64_op(snapshot.round_remaining_ms,OP_EQ,59900);
+  tt_u64_op(snapshot.hard_age_remaining_ms,OP_EQ,1199900);
   uint64_t hard=snapshot.hard_age_remaining_ms;
   response=control_query(&conn,command,7000);
   tt_assert(strstr(response,"250-ELTOR_PAYMENT 1 "));
@@ -1211,6 +1237,7 @@ struct testcase_t payment_origin_tests[]={
   {"activation_notifications",test_origin_activation_notifications,TT_FORK,NULL,NULL},
   {"notification_invalid_clock",test_origin_notification_invalid_clock,TT_FORK,NULL,NULL},
   {"retries",test_origin_retries,TT_FORK,&helper_pubsub_setup,NULL},
+  {"delayed_query_preserves_schedule",test_origin_delayed_query_preserves_schedule,TT_FORK,NULL,NULL},
   {"refresh_and_renew",test_origin_refresh_and_renew,TT_FORK,NULL,NULL},
   {"renew_active_requires_status",test_origin_renew_active_requires_status,TT_FORK,NULL,NULL},
   {"control_bridge",test_origin_control_bridge,TT_FORK,NULL,NULL},

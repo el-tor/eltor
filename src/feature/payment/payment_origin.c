@@ -997,7 +997,9 @@ apply_status(payment_origin_hop_t *h, payment_origin_operation_t *op,
   if (r->state == 0 || r->state == 7) return false;
   if (r->setup_remaining_ms > h->policy.setup_timeout_ms) return false;
   if (r->state == 3 || r->state == 4) {
-    if (r->elapsed_ms >= h->policy.max_age_ms) return false;
+    if (r->elapsed_ms >= h->policy.max_age_ms ||
+        !r->round || r->round > UINT64_MAX/PAYMENT_PROFILE_ROUND_MS)
+      return false;
     uint64_t hard = h->policy.max_age_ms-r->elapsed_ms;
     uint64_t enforcement = r->state == 3 ?
       r->round_remaining_ms+h->policy.grace_ms :
@@ -1032,13 +1034,35 @@ apply_status(payment_origin_hop_t *h, payment_origin_operation_t *op,
       if (reported < enforcement_end) enforcement_end = reported;
     } else {
       uint64_t candidate = remaining_ms(op->first_send_ms,r->elapsed_ms);
-      if (!h->schedule_origin_seen || candidate < h->schedule_origin_ms)
+      if (!h->schedule_origin_seen)
         h->schedule_origin_ms = candidate;
       h->schedule_origin_seen = true;
       round_end = reply_deadline(op,r->round_remaining_ms);
       enforcement_end = reply_deadline(op,r->enforcement_remaining_ms);
       hard_end = reply_deadline(op,hard);
+      /* A slower QUERY cannot invalidate the original authenticated lower
+       * bound on T0. Keep its guaranteed schedule instead of accumulating RTT
+       * uncertainty on every observation. This never moves the original T0. */
+      uint64_t scheduled_round = saturating_add(h->schedule_origin_ms,
+                                  r->round*PAYMENT_PROFILE_ROUND_MS);
+      uint64_t scheduled_enforcement = r->state == 3 ? scheduled_round :
+        scheduled_round-PAYMENT_PROFILE_ROUND_MS;
+      scheduled_enforcement = saturating_add(scheduled_enforcement,
+                                             h->policy.grace_ms);
+      uint64_t scheduled_hard = saturating_add(h->schedule_origin_ms,
+                                               h->policy.max_age_ms);
+      if (scheduled_round > round_end) round_end = scheduled_round;
+      if (scheduled_enforcement > enforcement_end)
+        enforcement_end = scheduled_enforcement;
+      if (scheduled_hard > hard_end) hard_end = scheduled_hard;
     }
+    uint64_t reported_hard = saturating_add(now_ms,
+                                           h->policy.max_age_ms-r->elapsed_ms);
+    if (reported_hard < hard_end) hard_end = reported_hard;
+    uint64_t reported_enforcement = saturating_add(now_ms,
+                                                  r->enforcement_remaining_ms);
+    if (reported_enforcement < enforcement_end)
+      enforcement_end = reported_enforcement;
     uint64_t retained_hard = h->hard_deadline_ms < hard_end ?
                              h->hard_deadline_ms : hard_end;
     uint64_t reported_round = saturating_add(now_ms,r->round_remaining_ms);
@@ -1069,6 +1093,10 @@ apply_status(payment_origin_hop_t *h, payment_origin_operation_t *op,
   uint64_t upper = notification ?
       now_ms-h->schedule_origin_ms :
       saturating_add(r->elapsed_ms, now_ms-op->first_send_ms);
+  /* The same original evidence also bounds age exposed to the controller. */
+  if (h->schedule_origin_seen && now_ms >= h->schedule_origin_ms &&
+      now_ms-h->schedule_origin_ms < upper)
+    upper = now_ms-h->schedule_origin_ms;
   if (h->status_seen && h->current_round) {
     uint64_t previous = saturating_add(h->elapsed_upper_ms,
                                        now_ms-h->observed_ms);
